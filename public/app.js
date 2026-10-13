@@ -33,6 +33,7 @@ function renderStatus() {
   const s = S.status; if (!s) return;
   $('#feeds').innerHTML = s.feeds.map((f) => `<span class="pill" title="${esc(f.lastError || 'ok')}"><i class="led ${f.healthy ? 'on' : ''}"></i>${f.name} ${f.name.startsWith('rpc') ? `${n(f.evPerSec, 0)} ev/s` : `${n(f.secSinceMessage, 0)}s`}</span>`).join('');
   const k = s.kill;
+  $('#legMid').textContent = `50–${s.alertScore - 1}`; $('#legHi').textContent = `≥ ${s.alertScore} (alert zone)`;
   const kb = $('#killBadge'); kb.className = `kill-badge ${k.status}`; kb.textContent = k.status === 'COLLECTING' ? `KILL RULE · ${k.n}/${k.needed}` : `KILL RULE · ${k.status}`;
   const e = s.engine;
   const kp = [
@@ -136,8 +137,16 @@ function drawRadar() {
     if (sc >= alertScore) { ctx.beginPath(); ctx.arc(x, y, size + 5, 0, Math.PI * 2); ctx.fillStyle = acc + '30'; ctx.fill(); }
     ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
     ctx.globalAlpha = 1;
-    if (sc >= 50) { ctx.fillStyle = css('--text-muted'); ctx.fillText(t.symbol?.slice(0, 10) || '', x + size + 4, y + 4); }
-    radarPts.push({ x, y, s: size + 4, t });
+    radarPts.push({ x, y, s: size + 4, t, sc, size });
+  }
+  // Labels: highest scores first, skip any label that would collide with one already drawn
+  const boxes = [];
+  ctx.font = '11px Geist Mono, monospace'; ctx.fillStyle = css('--text-muted');
+  for (const p of [...radarPts].filter((p) => p.sc >= 50).sort((a, b) => b.sc - a.sc).slice(0, 12)) {
+    const label = (p.t.symbol || '').slice(0, 10); const lw = ctx.measureText(label).width;
+    const bx = p.x + p.size + 4, by = p.y - 7, box = [bx - 2, by - 2, bx + lw + 2, by + 14];
+    if (boxes.some((o) => !(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]))) continue;
+    boxes.push(box); ctx.fillText(label, bx, p.y + 4);
   }
   if (hover) {
     const t = hover.t, bw = 196, bh = 64;
@@ -324,7 +333,7 @@ function connectSse() {
   try {
     const es = new EventSource(`${API}/api/stream`);
     es.addEventListener('status', (e) => { lastSse = Date.now(); S.status = JSON.parse(e.data); renderStatus(); });
-    es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = JSON.parse(e.data); renderBoard(); });
+    es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = JSON.parse(e.data); renderBoard(); renderStatus(); });
     es.addEventListener('alert', (e) => { const a = JSON.parse(e.data); toast(`Alert · ${a.symbol} · score ${Math.round(a.score)}`); refreshAlerts(); });
     es.addEventListener('paper', () => { if (S.tab === 'perf') loadPerf(); });
   } catch { /* fallback below */ }
