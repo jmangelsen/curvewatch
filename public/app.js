@@ -142,14 +142,14 @@ function drawRadar() {
   }
   const pill = (txt, x, y, color) => { const tw = ctx.measureText(txt).width; ctx.fillStyle = css('--surface'); ctx.globalAlpha = 0.85; ctx.fillRect(x - 3, y - 10, tw + 6, 14); ctx.globalAlpha = 1; ctx.fillStyle = color; ctx.fillText(txt, x, y); };
   ctx.font = '11px Geist Mono, monospace';
-  [0.25, 0.5, 0.75, 1].forEach((f) => pill(`${f * 100}%`, cx + 4, cy - R * f + 12, faint));
   // Labels: highest scores first, skip any label that would collide with one already drawn
   const boxes = [];
   ctx.font = '11px Geist Mono, monospace'; ctx.fillStyle = css('--text-muted');
-  for (const p of [...radarPts].filter((p) => p.sc >= 50).sort((a, b) => b.sc - a.sc).slice(0, 12)) {
+  for (const p of [...radarPts].filter((p) => p.sc >= 50).sort((a, b) => b.sc - a.sc).slice(0, 6)) {
     const label = (p.t.symbol || '').slice(0, 10); const lw = ctx.measureText(label).width;
     const bx = p.x + p.size + 4, by = p.y - 7, box = [bx - 2, by - 2, bx + lw + 2, by + 14];
     if (boxes.some((o) => !(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]))) continue;
+    if (radarPts.some((q) => q !== p && q.x + q.size > box[0] && q.x - q.size < box[2] && q.y + q.size > box[1] && q.y - q.size < box[3])) continue;
     boxes.push(box); pill(label, bx, p.y + 4, css('--text-muted'));
   }
   if (hover) {
