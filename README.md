@@ -29,7 +29,7 @@ It is a **discovery tool with an honest scorekeeper**. It does not place trades,
 
 | Item | Measured / estimated | Notes |
 |---|---|---|
-| Launch rate | **~37–50 launches/min** (~55–70k/day) | measured live, Oct 13 2026 (rate varies by hour) |
+| Launch rate | **~30–50 launches/min** (~45–70k/day) | measured live, Oct 13 2026 (rate varies by hour) |
 | Trade rate | **~70–80 Pump.fun trades/sec** (~6M/day) | measured live via program logs |
 | RPC bandwidth | **~600 KB/s per connection** (~50 GB/day) | about 74% of messages are failed bot transactions |
 | PumpPortal trade feed, all tokens | ~6M events/day × 0.01 SOL/10k ≈ **6 SOL/day** | why the default trade source is `rpc`, not PumpPortal |
