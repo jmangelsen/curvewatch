@@ -1,6 +1,7 @@
 // Curvewatch dashboard — vanilla JS, no build step.
 const API = (window.CURVEWATCH_API ?? '').replace(/\/$/, '');
 const $ = (s, el = document) => el.querySelector(s);
+const floorScores = (r) => { for (const t of r?.rows || []) if (t.score != null) t.score = Math.floor(t.score); return r; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = (x, d = 1) => (x == null || !Number.isFinite(+x) ? '–' : (+x).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
 const pct = (x, d = 1) => (x == null ? '–' : `${n(x, d)}%`);
@@ -110,7 +111,7 @@ function drawRadar() {
   const cx = w / 2, cy = h / 2 + 4, R = Math.min(w, h) / 2 - 22;
   const grid = css('--grid'), faint = css('--text-faint'), acc = css('--accent'), info = css('--info');
   ctx.lineWidth = 1; ctx.strokeStyle = grid; ctx.fillStyle = faint; ctx.font = '11px Geist Mono, monospace';
-  [0.25, 0.5, 0.75, 1].forEach((f) => { ctx.beginPath(); ctx.arc(cx, cy, R * f, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${f * 100}%`, cx + 4, cy - R * f + 12); });
+  [0.25, 0.5, 0.75, 1].forEach((f) => { ctx.beginPath(); ctx.arc(cx, cy, R * f, 0, Math.PI * 2); ctx.stroke(); });
   for (let m = 0; m < 15; m += 1) {
     const a = -Math.PI / 2 + (m / 15) * Math.PI * 2;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.strokeStyle = m % 5 === 0 ? grid : 'transparent'; ctx.stroke();
@@ -139,6 +140,9 @@ function drawRadar() {
     ctx.globalAlpha = 1;
     radarPts.push({ x, y, s: size + 4, t, sc, size });
   }
+  const pill = (txt, x, y, color) => { const tw = ctx.measureText(txt).width; ctx.fillStyle = css('--surface'); ctx.globalAlpha = 0.85; ctx.fillRect(x - 3, y - 10, tw + 6, 14); ctx.globalAlpha = 1; ctx.fillStyle = color; ctx.fillText(txt, x, y); };
+  ctx.font = '11px Geist Mono, monospace';
+  [0.25, 0.5, 0.75, 1].forEach((f) => pill(`${f * 100}%`, cx + 4, cy - R * f + 12, faint));
   // Labels: highest scores first, skip any label that would collide with one already drawn
   const boxes = [];
   ctx.font = '11px Geist Mono, monospace'; ctx.fillStyle = css('--text-muted');
@@ -146,7 +150,7 @@ function drawRadar() {
     const label = (p.t.symbol || '').slice(0, 10); const lw = ctx.measureText(label).width;
     const bx = p.x + p.size + 4, by = p.y - 7, box = [bx - 2, by - 2, bx + lw + 2, by + 14];
     if (boxes.some((o) => !(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]))) continue;
-    boxes.push(box); ctx.fillText(label, bx, p.y + 4);
+    boxes.push(box); pill(label, bx, p.y + 4, css('--text-muted'));
   }
   if (hover) {
     const t = hover.t, bw = 196, bh = 64;
@@ -333,7 +337,7 @@ function connectSse() {
   try {
     const es = new EventSource(`${API}/api/stream`);
     es.addEventListener('status', (e) => { lastSse = Date.now(); S.status = JSON.parse(e.data); renderStatus(); });
-    es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = JSON.parse(e.data); renderBoard(); renderStatus(); });
+    es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = floorScores(JSON.parse(e.data)); renderBoard(); renderStatus(); });
     es.addEventListener('alert', (e) => { const a = JSON.parse(e.data); toast(`Alert · ${a.symbol} · score ${Math.round(a.score)}`); refreshAlerts(); });
     es.addEventListener('paper', () => { if (S.tab === 'perf') loadPerf(); });
   } catch { /* fallback below */ }
@@ -341,7 +345,7 @@ function connectSse() {
 async function refreshAlerts() { try { S.alerts = await get('/api/alerts?limit=60'); renderAlerts(); } catch {} }
 async function poll() {
   if (Date.now() - lastSse > 7000) {
-    try { const [st, r] = await Promise.all([get('/api/status'), get('/api/radar?limit=60')]); S.status = st; S.radar = r; renderStatus(); renderBoard(); } catch {}
+    try { const [st, r] = await Promise.all([get('/api/status'), get('/api/radar?limit=60')]); S.status = st; S.radar = floorScores(r); renderStatus(); renderBoard(); } catch {}
   }
 }
 async function boot() {
