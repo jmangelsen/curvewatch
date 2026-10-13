@@ -120,6 +120,7 @@ table.board { width: 100%; border-collapse: collapse; font-size: var(--text-sm);
 .scorecell { display: flex; align-items: center; gap: var(--space-2); font-family: var(--font-mono); }
 .reject { color: var(--down); font-size: var(--text-xs); }
 .empty { padding: var(--space-8) var(--space-4); text-align: center; color: var(--text-muted); font-size: var(--text-sm); }
+.board td .empty { white-space: normal; }
 .empty strong { display: block; color: var(--text); margin-bottom: var(--space-1); font-weight: 600; }
 
 /* Perf grid */

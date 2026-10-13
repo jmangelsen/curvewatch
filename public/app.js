@@ -264,12 +264,12 @@ function renderIntel() {
   $('#serialN').textContent = S.cfg?.scoring?.serialRuggerLaunches ?? 8;
   const mk = [['Launches recorded', n(d.totalLaunches, 0)], ['Graduations', n(d.totalGrads, 0)], ['Launches 24h', n(d.launches24h, 0)], ['Grad rate 24h', d.gradRate24hPct != null ? pct(d.gradRate24hPct, 2) : '–'], ['Rugs 24h', n(d.rugs24h, 0)], ['Labeled snapshots', n(d.labeledSnapshots, 0)]];
   $('#dsKpis').innerHTML = mk.map(([l, v]) => `<div><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
-  if (d.hourly.length) barsChart($('#hourly'), d.hourly.map((x) => new Date(x.t).getHours().toString().padStart(2, '0')), [
-    { name: 'launches', color: css('--text-faint'), values: d.hourly.map((x) => x.launches) },
-    { name: 'graduations ×100', color: css('--accent'), values: d.hourly.map((x) => x.grads * 100) },
-  ], { yFmt: (v) => n(v, 0), labels: d.hourly.map((x) => (x.grads ? `${x.grads}g` : '')) });
-  else $('#hourly').innerHTML = `<div class="empty"><strong>Collecting</strong>Hourly launch volume appears here.</div>`;
-  if (d.hourly.length) $('#hourly').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--text-faint')}"></i>launches / hour</span><span><i style="background:${css('--accent')}"></i>graduations ×100</span></div>`);
+  if (d.hourly.length) {
+    barsChart($('#hourly'), d.hourly.map((x) => new Date(x.t).getHours().toString().padStart(2, '0') + 'h'), [
+      { name: 'launches', color: css('--text-faint'), values: d.hourly.map((x) => x.launches) },
+    ], { yFmt: (v) => n(v, 0), labels: d.hourly.map((x) => `${x.grads} grad${x.grads === 1 ? '' : 's'}`) });
+    $('#hourly').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--text-faint')}"></i>launches per hour (local time) · graduations listed under each bar</span></div>`);
+  } else $('#hourly').innerHTML = `<div class="empty"><strong>Collecting</strong>Hourly launch volume appears here.</div>`;
   const I = S.intel; if (!I) return;
   const link = (w) => `<a href="https://solscan.io/account/${w}" target="_blank" rel="noopener" class="mono">${short(w)}</a>`;
   $('#ruggers tbody').innerHTML = I.ruggers.length ? I.ruggers.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${c.rugs}</td><td class="num faint">${ago(c.last_seen)} ago</td></tr>`).join('') : `<tr><td colspan="5"><div class="empty">Builds up as creators launch repeatedly.</div></td></tr>`;
