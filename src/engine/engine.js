@@ -26,6 +26,7 @@ export class Engine extends EventEmitter {
     this.counters = { creates: 0, trades: 0, ignoredTrades: 0, grads: 0, alerts: 0, snapshots: 0, finalized: 0 };
     this.alertTrackers = new Map(); // alertId -> {mint, s}
     this.tradeWriteQueue = [];
+    this.startedAt = Date.now();
   }
 
   getToken = (mint) => this.tokens.get(mint);
@@ -200,13 +201,14 @@ export class Engine extends EventEmitter {
   rates() {
     const nowMs = Date.now();
     const per = (arr, ms) => arr.filter((x) => x >= nowMs - ms).length;
-    return { launchesPerMin: per(this.recentCreates, 300000) / 5, launches1h: this.recentCreates.length, grads1h: this.recentGrads.length };
+    const win = Math.min(300000, nowMs - this.startedAt);
+    return { launchesPerMin: win > 10000 ? per(this.recentCreates, win) / (win / 60000) : 0, launches1h: this.recentCreates.length, grads1h: this.recentGrads.length };
   }
 
   radar(limit = 80) {
     const rows = [];
     for (const t of this.tokens.values()) {
-      if (t.lite || !t.lastScore || t.graduated) continue;
+      if (t.lite || !t.lastScore || t.graduated || !t.quoteOk) continue;
       rows.push({ ...t.summary(), f: pickRadar(t.lastFeatures), flags: t.lastScore.flags, reasons: t.lastScore.reasons });
     }
     rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || b.f.netSol - a.f.netSol);

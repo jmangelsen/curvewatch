@@ -3,6 +3,7 @@ import { CURVE, config } from '../config.js';
 import { mcapOf, progressOf, median } from '../util.js';
 
 const RESERVED_VTOK = CURVE.INITIAL_VTOKENS - CURVE.INITIAL_REAL_TOKENS; // 279.9M virtual-only tokens
+const K_SOL = CURVE.INITIAL_VSOL * CURVE.INITIAL_VTOKENS;
 
 export class Token {
   constructor(c) {
@@ -17,8 +18,9 @@ export class Token {
     this.mayhem = !!c.mayhem;
     this.vsol = c.vsol || CURVE.INITIAL_VSOL;
     this.vtok = c.vtok || CURVE.INITIAL_VTOKENS;
-    // Non-SOL quote (e.g. USDC-paired launches since May 2026) have a different reserve scale; exclude from scoring.
-    this.quoteOk = Math.abs((c.vsol || 30) - 30) < 5 || (c.vsol || 0) > 30;
+    // SOL-quoted curves satisfy vsol * vtok = 30 * 1.073e9 (constant product). USDC-paired launches (since
+    // May 2026) use a different reserve scale and fail this invariant; they are tracked but never scored.
+    this.quoteOk = this.invariantOk(this.vsol, this.vtok);
     this.social = { twitter: false, telegram: false, website: false, fetched: false };
     this.trades = [];
     this.sigs = new Set();
@@ -46,6 +48,7 @@ export class Token {
     this.rejectedHard = null;
   }
 
+  invariantOk(vsol, vtok) { return Math.abs((vsol * vtok) / K_SOL - 1) < 0.03; }
   get ageSec() { return (Date.now() - this.createdAt) / 1000; }
   get mcap() { return mcapOf(this.vsol, this.vtok); }
   get progress() { return progressOf(this.vtok - RESERVED_VTOK); }
@@ -56,7 +59,7 @@ export class Token {
     if (this.sigs.has(key)) return false;
     this.sigs.add(key);
     const at = t.recvAt || Date.now();
-    if (t.vsol > 0 && t.vtok > 0) { this.vsol = t.vsol; this.vtok = t.vtok; }
+    if (t.vsol > 0 && t.vtok > 0) { this.vsol = t.vsol; this.vtok = t.vtok; if (this.trades.length < 3) this.quoteOk = this.invariantOk(t.vsol, t.vtok); }
     const m = this.mcap;
     this.lastTradeAt = at;
     if (m > this.peakMcap) { this.peakMcap = m; this.peakAt = at; }
@@ -109,6 +112,7 @@ export class Token {
   /** Compute the feature vector used by the scorer. */
   features(ctx = {}) {
     const age = Math.max(1, this.ageSec);
+    const rateAge = Math.max(30, age); // avoid absurd per-minute rates in the first seconds
     const nowMs = Date.now();
     const tr = this.trades;
     let buys = 0, sells = 0, buyVol = 0, sellVol = 0, tiny = 0;
@@ -144,13 +148,13 @@ export class Token {
       mcapSol: this.mcap,
       progressPct: this.progress * 100,
       netSol,
-      netSolPerMin: netSol / (age / 60),
+      netSolPerMin: netSol / (rateAge / 60),
       flow60Sol: vol60Buy - vol60Sell,
       buys, sells,
       buySellRatio: sells ? buys / sells : buys,
       buyVolSol: buyVol, sellVolSol: sellVol,
       uniqueBuyers: this.buyers.size,
-      buyersPerMin: this.buyers.size / (age / 60),
+      buyersPerMin: this.buyers.size / (rateAge / 60),
       buyers60: buyers60.size,
       holders: this.holders.size,
       top10Pct: (top10 / CURVE.TOTAL_SUPPLY) * 100,
