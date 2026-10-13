@@ -76,6 +76,15 @@
       <span>Of 11,303 migrations, 93% later traded at 20% or less of their migration price; 14% reached +50% and 4.1% reached +200% (<a href="https://www.belphor.com/data/migration-outcomes" target="_blank" rel="noopener">Belphor</a>). This tab ignores the first <span id="gMinAge">20</span> minutes after migration and only scores survivors.</span>
     </div>
     <div class="grid-grads">
+      <article class="card radar-card gradar-card">
+        <div class="card-head">
+          <h2>Radar</h2>
+          <span class="hint">angle = time since graduation (log, 0–72h) · distance = price vs graduation (0.2× center → 5× edge) · size = liquidity · color = score</span>
+        </div>
+        <div class="radar-wrap"><canvas id="gRadar" aria-label="Radar plot of graduated tokens"></canvas>
+          <div class="radar-legend"><span><i class="dot s-low"></i>&lt;50</span><span><i class="dot s-mid"></i><span id="gLegMid">50–69</span></span><span><i class="dot s-hi"></i>alert zone</span><span><i class="dot s-low" style="opacity:.35"></i>warming / filtered</span><span>bright ring = graduation price (1×)</span></div>
+        </div>
+      </article>
       <article class="card gboard-card">
         <div class="card-head"><h2>Re-ignition board</h2><span class="hint" id="gBoardHint"></span></div>
         <div class="table-wrap"><table class="board responsive" id="gBoard">

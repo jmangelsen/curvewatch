@@ -36,14 +36,14 @@ const root = document.documentElement;
 root.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 const metaTheme = document.querySelector('meta[name=theme-color]');
 const syncTheme = () => metaTheme && (metaTheme.content = root.dataset.theme === 'dark' ? '#0b0d0f' : '#f3f2ee'); syncTheme();
-$('#themeBtn').onclick = () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; syncTheme(); drawRadar(); renderPerf(); renderIntel(); renderGrads(); };
+$('#themeBtn').onclick = () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; syncTheme(); drawRadar(); drawGradRadar(); renderPerf(); renderIntel(); renderGrads(); };
 
 // ---------- tabs ----------
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); if (S.tab === 'grads') loadGrads(); if (S.tab === 'live') requestAnimationFrame(drawRadar);
+  if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar);
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -183,7 +183,80 @@ function drawRadar() {
     ctx.fillText(`${t.buyers} buyers · age ${age(t.ageSec)}`, bx + 10, by + 52);
   }
 }
-function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); requestAnimationFrame(radarLoop); }
+// ---------- graduates radar ----------
+const gcv = $('#gRadar'); const gctx = gcv.getContext('2d');
+let gPts = []; let gHover = null;
+const G_MAX_MIN = 72 * 60, V_LO = 0.2, V_HI = 5;
+const gAng = (ageMin) => -Math.PI / 2 + (Math.log1p(Math.max(0, ageMin)) / Math.log1p(G_MAX_MIN)) * Math.PI * 2 * 0.999;
+const gRad = (v) => Math.max(0.03, Math.min(1, (Math.log(Math.max(V_LO, v)) - Math.log(V_LO)) / (Math.log(V_HI) - Math.log(V_LO))));
+function drawGradRadar() {
+  if (S.tab !== 'grads') return;
+  const c = gctx, dpr = devicePixelRatio || 1; const w = gcv.clientWidth, h = gcv.clientHeight; if (!w) return;
+  if (gcv.width !== w * dpr) { gcv.width = w * dpr; gcv.height = h * dpr; }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2 + 4, R = Math.min(w, h) / 2 - 22;
+  const grid = css('--grid'), faint = css('--text-faint'), acc = css('--accent'), info = css('--info');
+  c.lineWidth = 1; c.font = '11px Geist Mono, monospace';
+  const ringLabels = [];
+  for (const v of [0.5, 2, 5]) { c.beginPath(); c.arc(cx, cy, R * gRad(v), 0, Math.PI * 2); c.strokeStyle = grid; c.stroke(); ringLabels.push([`${v}×`, R * gRad(v), faint]); }
+  c.beginPath(); c.arc(cx, cy, R * gRad(1), 0, Math.PI * 2); c.strokeStyle = acc; c.globalAlpha = .45; c.stroke(); c.globalAlpha = 1; ringLabels.push(['1×', R * gRad(1), acc]);
+  for (const [m, lab] of [[20, '20m'], [60, '1h'], [360, '6h'], [1440, '24h'], [G_MAX_MIN, '72h']]) {
+    const a = gAng(m);
+    c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); c.strokeStyle = grid; c.stroke();
+    c.fillStyle = faint; c.fillText(lab, cx + Math.cos(a) * (R + 11) - 9, cy + Math.sin(a) * (R + 11) + 4);
+  }
+  const sa = -Math.PI / 2 + sweep;
+  const g = c.createConicGradient ? c.createConicGradient(sa - 0.6, cx, cy) : null;
+  if (g) { g.addColorStop(0, 'transparent'); g.addColorStop(0.095, acc + '22'); g.addColorStop(0.0955, 'transparent'); c.fillStyle = g; c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.fill(); }
+  gPts = [];
+  const b = S.gBoard; const alertScore = b?.stats?.alertScore ?? 70;
+  const rows = b ? [...(b.warming || []), ...(b.rejected || []), ...(b.rows || [])] : [];
+  for (const t of rows) {
+    if (t.ageMin == null) continue;
+    const a = gAng(t.ageMin), noMig = t.vsMig == null;
+    const r = R * gRad(noMig ? 1 : t.vsMig);
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    const size = 2.5 + Math.min(9, Math.sqrt((t.liqUsd || 0) / 1000) * 1.1);
+    const sc = t.reject ? -1 : t.score ?? 0;
+    const col = sc >= alertScore ? acc : sc >= 50 ? info : faint;
+    c.globalAlpha = sc < 0 ? 0.28 : sc >= 50 ? 1 : 0.6;
+    if (sc >= alertScore) { c.beginPath(); c.arc(x, y, size + 5, 0, Math.PI * 2); c.fillStyle = acc + '30'; c.fill(); }
+    c.beginPath(); c.arc(x, y, size, 0, Math.PI * 2);
+    if (noMig) { c.strokeStyle = col; c.lineWidth = 1.5; c.stroke(); c.lineWidth = 1; } else { c.fillStyle = col; c.fill(); }
+    c.globalAlpha = 1;
+    gPts.push({ x, y, s: size + 4, t, sc, size });
+  }
+  // ring labels sit on the 3 o'clock axis with a backing pill; their boxes block token labels
+  const boxes = []; c.font = '11px Geist Mono, monospace';
+  for (const [txt, rr, col] of ringLabels) {
+    const tw = c.measureText(txt).width, x = cx + rr + 3, y = cy - 3;
+    c.fillStyle = css('--surface'); c.globalAlpha = 0.85; c.fillRect(x - 2, y - 10, tw + 4, 13); c.globalAlpha = 1; c.fillStyle = col; c.fillText(txt, x, y);
+    boxes.push([x - 2, y - 10, x + tw + 2, y + 3]);
+  }
+  const pill = (txt, x, y) => { const tw = c.measureText(txt).width; c.fillStyle = css('--surface'); c.globalAlpha = 0.85; c.fillRect(x - 3, y - 10, tw + 6, 14); c.globalAlpha = 1; c.fillStyle = css('--text-muted'); c.fillText(txt, x, y); };
+  for (const p of [...gPts].filter((p) => p.sc >= 0).sort((a, b) => b.sc - a.sc).slice(0, 6)) {
+    const label = (p.t.symbol || '').slice(0, 10); const lw = c.measureText(label).width;
+    const bx = p.x + p.size + 4, by = p.y - 7, box = [bx - 2, by - 2, bx + lw + 2, by + 14];
+    if (boxes.some((o) => !(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]))) continue;
+    if (gPts.some((q) => q !== p && q.x + q.size > box[0] && q.x - q.size < box[2] && q.y + q.size > box[1] && q.y - q.size < box[3])) continue;
+    boxes.push(box); pill(label, bx, p.y + 4);
+  }
+  if (gHover) {
+    const t = gHover.t, bw = 214, bh = 64;
+    let bx = gHover.x + 12, by = gHover.y - bh - 8; if (bx + bw > w) bx = gHover.x - bw - 12; if (by < 0) by = gHover.y + 12;
+    c.fillStyle = css('--surface-3'); c.strokeStyle = css('--border'); c.beginPath(); c.roundRect(bx, by, bw, bh, 6); c.fill(); c.stroke();
+    c.fillStyle = css('--text'); c.font = '600 12px Geist, sans-serif'; c.fillText(`${t.symbol} · ${t.reject ? (t.reject.startsWith('warming') ? 'warming up' : 'filtered') : `score ${Math.floor(t.score)}`}`, bx + 10, by + 18);
+    c.font = '11px Geist Mono, monospace'; c.fillStyle = css('--text-muted');
+    c.fillText(`${usd(t.mcapUsd)} mcap · ${usd(t.liqUsd)} liq`, bx + 10, by + 36);
+    c.fillText(`${t.vsMig == null ? 'vs grad –' : `${t.migEstimated ? '≈' : ''}${n(t.vsMig, 2)}× grad`} · ${age(t.ageMin * 60)}`, bx + 10, by + 52);
+  }
+}
+const gHit = (e) => { const b = gcv.getBoundingClientRect(); const x = e.clientX - b.left, y = e.clientY - b.top; let best = null, bd = 1e9; for (const p of gPts) { const d = Math.hypot(p.x - x, p.y - y); if (d < p.s + 4 && d < bd) { bd = d; best = p; } } return best; };
+gcv.addEventListener('mousemove', (e) => { gHover = gHit(e); gcv.style.cursor = gHover ? 'pointer' : 'crosshair'; drawGradRadar(); });
+gcv.addEventListener('mouseleave', () => { gHover = null; drawGradRadar(); });
+gcv.addEventListener('click', (e) => { const p = gHit(e); if (p) openGradDrawer(p.t.mint); });
+addEventListener('resize', drawGradRadar);
+function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); drawGradRadar(); requestAnimationFrame(radarLoop); }
 if (!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(radarLoop);
 const hit = (e) => { const b = cv.getBoundingClientRect(); const x = e.clientX - b.left, y = e.clientY - b.top; let best = null, bd = 1e9; for (const p of radarPts) { const d = Math.hypot(p.x - x, p.y - y); if (d < p.s + 4 && d < bd) { bd = d; best = p; } } return best; };
 cv.addEventListener('mousemove', (e) => { hover = hit(e); cv.style.cursor = hover ? 'pointer' : 'crosshair'; drawRadar(); });
@@ -383,6 +456,7 @@ function spark(vals, w = 92, h = 26) {
 const mult = (x, est) => (x == null ? '–' : `${est ? '≈' : ''}${n(x, 2)}×`);
 function renderGrads() {
   const b = S.gBoard; if (!b) return;
+  $('#gLegMid').textContent = `50–${(b.stats?.alertScore ?? 70) - 1}`; drawGradRadar();
   const st = b.stats, k = S.gPaper?.kill;
   $('#gMinAge').textContent = st.minAgeMin;
   const kp = [
