@@ -1,0 +1,19 @@
+{
+  "name": "curvewatch",
+  "version": "1.0.0",
+  "description": "24/7 Pump.fun runner screener: ingestion, scoring, outcome labeling, paper trading, alerts, dashboard.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "backtest": "node scripts/backtest.js",
+    "selftest": "node scripts/selftest.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "bs58": "^6.0.0",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

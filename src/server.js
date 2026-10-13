@@ -1,0 +1,86 @@
+// HTTP API + Server-Sent Events + static dashboard.
+import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config } from './config.js';
+import { q } from './db.js';
+import { datasetStats, calibration, alertStats } from './stats.js';
+import * as paper from './engine/paper.js';
+import { getSmartList } from './engine/intel.js';
+import { logger } from './log.js';
+
+const log = logger('http');
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+export function startServer({ engine, status }) {
+  const app = express();
+  app.disable('x-powered-by');
+
+  // Health is unauthenticated so uptime monitors can reach it
+  app.get('/health', (req, res) => {
+    const s = status();
+    res.status(s.healthy ? 200 : 503).json({ ok: s.healthy, feeds: s.feeds.map((f) => ({ name: f.name, healthy: f.healthy })) });
+  });
+
+  if (config.dashboardPassword) {
+    app.use((req, res, next) => {
+      const h = req.headers.authorization || '';
+      const [, b64] = h.split(' ');
+      const [, pass] = Buffer.from(b64 || '', 'base64').toString().split(':');
+      if (pass === config.dashboardPassword) return next();
+      res.set('WWW-Authenticate', 'Basic realm="curvewatch"').status(401).send('auth required');
+    });
+  }
+
+  const cached = (fn, ms) => { let v, t = 0; return (...a) => { if (Date.now() - t > ms) { v = fn(...a); t = Date.now(); } return v; }; };
+  const cDataset = cached(datasetStats, 15000);
+  const cCal = new Map();
+  const cAlertStats = cached(alertStats, 15000);
+
+  app.get('/api/status', (req, res) => res.json(status()));
+  app.get('/api/radar', (req, res) => res.json(engine.radar(Number(req.query.limit) || 80)));
+  app.get('/api/alerts', (req, res) => {
+    const rows = q.recentAlerts.all(Math.min(500, Number(req.query.limit) || 60)).map((a) => {
+      const t = engine.getToken(a.mint);
+      return { ...a, reasons: JSON.parse(a.reasons || '[]'), flags: JSON.parse(a.flags || '[]'), features: undefined,
+        liveMcap: t ? t.mcap : null, livePeak: t?.alertSnap ? t.alertSnap.maxAfter : null, graduatedLive: t?.graduated || false };
+    });
+    res.json({ rows, stats: cAlertStats() });
+  });
+  app.get('/api/token/:mint', (req, res) => {
+    const d = engine.tokenDetail(req.params.mint);
+    if (!d) return res.status(404).json({ error: 'unknown token' });
+    res.json(d);
+  });
+  app.get('/api/paper', (req, res) => {
+    res.json({ open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), config: config.paper });
+  });
+  app.get('/api/dataset', (req, res) => res.json(cDataset()));
+  app.get('/api/calibration', (req, res) => {
+    const cp = Number(req.query.checkpoint) || 120;
+    const hit = cCal.get(cp);
+    if (hit && Date.now() - hit.t < 30000) return res.json(hit.v);
+    const v = calibration(cp); cCal.set(cp, { t: Date.now(), v }); res.json(v);
+  });
+  app.get('/api/intel', (req, res) => res.json({ ruggers: q.topRuggers.all(25), creators: q.topCreators.all(25), smartWallets: getSmartList(40) }));
+  app.get('/api/config', (req, res) => res.json({ scoring: config.scoring, paper: config.paper, killRule: config.killRule, lifecycle: config.lifecycle, tradeSource: config.tradeSource, telegram: !!config.telegram.botToken }));
+
+  // Live stream
+  const clients = new Set();
+  app.get('/api/stream', (req, res) => {
+    res.set({ 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    res.flushHeaders();
+    res.write('retry: 3000\n\n');
+    clients.add(res);
+    req.on('close', () => clients.delete(res));
+  });
+  const push = (event, data) => { const s = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const c of clients) c.write(s); };
+  engine.on('alert', (a) => push('alert', a));
+  setInterval(() => { if (clients.size) { push('status', status()); push('radar', engine.radar(60)); } }, 2500);
+  setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); }, 1000);
+  setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
+
+  app.use(express.static(path.join(here, '..', 'public'), { maxAge: '5m' }));
+  app.listen(config.port, '0.0.0.0', () => log.info(`dashboard on http://0.0.0.0:${config.port}`));
+  return app;
+}

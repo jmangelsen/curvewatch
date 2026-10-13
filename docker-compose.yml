@@ -1,0 +1,28 @@
+services:
+  curvewatch:
+    build: .
+    container_name: curvewatch
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATA_DIR=/data
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8080:8080"   # only reachable through Caddy (HTTPS) or an SSH tunnel
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  caddy:
+    image: caddy:2
+    container_name: curvewatch-caddy
+    restart: unless-stopped
+    profiles: ["https"]          # enable with: docker compose --profile https up -d
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    network_mode: host
+
+volumes:
+  caddy_data:
