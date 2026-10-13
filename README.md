@@ -93,7 +93,8 @@ Set at minimum:
 |---|---|
 | `DASHBOARD_PASSWORD` | a long random string (`openssl rand -base64 24`) |
 | `TELEGRAM_BOT_TOKEN` | from **@BotFather** → `/newbot` |
-| `TELEGRAM_CHAT_ID` | send your bot any message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy `message.chat.id` |
+| `TELEGRAM_CHAT_ID` | open your bot, send `/start`, then run `TELEGRAM_BOT_TOKEN=<token> npm run tg-setup` (or `docker compose run --rm curvewatch node scripts/telegram-setup.js`). It prints your numeric chat id and sends a test message. A @username is not enough. |
+| `TELEGRAM_MODE` | `strong` (default): only strong signals and system messages. `all`: every alert too (expect dozens per hour). |
 | `HEALTHCHECK_URL` | free check at healthchecks.io (period 5 min, grace 5 min); you get emailed if the box or feed dies |
 | `RPC_WS_URLS` | leave the public default to start; later add `wss://mainnet.helius-rpc.com/?api-key=KEY,` in front |
 
@@ -199,6 +200,16 @@ journalctl -u curvewatch -f
 Penalties: dust-buy spam, partial bundle, creator sold, stalling, fewer than 15 buyers, more than 25% off peak.
 
 The social and dev-buy weights are anchored to published survival analysis (Telegram presence about 9× graduation lift; above-default initial mcap about 4.5× hazard ratio). That study's 24 h labels were later shown to be censored, so treat them as directional priors. **Your own backtest overrides them.**
+
+---
+
+## 5b. Graduates, strong signals, USD
+
+**Graduates tab.** Tracks tokens that already migrated off the bonding curve to PumpSwap and scores them for a second leg (volume pace vs. the hourly average, buy pressure, higher lows, breakouts, liquidity trend, survival). The base rate is hostile: of 11,303 migrations studied by [Belphor](https://www.belphor.com/data/migration-outcomes), 93% later traded at 20% or less of their migration price, 14% reached +50%, and 4.1% reached +200%. So the tab ignores the first 20 minutes after migration, requires $12k+ liquidity, and runs its own paper book and kill rule. Data is from the DexScreener public API (`tokens/v1`, 300 req/min; profiles and boosts 60/min, [docs](https://docs.dexscreener.com/api/reference)).
+
+**Strong signals.** A regular alert means "this scores well". A strong signal means "in your own recorded history, setups that scored like this reached +25% net of fees and slippage before falling 20%, at least 45% of the time, over 30+ independent tokens". Until that history exists, it fires only at score ≥ 85 (curve) or ≥ 82 (graduates), and each message says UNCALIBRATED. It's capped at 4 per hour. Every strong signal is graded afterwards as hit, stopped or flat on the Performance tab. Expect that the calibrated condition is rarely met: if no score band clears 45%, the system is telling you it has no +25% edge.
+
+**USD.** All money is shown in USD, converted at the live SOL/USD price from the deepest SOL/USDC pool on DexScreener (refreshed every 60 s). Internally the curve math stays in SOL.
 
 ---
 

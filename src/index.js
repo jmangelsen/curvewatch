@@ -7,9 +7,13 @@ import { Engine } from './engine/engine.js';
 import { refreshSmartWallets } from './engine/intel.js';
 import * as paper from './engine/paper.js';
 import { metaStats, metaQueueLen } from './engine/metadata.js';
-import { sendTelegram, tgEnabled } from './engine/telegram.js';
+import { sendTelegram, tgEnabled, tgStats } from './engine/telegram.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
+import { Graduates } from './engine/graduates.js';
+import { market, refreshSolUsd, solToUsd } from './market.js';
+import { Strong } from './engine/strong.js';
+import { config as cfg } from './config.js';
 import { datasetStats, alertStats } from './stats.js';
 import { round } from './util.js';
 import { logger } from './log.js';
@@ -21,14 +25,20 @@ const startedAt = Date.now();
 const pp = new PumpPortalFeed();
 const rpcs = config.tradeSource === 'rpc' ? Array.from({ length: Math.max(1, config.rpc.parallel) }, (_, i) => new RpcLogsFeed(i)) : [];
 const engine = new Engine({ pumpportal: pp });
+const grads = new Graduates();
+const strong = new Strong();
+engine.on('alert', (a) => { try { strong.consider('curve', { ...a, mcapUsd: market.solUsd ? a.mcap * market.solUsd : null }); } catch (e) { log.warn('strong (curve) failed', e.message); } });
+grads.on('alert', (a) => { try { strong.consider('grad', { ...a, mcapUsd: a.mcap }); } catch (e) { log.warn('strong (grad) failed', e.message); } });
+
+const refreshPx = () => refreshSolUsd(grads.solUsd).then((px) => { if (px && !grads.solUsd) grads.solUsd = px; });
 
 pp.on('create', (e) => engine.onCreate(e));
 pp.on('trade', (e) => engine.onTrade(e));
-pp.on('migrate', (e) => engine.onGraduate(e));
+pp.on('migrate', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name }); });
 for (const rpc of rpcs) {
   rpc.on('create', (e) => engine.onCreate(e)); // redundancy: launches still flow if PumpPortal is down
   rpc.on('trade', (e) => engine.onTrade(e));
-  rpc.on('complete', (e) => engine.onGraduate(e));
+  rpc.on('complete', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name }); });
 }
 
 const feeds = [pp, ...rpcs];
@@ -49,6 +59,10 @@ function status() {
     memMb: round(mem.rss / 1048576, 0),
     kill: { status: k.status, n: k.n, needed: k.needed, expectancyPct: k.expectancyPct, ciLowPct: k.ciLowPct, ciHighPct: k.ciHighPct, totalPnlSol: k.totalPnlSol, winRatePct: k.winRatePct },
     telegram: tgEnabled(),
+    telegramStats: tgStats(),
+    solUsd: market.solUsd, solUsdAt: market.solUsdAt,
+    grads: grads.stats(),
+    gradKill: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }))(grads.kill()),
     alertScore: config.scoring.alertScore,
   };
 }
@@ -103,10 +117,26 @@ setInterval(() => {
   ].join('\n'));
 }, 60000);
 
+// ---- post-graduation tracker ----
+if (cfg.grads.enabled) {
+  setInterval(() => grads.poll().catch((e) => log.error('grad poll failed', e.stack)), cfg.grads.pollSec * 1000);
+  setInterval(() => grads.seed(), 5 * 60 * 1000);
+  setInterval(() => { try { grads.label(); } catch (e) { log.warn('grad label failed', e.message); } }, 5 * 60 * 1000);
+}
+setInterval(refreshPx, 60000);
+setInterval(() => { try { strong.label(); } catch (e) { log.warn('strong label failed', e.message); } }, 5 * 60 * 1000);
+
 // ---- boot ----
+await refreshPx();
+if (cfg.grads.enabled) {
+  grads.restore();
+  // Cold start: recent graduations we recorded ourselves, then DexScreener's Pump.fun profiles/boosts.
+  for (const r of db.prepare('SELECT mint, symbol, name FROM tokens WHERE graduated=1 AND graduated_at > ?').all(Date.now() - cfg.grads.maxAgeHours * 3600000)) grads.add(r.mint, 'migration', r);
+  grads.seed().then(() => grads.poll());
+}
 refreshSmartWallets();
 paper.restoreOpen(engine.getToken);
-startServer({ engine, status });
+startServer({ engine, status, grads, strong });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

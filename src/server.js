@@ -8,11 +8,12 @@ import { datasetStats, calibration, alertStats } from './stats.js';
 import * as paper from './engine/paper.js';
 import { getSmartList } from './engine/intel.js';
 import { logger } from './log.js';
+import { notify, tgEnabled } from './engine/telegram.js';
 
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status }) {
+export function startServer({ engine, status, grads, strong }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -65,6 +66,21 @@ export function startServer({ engine, status }) {
   app.get('/api/intel', (req, res) => res.json({ ruggers: q.topRuggers.all(25), creators: q.topCreators.all(25), smartWallets: getSmartList(40) }));
   app.get('/api/config', (req, res) => res.json({ scoring: config.scoring, paper: config.paper, killRule: config.killRule, lifecycle: config.lifecycle, tradeSource: config.tradeSource, telegram: !!config.telegram.botToken }));
 
+  // Post-graduation tracker
+  app.get('/api/grads', (req, res) => res.json({ ...grads.board(Math.min(200, Number(req.query.limit) || 80)), stats: grads.stats() }));
+  app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));
+  app.get('/api/grads/paper', (req, res) => res.json(grads.paper()));
+  app.get('/api/grads/calibration', (req, res) => res.json(grads.calibration()));
+  app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
+
+  // Strong signals + Telegram test
+  app.get('/api/strong', (req, res) => res.json(strong.view(Math.min(100, Number(req.query.limit) || 30))));
+  app.post('/api/telegram/test', (req, res) => {
+    if (!tgEnabled()) return res.status(400).json({ ok: false, error: 'Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (see scripts/telegram-setup.js).' });
+    notify('<b>Curvewatch test</b> · strong signals will arrive in this chat.', 'strong');
+    res.json({ ok: true });
+  });
+
   // Live stream
   const clients = new Set();
   app.get('/api/stream', (req, res) => {
@@ -76,8 +92,9 @@ export function startServer({ engine, status }) {
   });
   const push = (event, data) => { const s = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const c of clients) c.write(s); };
   engine.on('alert', (a) => push('alert', a));
+  grads.on('alert', (a) => push('gradAlert', a));
   setInterval(() => { if (clients.size) { push('status', status()); push('radar', engine.radar(60)); } }, 2500);
-  setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); }, 1000);
+  setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); while (grads.paperEvents.length) push('gradPaper', grads.paperEvents.shift()); }, 1000);
   setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
 
   app.use(express.static(path.join(here, '..', 'public'), { maxAge: '5m' }));

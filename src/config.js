@@ -100,10 +100,57 @@ export const config = {
     windowTrades: num('KILL_WINDOW_TRADES', 200),
   },
 
+  // ---- Post-graduation tracker (PumpSwap survivors, data from DexScreener's free API) ----
+  grads: {
+    enabled: bool('GRAD_ENABLED', true),
+    pollSec: num('GRAD_POLL_SEC', 60), // one batched DexScreener pass over the watchlist
+    maxWatch: num('GRAD_MAX_WATCH', 900), // 30 tokens per request -> 30 requests per pass
+    minAgeMin: num('GRAD_MIN_AGE_MIN', 20), // skip the BOOST buyback window and the migration dump
+    maxAgeHours: num('GRAD_MAX_AGE_H', 72),
+    minLiqUsd: num('GRAD_MIN_LIQ_USD', 12000),
+    deadLiqUsd: num('GRAD_DEAD_LIQ_USD', 4000), // dropped from the watchlist below this
+    collapsedFrac: num('GRAD_COLLAPSED_FRAC', 0.2), // rejected at <= 20% of the migration price
+    alertScore: num('GRAD_ALERT_SCORE', 70),
+    alertCooldownMin: num('GRAD_ALERT_COOLDOWN_MIN', 120),
+    seedFromDex: bool('GRAD_SEED_DEX', true), // also watch Pump.fun tokens surfacing in DexScreener profiles/boosts
+    snapshotEveryMin: num('GRAD_SNAPSHOT_MIN', 10),
+  },
+  gradPaper: {
+    enabled: bool('GRAD_PAPER_ENABLED', true),
+    sizeSol: num('GRAD_PAPER_SIZE_SOL', 0.2),
+    feePct: num('GRAD_PAPER_FEE_PCT', 1.0), // PumpSwap fee tier varies with mcap; 1% each side is conservative
+    extraSlippagePct: num('GRAD_PAPER_EXTRA_SLIPPAGE_PCT', 2),
+    tp1Multiple: num('GRAD_PAPER_TP1_MULT', 1.5),
+    tp1Fraction: num('GRAD_PAPER_TP1_FRACTION', 0.5),
+    trailPct: num('GRAD_PAPER_TRAIL_PCT', 25),
+    stopPct: num('GRAD_PAPER_STOP_PCT', 30),
+    maxHoldMin: num('GRAD_PAPER_MAX_HOLD_MIN', 360),
+  },
+
+  // ---- Strong signals: high-conviction tier pushed to Telegram ----
+  // "Strong" means your own history says setups like this reached +TARGET% (net of fees and slippage)
+  // before falling STOP%, at least MIN_HIT% of the time over MIN_SAMPLES+ cases. Until that history
+  // exists the trigger falls back to a strict score cutoff and every message says it is uncalibrated.
+  strong: {
+    enabled: bool('STRONG_ENABLED', true),
+    targetPct: num('STRONG_TARGET_PCT', 25),
+    stopPct: num('STRONG_STOP_PCT', 20),
+    minHitPct: num('STRONG_MIN_HIT_PCT', 45),
+    minSamples: num('STRONG_MIN_SAMPLES', 30),
+    scoreBand: num('STRONG_SCORE_BAND', 6), // "similar" = historical snapshots within +/- this many score points
+    fallbackCurveScore: num('STRONG_FALLBACK_CURVE_SCORE', 85),
+    fallbackGradScore: num('STRONG_FALLBACK_GRAD_SCORE', 82),
+    maxPerHour: num('STRONG_MAX_PER_HOUR', 4),
+    lookbackDays: num('STRONG_LOOKBACK_DAYS', 30),
+  },
+
   // ---- Alerts / ops ----
   telegram: {
     botToken: str('TELEGRAM_BOT_TOKEN', ''),
     chatId: str('TELEGRAM_CHAT_ID', ''),
+    strongChatId: str('TELEGRAM_STRONG_CHAT_ID', ''), // optional separate chat for strong signals
+    // all = every alert + strong signals; strong = only strong signals + system messages; off = nothing
+    mode: str('TELEGRAM_MODE', 'strong'),
     dailySummaryHour: num('DAILY_SUMMARY_HOUR', 8),
     timezone: str('TZ_NAME', 'America/Denver'),
   },

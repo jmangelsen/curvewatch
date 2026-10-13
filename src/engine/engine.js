@@ -7,7 +7,8 @@ import { score } from './score.js';
 import { enqueueMetadata } from './metadata.js';
 import { creatorRep, recordLaunch, recordCreatorOutcome, learnWallets, flushWallets, getSmartSet } from './intel.js';
 import * as paper from './paper.js';
-import { sendTelegram, esc } from './telegram.js';
+import { solToUsd } from '../market.js';
+import { notify, sendTelegram, esc } from './telegram.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
 
@@ -97,7 +98,7 @@ export class Engine extends EventEmitter {
     this.counters.grads++; this.recentGrads.push(Date.now()); this.hour().grads++;
     q.markGraduated.run(t.graduatedAt || Date.now(), t.mint);
     this.pp?.unwatchTrades(t.mint);
-    if (t.alertId) sendTelegram(`<b>GRADUATED</b> · <b>${esc(t.symbol)}</b> graduated to PumpSwap (alert #${t.alertId}). Peak ${round(t.peakMcap, 0)} SOL mcap.`);
+    if (t.alertId) notify(`<b>GRADUATED</b> · <b>${esc(t.symbol)}</b> graduated to PumpSwap (alert #${t.alertId}). Peak mcap ${solToUsd(t.peakMcap)}.`, 'alert');
   }
 
   /** Main loop body: score, snapshot, alert, age out, finalize. */
@@ -164,15 +165,15 @@ export class Engine extends EventEmitter {
     log.info(`ALERT #${id} ${t.symbol} score ${s.score} mcap ${round(t.mcap, 1)} SOL age ${round(f.ageSec, 0)}s`);
     const lines = [
       `<b>ALERT · ${esc(t.symbol)}</b> · ${esc(t.name)}  —  score <b>${s.score}</b>`,
-      `mcap ${round(t.mcap, 1)} SOL · curve ${round(f.progressPct, 0)}% · age ${Math.floor(f.ageSec / 60)}m${Math.round(f.ageSec % 60)}s`,
-      `${f.uniqueBuyers} buyers · net +${round(f.netSol, 1)} SOL · top10 ${round(f.top10Pct, 0)}%`,
+      `mcap ${solToUsd(t.mcap)} · curve ${round(f.progressPct, 0)}% · age ${Math.floor(f.ageSec / 60)}m${Math.round(f.ageSec % 60)}s`,
+      `${f.uniqueBuyers} buyers · net inflow ${solToUsd(f.netSol, true)} · top10 ${round(f.top10Pct, 0)}%`,
       s.reasons.length ? `+ ${esc(s.reasons.join(' · '))}` : '',
       s.flags.length ? `! ${esc(s.flags.join(' · '))}` : '',
       `<code>${t.mint}</code>`,
       `<a href="https://pump.fun/coin/${t.mint}">pump.fun</a> · <a href="https://solscan.io/token/${t.mint}">solscan</a> · <a href="https://dexscreener.com/solana/${t.mint}">dexscreener</a>`,
       `<i>Screener signal, not advice. Paper entry in ${config.paper.entryDelaySec}s.</i>`,
     ].filter(Boolean);
-    sendTelegram(lines.join('\n'));
+    notify(lines.join('\n'), 'alert');
   }
 
   finalizeToken(t) {

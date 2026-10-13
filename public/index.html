@@ -2,7 +2,10 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d0f" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Curvewatch · Pump.fun runner screener</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -22,11 +25,13 @@
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="live">Live</button>
+    <button role="tab" aria-selected="false" data-tab="grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="perf">Performance</button>
     <button role="tab" aria-selected="false" data-tab="intel">Intel</button>
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
+    <div id="solPill" class="pill sol-pill" title="SOL/USD reference price (deepest USDC pool)">SOL –</div>
     <div id="killBadge" class="kill-badge" title="Kill rule status">—</div>
     <button id="themeBtn" class="icon-btn" aria-label="Toggle color theme">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -54,11 +59,55 @@
       </article>
       <article class="card board-card">
         <div class="card-head"><h2>Live board</h2><span class="hint" id="boardHint"></span></div>
-        <div class="table-wrap"><table class="board" id="board">
+        <div class="table-wrap"><table class="board responsive" id="board">
           <thead><tr>
             <th>Token</th><th class="num">Age</th><th class="num">Mcap</th><th>Curve</th><th class="num">Buyers</th>
-            <th class="num">Net/min</th><th class="num">60s flow</th><th class="num">Top10</th><th class="num">Bundle</th><th>Score</th><th>Signal</th>
+            <th class="num">Net in/min</th><th class="num">60s flow</th><th class="num">Top10</th><th class="num">Bundle</th><th>Score</th><th>Signal</th>
           </tr></thead><tbody></tbody></table></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- GRADUATES -->
+  <section id="tab-grads" class="tab-panel" hidden>
+    <div class="kpis" id="gKpis"></div>
+    <div class="baseline" role="note">
+      <span class="baseline-tag">Base rate</span>
+      <span>Of 11,303 migrations, 93% later traded at 20% or less of their migration price; 14% reached +50% and 4.1% reached +200% (<a href="https://www.belphor.com/data/migration-outcomes" target="_blank" rel="noopener">Belphor</a>). This tab ignores the first <span id="gMinAge">20</span> minutes after migration and only scores survivors.</span>
+    </div>
+    <div class="grid-grads">
+      <article class="card gboard-card">
+        <div class="card-head"><h2>Re-ignition board</h2><span class="hint" id="gBoardHint"></span></div>
+        <div class="table-wrap"><table class="board responsive" id="gBoard">
+          <thead><tr>
+            <th>Token</th><th class="num">Since grad</th><th class="num">Mcap</th><th class="num">Liquidity</th><th class="num">vs grad</th><th>6h</th>
+            <th class="num">Vol pace</th><th class="num">Buys 5m</th><th class="num">1h</th><th>Score</th><th>Signal</th>
+          </tr></thead><tbody></tbody></table></div>
+      </article>
+      <article class="card galerts-card">
+        <div class="card-head"><h2>Re-ignition alerts</h2><span class="hint" id="gAlertHint"></span></div>
+        <div id="gAlerts" class="alert-list"></div>
+      </article>
+      <article class="card gkill-card">
+        <div class="card-head"><h2>Kill rule · graduates</h2><span class="hint">separate paper book, AMM price impact and fees</span></div>
+        <div id="gKill"></div>
+      </article>
+      <article class="card gcal-card">
+        <div class="card-head"><h2>Score calibration</h2><span class="hint">outcome 6h after each snapshot</span></div>
+        <p class="explain">Higher score buckets should show more +50% runs and fewer halvings. If they don't, the weights are noise; adjust them in <code>src/engine/graduates.js</code>.</p>
+        <div id="gCal" class="chart"></div>
+      </article>
+      <article class="card gpos-card">
+        <div class="card-head"><h2>Positions · graduates</h2><span class="hint" id="gPosHint"></span></div>
+        <div class="table-wrap"><table class="board responsive" id="gPositions"><thead><tr><th>Token</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
+      </article>
+      <article class="card gfilter-card">
+        <div class="card-head"><h2>Not scored</h2><span class="hint" id="gFilterHint"></span></div>
+        <div class="seg" role="tablist" aria-label="Filtered token lists">
+          <button role="tab" aria-selected="true" data-f="rejected">Filtered out</button>
+          <button role="tab" aria-selected="false" data-f="warming">Warming up</button>
+        </div>
+        <div id="gFilter" class="mini-list"></div>
       </article>
     </div>
   </section>
@@ -66,6 +115,11 @@
   <!-- PERFORMANCE -->
   <section id="tab-perf" class="tab-panel" hidden>
     <div class="grid-perf">
+      <article class="card strong-card">
+        <div class="card-head"><h2>Telegram strong signals</h2><span class="hint" id="strongHint"></span>
+          <button class="btn" id="tgTest" type="button">Send test message</button></div>
+        <div id="strong"></div>
+      </article>
       <article class="card kill-card">
         <div class="card-head"><h2>Kill rule</h2><span class="hint">paper trades with reaction delay, slippage and fees</span></div>
         <div id="kill"></div>
@@ -85,7 +139,7 @@
       </article>
       <article class="card positions-card">
         <div class="card-head"><h2>Positions</h2><span class="hint" id="posHint"></span></div>
-        <div class="table-wrap"><table class="board" id="positions"><thead><tr><th>Token</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table class="board responsive" id="positions"><thead><tr><th>Token</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
       </article>
     </div>
   </section>

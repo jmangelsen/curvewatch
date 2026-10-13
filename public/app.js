@@ -10,6 +10,23 @@ const short = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
 const age = (s) => { s = Math.max(0, s); return s < 60 ? `${Math.floor(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m${String(Math.floor(s % 60)).padStart(2, '0')}` : `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`; };
 const ago = (t) => age((Date.now() - t) / 1000);
 const cls = (x) => (x > 0 ? 'up' : x < 0 ? 'down' : 'muted');
+// Money is shown in USD. SOL amounts convert at the live SOL/USD reference price from the backend.
+const solPx = () => S.status?.solUsd || null;
+const usd = (v, opt = {}) => {
+  if (v == null || !Number.isFinite(+v)) return '–';
+  if (Math.abs(v) < 0.005) return '$0.00';
+  const a = Math.abs(v), sg = v < 0 ? '−' : opt.sign && v > 0 ? '+' : '';
+  const f = (x, d) => x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  if (a >= 1e9) return `${sg}$${f(a / 1e9, 2)}B`;
+  if (a >= 1e6) return `${sg}$${f(a / 1e6, 2)}M`;
+  if (a >= 1e4) return `${sg}$${f(a / 1e3, 1)}k`;
+  if (a >= 1e3) return `${sg}$${f(a / 1e3, 2)}k`;
+  if (a >= 100) return `${sg}$${f(a, 0)}`;
+  if (a >= 1) return `${sg}$${f(a, 2)}`;
+  return `${sg}$${f(a, a >= 0.01 ? 2 : 4)}`;
+};
+const sUsd = (sol, opt) => (sol == null ? '–' : solPx() ? usd(sol * solPx(), opt) : `${n(sol, 2)} SOL`);
+const sUsdSigned = (sol) => sUsd(sol, { sign: true });
 const get = (p) => fetch(API + p, { credentials: 'same-origin' }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
 const S = { status: null, radar: null, alerts: null, paper: null, dataset: null, cal: null, intel: null, tab: 'live', seenAlerts: new Set(), firstAlertLoad: true };
@@ -17,14 +34,17 @@ const S = { status: null, radar: null, alerts: null, paper: null, dataset: null,
 // ---------- theme ----------
 const root = document.documentElement;
 root.dataset.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-$('#themeBtn').onclick = () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; drawRadar(); renderPerf(); renderIntel(); };
+const metaTheme = document.querySelector('meta[name=theme-color]');
+const syncTheme = () => metaTheme && (metaTheme.content = root.dataset.theme === 'dark' ? '#0b0d0f' : '#f3f2ee'); syncTheme();
+$('#themeBtn').onclick = () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; syncTheme(); drawRadar(); renderPerf(); renderIntel(); renderGrads(); };
 
 // ---------- tabs ----------
 document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); if (S.tab === 'live') requestAnimationFrame(drawRadar);
+  if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); if (S.tab === 'grads') loadGrads(); if (S.tab === 'live') requestAnimationFrame(drawRadar);
+  scrollTo({ top: 0, behavior: 'instant' });
 });
 
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200); }
@@ -33,25 +53,26 @@ function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.ad
 function renderStatus() {
   const s = S.status; if (!s) return;
   $('#feeds').innerHTML = s.feeds.map((f) => `<span class="pill" title="${esc(f.lastError || 'ok')}"><i class="led ${f.healthy ? 'on' : ''}"></i>${f.name} ${f.name.startsWith('rpc') ? `${n(f.evPerSec, 0)} ev/s` : `${n(f.secSinceMessage, 0)}s`}</span>`).join('');
+  $('#solPill').textContent = s.solUsd ? `SOL $${n(s.solUsd, 2)}` : 'SOL –';
   const k = s.kill;
   $('#legMid').textContent = `50–${s.alertScore - 1}`; $('#legHi').textContent = `≥ ${s.alertScore} (alert zone)`;
-  const kb = $('#killBadge'); kb.className = `kill-badge ${k.status}`; kb.textContent = k.status === 'COLLECTING' ? `KILL RULE · ${k.n}/${k.needed}` : `KILL RULE · ${k.status}`;
+  const kb = $('#killBadge'); kb.className = `kill-badge ${k.status}`; kb.innerHTML = `<span class="kb-l">KILL RULE · </span>${k.status === 'COLLECTING' ? `${k.n}/${k.needed}` : k.status}`; kb.title = `Kill rule: ${k.status} (${k.n}/${k.needed} trades)`;
   const e = s.engine;
   const kp = [
-    ['Launches / min', n(e.launchesPerMin, 1), `${n(e.launches1h, 0)} in last hour`],
+    ['Launches / min', n(e.launchesPerMin, 1), (S.status?.uptimeSec ?? 3600) < 3600 ? `${n(e.launches1h, 0)} in ${Math.max(1, Math.floor(S.status.uptimeSec / 60))}m since restart` : `${n(e.launches1h, 0)} in last hour`],
     ['Tracking now', n(e.tracked, 0), `${S.radar ? S.radar.activeCount : '–'} on active curve`],
     ['Graduations 1h', n(e.grads1h, 0), e.launches1h ? `${pct((e.grads1h / e.launches1h) * 100, 2)} of launches` : '–'],
     ['Alerts', n(e.alerts, 0), `score ≥ ${s.alertScore}`],
-    ['Paper P&L', `<span class="${cls(k.totalPnlSol)}">${signed(k.totalPnlSol, 3)}</span>`, 'SOL, closed trades'],
+    ['Paper P&L', `<span class="${cls(k.totalPnlSol)}">${sUsdSigned(k.totalPnlSol)}</span>`, `${k.n} closed trades`],
     ['Expectancy', `<span class="${cls(k.expectancyPct)}">${k.n ? signed(k.expectancyPct, 1, '%') : '–'}</span>`, k.n > 1 ? `95% CI ${signed(k.ciLowPct, 0)} … ${signed(k.ciHighPct, 0)}` : 'per trade, after costs'],
   ];
   $('#kpis').innerHTML = kp.map(([l, v, sub]) => `<div class="kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
 }
 
 // ---------- board ----------
-function scoreBar(sc, reject) {
+function scoreBar(sc, reject, thr = S.status?.alertScore ?? 72) {
   if (reject) return `<span class="reject" title="${esc(reject)}">✕ ${esc(reject.length > 26 ? reject.slice(0, 25) + '…' : reject)}</span>`;
-  const c = sc >= (S.status?.alertScore ?? 72) ? 'hi' : sc >= 50 ? 'mid' : '';
+  const c = sc >= thr ? 'hi' : sc >= 50 ? 'mid' : '';
   return `<div class="scorecell"><div class="bar score ${c}"><i style="width:${Math.min(100, sc)}%"></i></div>${n(sc, 0)}</div>`;
 }
 function renderBoard() {
@@ -60,17 +81,17 @@ function renderBoard() {
   const rows = r.rows.slice(0, 30);
   $('#board tbody').innerHTML = rows.length ? rows.map((t) => `
     <tr data-mint="${t.mint}">
-      <td><div class="tok"><span class="sym">${esc(t.symbol || '?')}</span><small>${esc(t.name)}</small></div></td>
-      <td class="num">${age(t.ageSec)}</td>
-      <td class="num">${n(t.mcapSol, 1)}</td>
-      <td><div class="bar"><i style="width:${Math.min(100, t.progressPct)}%"></i></div></td>
-      <td class="num">${t.buyers}</td>
-      <td class="num ${cls(t.f.netSolPerMin)}">${signed(t.f.netSolPerMin, 2)}</td>
-      <td class="num ${cls(t.f.flow60Sol)}">${signed(t.f.flow60Sol, 2)}</td>
-      <td class="num">${pct(t.f.top10Pct, 0)}</td>
-      <td class="num ${t.f.bundlePct >= 25 ? 'down' : ''}">${pct(t.f.bundlePct, 0)}</td>
-      <td>${scoreBar(t.score ?? 0, t.reject)}</td>
-      <td class="faint" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc((t.reasons || []).slice(0, 2).join(' · ') || (t.flags || []).slice(0, 2).join(' · '))}</td>
+      <td class="c-tok"><div class="tok"><span class="sym">${esc(t.symbol || '?')}</span><small>${esc(t.name)}</small></div></td>
+      <td class="num" data-label="Age">${age(t.ageSec)}</td>
+      <td class="num" data-label="Mcap">${sUsd(t.mcapSol)}</td>
+      <td data-label="Curve ${n(t.progressPct, 0)}%"><div class="bar"><i style="width:${Math.min(100, t.progressPct)}%"></i></div></td>
+      <td class="num" data-label="Buyers">${t.buyers}</td>
+      <td class="num ${cls(t.f.netSolPerMin)}" data-label="Net in/min">${sUsdSigned(t.f.netSolPerMin)}</td>
+      <td class="num ${cls(t.f.flow60Sol)}" data-label="60s flow">${sUsdSigned(t.f.flow60Sol)}</td>
+      <td class="num" data-label="Top 10">${pct(t.f.top10Pct, 0)}</td>
+      <td class="num ${t.f.bundlePct >= 25 ? 'down' : ''}" data-label="Bundle">${pct(t.f.bundlePct, 0)}</td>
+      <td class="c-score">${scoreBar(t.score ?? 0, t.reject)}</td>
+      <td class="faint c-sig" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc((t.reasons || []).slice(0, 2).join(' · ') || (t.flags || []).slice(0, 2).join(' · '))}</td>
     </tr>`).join('') : `<tr><td colspan="11"><div class="empty"><strong>Waiting for launches</strong>New tokens appear here within seconds of creation.</div></td></tr>`;
 }
 $('#board').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-mint]'); if (tr) openDrawer(tr.dataset.mint); });
@@ -88,7 +109,7 @@ function renderAlerts() {
     S.seenAlerts.add(x.id);
     return `<div class="alert ${fresh ? 'fresh' : ''}" data-mint="${x.mint}">
       <div class="alert-top"><span class="score-badge">${n(x.score, 0)}</span><span class="sym">${esc(x.symbol || '?')}</span><span class="name">${esc(x.name || '')}</span><span class="when">${ago(x.ts)} ago</span></div>
-      <div class="alert-meta"><span>alert ${n(x.mcap, 1)} SOL</span><span>age ${age(x.age_sec)}</span><span>curve ${pct(x.progress, 0)}</span>
+      <div class="alert-meta"><span>alert ${sUsd(x.mcap)}</span><span>age ${age(x.age_sec)}</span><span>curve ${pct(x.progress, 0)}</span>
         <span>peak <b class="mult ${peak >= 2 ? 'up' : ''}">${peak ? n(peak, 2) + '×' : '–'}</b></span>
         <span>${x.finalized ? '1h' : 'now'} <b class="mult ${cls((nowM ?? 1) - 1)}">${nowM ? n(nowM, 2) + '×' : '–'}</b></span>
         ${x.graduated || x.graduatedLive ? '<span class="up">graduated</span>' : ''}</div>
@@ -158,7 +179,7 @@ function drawRadar() {
     ctx.fillStyle = css('--surface-3'); ctx.strokeStyle = css('--border'); ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
     ctx.fillStyle = css('--text'); ctx.font = '600 12px Geist, sans-serif'; ctx.fillText(`${t.symbol} · score ${t.reject ? '✕' : n(t.score, 0)}`, bx + 10, by + 18);
     ctx.font = '11px Geist Mono, monospace'; ctx.fillStyle = css('--text-muted');
-    ctx.fillText(`${n(t.mcapSol, 1)} SOL · curve ${n(t.progressPct, 0)}%`, bx + 10, by + 36);
+    ctx.fillText(`${sUsd(t.mcapSol)} · curve ${n(t.progressPct, 0)}%`, bx + 10, by + 36);
     ctx.fillText(`${t.buyers} buyers · age ${age(t.ageSec)}`, bx + 10, by + 52);
   }
 }
@@ -206,14 +227,8 @@ function barsChart(el, cats, series, { h = 240, yMax = null, yFmt = (v) => `${n(
   return (el.innerHTML = out + '</g></svg>');
 }
 
-// ---------- performance ----------
-async function loadPerf() {
-  try { [S.paper, S.cal] = await Promise.all([get('/api/paper'), get(`/api/calibration?checkpoint=${$('#cpSel').value}`)]); renderPerf(); } catch (e) { console.warn(e); }
-}
-$('#cpSel').onchange = loadPerf;
-function renderPerf() {
-  if (!S.paper) return;
-  const k = S.paper.kill, cfg = S.paper.config;
+// ---------- kill rule card (shared by both paper books) ----------
+function killHtml(k, model) {
   const color = { PASS: 'up', FAIL: 'down', MARGINAL: 'acc', COLLECTING: 'acc' }[k.status];
   const verdict = {
     COLLECTING: `Collecting evidence: ${k.n} of ${k.needed} closed trades. No verdict until the sample is large enough.`,
@@ -223,14 +238,14 @@ function renderPerf() {
   }[k.status];
   const lo = Math.min(-50, k.ciLowPct ?? 0), hi = Math.max(50, k.ciHighPct ?? 0);
   const sx = (v) => 10 + ((v - lo) / (hi - lo)) * 280;
-  $('#kill').innerHTML = `
+  return `
     <div class="kill-status ${color}">${k.status}</div>
     ${k.status === 'COLLECTING' ? `<div class="progress"><i style="width:${Math.min(100, (k.n / k.needed) * 100)}%"></i></div>` : ''}
     <div class="kill-grid">
       <div><div class="label">Expectancy / trade</div><div class="value ${cls(k.expectancyPct)}">${k.n ? signed(k.expectancyPct, 1, '%') : '–'}</div></div>
       <div><div class="label">Win rate</div><div class="value">${k.n ? pct(k.winRatePct, 0) : '–'}</div></div>
-      <div><div class="label">Profit factor</div><div class="value">${k.profitFactor != null ? n(k.profitFactor, 2) : '–'}</div></div>
-      <div><div class="label">Total P&amp;L</div><div class="value ${cls(k.totalPnlSol)}">${signed(k.totalPnlSol, 3)} SOL</div></div>
+      <div><div class="label">Profit factor</div><div class="value">${k.profitFactor != null && k.n ? n(k.profitFactor, 2) : '–'}</div></div>
+      <div><div class="label">Total P&amp;L</div><div class="value ${cls(k.totalPnlSol)}">${sUsdSigned(k.totalPnlSol)}</div></div>
       <div><div class="label">Best / worst</div><div class="value">${k.n ? `${signed(k.bestPct, 0, '%')} / ${signed(k.worstPct, 0, '%')}` : '–'}</div></div>
       <div><div class="label">Trades in window</div><div class="value">${k.n}</div></div>
     </div>
@@ -239,18 +254,66 @@ function renderPerf() {
       ${k.n > 1 ? `<line x1="${sx(k.ciLowPct)}" x2="${sx(k.ciHighPct)}" y1="28" y2="28" stroke="${css(color === 'up' ? '--up' : color === 'down' ? '--down' : '--accent')}" stroke-width="6" stroke-linecap="round" opacity=".55"/>
       <circle cx="${sx(k.expectancyPct)}" cy="28" r="5" fill="${css('--text')}"/>` : ''}
       <text x="${sx(0)}" y="54" text-anchor="middle" font-size="10" fill="${css('--text-faint')}" font-family="Geist Mono">0%</text></svg></div>
-    <p class="kill-note">${verdict}<br/>Model: ${cfg.sizeSol} SOL per alert, entry ${cfg.entryDelaySec}s after the alert at the live curve price, ${cfg.feePct}% fee each side, +${cfg.extraSlippagePct}% slippage; sell ${cfg.tp1Fraction * 100}% at ${cfg.tp1Multiple}×, ${cfg.trailPct}% trailing stop, −${cfg.stopPct}% hard stop, ${cfg.maxHoldMin} min max hold.</p>`;
-  $('#eqHint').textContent = `${k.allTrades} closed · cumulative SOL`;
-  lineChart($('#equity'), k.equity.map((e) => [e.t, e.eq]), { yFmt: (v) => n(v, 2), color: css(k.totalPnlSol >= 0 ? '--up' : '--down') });
+    <p class="kill-note">${verdict}<br/>${model}</p>`;
+}
+
+// ---------- performance ----------
+async function loadPerf() {
+  try { [S.paper, S.cal, S.strong] = await Promise.all([get('/api/paper'), get(`/api/calibration?checkpoint=${$('#cpSel').value}`), get('/api/strong').catch(() => null)]); renderPerf(); renderStrong(); } catch (e) { console.warn(e); }
+}
+function renderStrong() {
+  const st = S.strong; if (!st) return;
+  const tg = S.status?.telegramStats || {}, c = st.config, sm = st.summary;
+  const tgState = !tg.enabled ? '<span class="down">not configured</span>' : tg.lastError && (!tg.lastOkAt) ? '<span class="down">failing</span>' : '<span class="up">connected</span>';
+  $('#strongHint').textContent = `+${c.targetPct}% target before −${c.stopPct}% stop, after fees and slippage`;
+  const rd = (label, r, fb) => {
+    const ok = r.n >= c.minSamples;
+    return `<div><strong>${label}</strong> · ${ok ? '<span class="up">calibrated</span>' : '<span class="acc">uncalibrated</span>'}
+      <div class="progress"><i style="width:${Math.min(100, (r.n / c.minSamples) * 100)}%"></i></div>
+      <span class="faint">${r.n} of ${c.minSamples} similar setups labeled${r.n ? ` · ${pct(r.rate, 0)} reached the target first` : ''}. ${ok ? `Fires when that rate is ≥ ${c.minHitPct}%.` : `Until then it fires only at score ≥ ${fb}, and the message says UNCALIBRATED.`}</span></div>`;
+  };
+  const rows = st.rows.length ? st.rows.map((r) => `<div class="srow" data-mint="${r.mint}" data-kind="${r.kind}">
+      <span><span class="sym">${esc(r.symbol || '?')}</span> <span class="faint">${r.kind === 'curve' ? 'curve' : 'graduate'}</span></span>
+      <span class="s-why faint">${esc((r.reasons || []).slice(0, 3).join(' · ') || '–')}</span>
+      <span class="num">${usd(r.ref_mcap_usd)}</span>
+      <span class="${r.mode === 'calibrated' ? 'up' : 'acc'}">${r.mode === 'calibrated' ? `${Math.round(r.hit_rate)}% / n${r.n}` : 'uncal.'}</span>
+      <span class="${r.outcome === 'hit' ? 'up' : r.outcome === 'stopped' ? 'down' : 'faint'}">${r.labeled ? r.outcome : `${ago(r.ts)} ago`}</span></div>`).join('')
+    : `<div class="empty"><strong>No strong signals yet</strong>Regular alerts are frequent; strong signals are rare by design. Most hours will have none.</div>`;
+  $('#strong').innerHTML = `
+    <div class="strong-top">
+      <div><div class="label">Telegram</div><div class="value">${tgState}</div><div class="sub">mode ${esc(tg.mode || '–')} · ${tg.sent || 0} sent · ${tg.failed || 0} failed</div></div>
+      <div><div class="label">Strong signals 24h</div><div class="value">${sm.last24h || 0}</div><div class="sub">cap ${c.maxPerHour}/hour</div></div>
+      <div><div class="label">Labeled hit rate</div><div class="value">${sm.labeled ? pct(sm.hitRatePct, 0) : '–'}</div><div class="sub">${sm.hits || 0} hit · ${sm.stopped || 0} stopped · ${sm.labeled || 0} labeled</div></div>
+      <div><div class="label">Calibrated share</div><div class="value">${sm.total ? pct(((sm.calibrated || 0) / sm.total) * 100, 0) : '–'}</div><div class="sub">${sm.total || 0} total</div></div>
+    </div>
+    <div class="ready">${rd('Bonding curve', st.readiness.curve, c.fallbackCurveScore)}${rd('Graduates', st.readiness.grad, c.fallbackGradScore)}</div>
+    ${tg.lastError ? `<p class="kill-note down">Last Telegram error: ${esc(tg.lastError)}</p>` : ''}
+    <div class="mini-list">${rows}</div>`;
+}
+$('#tgTest').onclick = async () => {
+  const b = $('#tgTest'); b.disabled = true; const t = b.textContent;
+  try { const r = await fetch(API + '/api/telegram/test', { method: 'POST' }); const j = await r.json(); b.textContent = j.ok ? 'Sent, check Telegram' : 'Not configured'; if (!j.ok) console.warn(j.error); }
+  catch { b.textContent = 'Failed'; }
+  setTimeout(() => { b.textContent = t; b.disabled = false; }, 3000);
+};
+$('#strong').addEventListener('click', (e) => { const r = e.target.closest('.srow'); if (!r) return; r.dataset.kind === 'curve' ? openDrawer(r.dataset.mint) : (typeof openGradDrawer === 'function' && openGradDrawer(r.dataset.mint)); });
+$('#cpSel').onchange = loadPerf;
+function renderPerf() {
+  if (!S.paper) return;
+  const k = S.paper.kill, cfg = S.paper.config;
+  $('#kill').innerHTML = killHtml(k, `Model: ${sUsd(cfg.sizeSol)} (${cfg.sizeSol} SOL) per alert, entry ${cfg.entryDelaySec}s after the alert at the live curve price, ${cfg.feePct}% fee each side, +${cfg.extraSlippagePct}% slippage; sell ${cfg.tp1Fraction * 100}% at ${cfg.tp1Multiple}×, ${cfg.trailPct}% trailing stop, −${cfg.stopPct}% hard stop, ${cfg.maxHoldMin} min max hold.`);
+  $('#eqHint').textContent = `${k.allTrades} closed · cumulative, USD`;
+  const px = solPx() || 1;
+  lineChart($('#equity'), k.equity.map((e) => [e.t, e.eq * px]), { yFmt: (v) => (solPx() ? usd(v) : n(v, 2)), color: css(k.totalPnlSol >= 0 ? '--up' : '--down') });
 
   const all = [...S.paper.open.map((p) => ({ ...p, status: 'open' })), ...S.paper.recent.filter((r) => r.status !== 'open')];
   $('#posHint').textContent = `${S.paper.open.length} open`;
   $('#positions tbody').innerHTML = all.length ? all.slice(0, 60).map((p) => {
     const pnl = p.status === 'open' ? p.markPct : p.pnl_pct;
-    return `<tr data-mint="${p.mint}"><td><span class="sym">${esc(p.symbol)}</span></td><td>${p.status === 'open' ? '<span class="acc">open</span>' : p.status === 'void' ? '<span class="faint">void</span>' : 'closed'}</td>
-      <td class="num">${n(p.entryMcap ?? p.entry_mcap, 1)}</td><td class="num">${p.status === 'open' ? n(p.mcap, 1) : n((p.events || []).slice(-1)[0]?.mcap, 1)}</td>
-      <td class="num ${cls(pnl)}">${signed(pnl, 1, '%')}</td><td class="faint">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : ''))}</td><td class="num faint">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
-  }).join('') : `<tr><td colspan="7"><div class="empty"><strong>No paper trades yet</strong>Each alert opens a simulated ${cfg.sizeSol} SOL position ${cfg.entryDelaySec}s later.</div></td></tr>`;
+    return `<tr data-mint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : p.status === 'void' ? '<span class="faint">void</span>' : 'closed'}</td>
+      <td class="num" data-label="Entry mcap">${sUsd(p.entryMcap ?? p.entry_mcap)}</td><td class="num" data-label="Mark / exit">${p.status === 'open' ? sUsd(p.mcap) : sUsd((p.events || []).slice(-1)[0]?.mcap)}</td>
+      <td class="num ${cls(pnl)}" data-label="P&amp;L">${signed(pnl, 1, '%')}</td><td class="faint" data-label="Exit">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : '–'))}</td><td class="num faint" data-label="Opened">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
+  }).join('') : `<tr><td colspan="7"><div class="empty"><strong>No paper trades yet</strong>Each alert opens a simulated ${sUsd(cfg.sizeSol)} position ${cfg.entryDelaySec}s later.</div></td></tr>`;
 
   const c = S.cal;
   if (c) {
@@ -287,17 +350,147 @@ function renderIntel() {
   const link = (w) => `<a href="https://solscan.io/account/${w}" target="_blank" rel="noopener" class="mono">${short(w)}</a>`;
   $('#ruggers tbody').innerHTML = I.ruggers.length ? I.ruggers.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${c.rugs}</td><td class="num faint">${ago(c.last_seen)} ago</td></tr>`).join('') : `<tr><td colspan="5"><div class="empty">Builds up as creators launch repeatedly.</div></td></tr>`;
   $('#smart tbody').innerHTML = I.smartWallets.length ? I.smartWallets.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.early_buys}</td><td class="num">${c.wins}</td><td class="num">${pct(c.win_rate * 100, 0)}</td><td class="num">${c.graduations}</td></tr>`).join('') : `<tr><td colspan="5"><div class="empty"><strong>None qualified yet</strong>A wallet needs ≥ 5 early buys and ≥ 3 wins (3× or graduation) in your own data. Usually takes a few days.</div></td></tr>`;
-  $('#creators tbody').innerHTML = I.creators.length ? I.creators.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${n(c.best_peak_mcap, 0)}</td></tr>`).join('') : `<tr><td colspan="4"><div class="empty">No graduated creators recorded yet.</div></td></tr>`;
+  $('#creators tbody').innerHTML = I.creators.length ? I.creators.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${sUsd(c.best_peak_mcap)}</td></tr>`).join('') : `<tr><td colspan="4"><div class="empty">No graduated creators recorded yet.</div></td></tr>`;
   const s = S.status, cfg = S.cfg;
   if (s && cfg) {
     const rows = [
-      ['Uptime', age(s.uptimeSec)], ['Memory', `${s.memMb} MB`], ['Trade source', s.tradeSource], ['Telegram', s.telegram ? 'connected' : 'not configured'],
+      ['Uptime', age(s.uptimeSec)], ['Memory', `${s.memMb} MB`], ['Trade source', s.tradeSource], ['Telegram', s.telegram ? 'connected' : 'not configured'], ['SOL / USD', s.solUsd ? `$${n(s.solUsd, 2)}` : '–'], ['Graduates watched', n(s.grads?.watching, 0)],
       ...s.feeds.map((f) => [`${f.name} feed`, `${f.healthy ? 'healthy' : 'DOWN'} · ${f.reconnects} reconnects · ${n(f.kbPerSec, 0)} KB/s`]),
       ['Trades processed', n(s.engine.trades, 0)], ['Snapshots', n(s.engine.snapshots, 0)], ['Metadata ok / fail', `${s.metadata.ok} / ${s.metadata.fail}`],
       ['Alert score', cfg.scoring.alertScore], ['Alert window', `${cfg.scoring.minAgeSec}s – ${cfg.scoring.maxAgeSec}s`], ['Max top-10', `${cfg.scoring.maxTop10Pct}%`], ['Max bundle', `${cfg.scoring.maxBundlePct}%`],
     ];
     $('#sys').innerHTML = rows.map(([a, b]) => `<div><span>${a}</span><span>${esc(b)}</span></div>`).join('');
   }
+}
+
+// ---------- graduates ----------
+S.gFilter = 'rejected';
+async function loadGrads() {
+  try {
+    const needCal = !S.gCal || Date.now() - (S.gCalAt || 0) > 60000;
+    const [b, a, p, c] = await Promise.all([get('/api/grads?limit=60'), get('/api/grads/alerts?limit=40'), get('/api/grads/paper'), needCal ? get('/api/grads/calibration') : Promise.resolve(null)]);
+    S.gBoard = b; S.gAlerts = a; S.gPaper = p; if (c) { S.gCal = c; S.gCalAt = Date.now(); }
+    renderGrads();
+  } catch (e) { console.warn(e); }
+}
+function spark(vals, w = 92, h = 26) {
+  if (!vals || vals.length < 2) return '<span class="faint mono">–</span>';
+  const lo = Math.min(...vals), hi = Math.max(...vals), r = hi - lo || hi || 1;
+  const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * (w - 2) + 1).toFixed(1)},${(h - 2 - ((v - lo) / r) * (h - 4)).toFixed(1)}`).join(' ');
+  const c = css(vals[vals.length - 1] >= vals[0] ? '--up' : '--down');
+  return `<svg class="spk" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+}
+const mult = (x, est) => (x == null ? '–' : `${est ? '≈' : ''}${n(x, 2)}×`);
+function renderGrads() {
+  const b = S.gBoard; if (!b) return;
+  const st = b.stats, k = S.gPaper?.kill;
+  $('#gMinAge').textContent = st.minAgeMin;
+  const kp = [
+    ['Watching', n(b.watching, 0), `${b.survivors} scored · ${b.warmingCount} warming`],
+    ['Re-ignition alerts', n(st.alerts24h, 0), `24h · score ≥ ${st.alertScore}`],
+    ['Labeled snapshots', n(st.labeled, 0), `${n(st.snaps, 0)} recorded`],
+    ['Min liquidity', usd(st.minLiqUsd), `poll every ${st.pollSec}s`],
+    ['Paper P&L', k ? `<span class="${cls(k.totalPnlSol)}">${sUsdSigned(k.totalPnlSol)}</span>` : '–', k ? `${k.n} closed trades` : ''],
+    ['Expectancy', k?.n ? `<span class="${cls(k.expectancyPct)}">${signed(k.expectancyPct, 1, '%')}</span>` : '–', k?.n > 1 ? `95% CI ${signed(k.ciLowPct, 0)} … ${signed(k.ciHighPct, 0)}` : 'per trade, after costs'],
+  ];
+  $('#gKpis').innerHTML = kp.map(([l, v, sub]) => `<div class="kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  $('#gBoardHint').textContent = `${b.survivors} survivors scored · sorted by score`;
+  const thr = st.alertScore;
+  $('#gBoard tbody').innerHTML = b.rows.length ? b.rows.slice(0, 40).map((t) => `
+    <tr data-gmint="${t.mint}">
+      <td class="c-tok"><div class="tok"><span class="sym">${esc(t.symbol || '?')}${t.open ? ' <span class="chip neutral">paper</span>' : ''}</span><small>${esc(t.name || '')}</small></div></td>
+      <td class="num" data-label="Since grad">${age((t.ageMin || 0) * 60)}</td>
+      <td class="num" data-label="Mcap">${usd(t.mcapUsd)}</td>
+      <td class="num" data-label="Liquidity">${usd(t.liqUsd)}</td>
+      <td class="num ${t.vsMig >= 1 ? 'up' : t.vsMig != null && t.vsMig < 0.5 ? 'down' : ''}" data-label="vs grad">${mult(t.vsMig, t.migEstimated)}</td>
+      <td class="c-spark" data-label="6h">${spark(t.spark)}</td>
+      <td class="num ${t.volAccel >= 2 ? 'up' : ''}" data-label="Vol pace">${t.volAccel != null ? n(t.volAccel, 1) + '×' : '–'}</td>
+      <td class="num ${t.buyRatio5 >= 0.6 ? 'up' : t.buyRatio5 < 0.42 ? 'down' : ''}" data-label="Buys 5m">${t.tx5 ? pct(t.buyRatio5 * 100, 0) : '–'}</td>
+      <td class="num ${cls(t.c1h)}" data-label="1h">${t.c1h != null ? signed(t.c1h, 0, '%') : '–'}</td>
+      <td class="c-score">${scoreBar(Math.floor(t.score ?? 0), null, thr)}</td>
+      <td class="faint c-sig" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc((t.reasons || []).slice(0, 2).join(' · ') || (t.flags || []).slice(0, 2).join(' · '))}</td>
+    </tr>`).join('') : `<tr><td colspan="11"><div class="empty"><strong>No survivors scored yet</strong>Graduates appear here ${st.minAgeMin} minutes after migration if their pool still holds ${usd(st.minLiqUsd)}+ of liquidity.</div></td></tr>`;
+
+  const A = S.gAlerts?.rows || [];
+  const fin = A.filter((x) => x.finalized);
+  const hit = fin.filter((x) => x.max_6h >= 1.5).length;
+  $('#gAlertHint').textContent = fin.length ? `${fin.length} labeled · ${pct((hit / fin.length) * 100, 0)} reached +50% within 6h` : 'outcomes are labeled 6h after each alert';
+  $('#gAlerts').innerHTML = A.length ? A.map((x) => `
+    <div class="alert" data-gmint="${x.mint}">
+      <div class="alert-top"><span class="score-badge">${Math.floor(x.score)}</span><span class="sym">${esc(x.symbol || '?')}</span><span class="name">${esc(x.name || '')}</span><span class="when">${ago(x.ts)} ago</span></div>
+      <div class="alert-meta"><span>alert ${usd(x.mcap)}</span><span>liq ${usd(x.liq)}</span><span>${age((x.age_min || 0) * 60)} after grad</span>
+        <span>peak <b class="mult ${x.peakMult >= 1.5 ? 'up' : ''}">${x.peakMult ? n(x.peakMult, 2) + '×' : '–'}</b></span>
+        <span>${x.finalized ? '6h' : 'now'} <b class="mult ${cls((x.nowMult ?? 1) - 1)}">${x.nowMult != null ? n(x.nowMult, 2) + '×' : '–'}</b></span></div>
+      <div class="chips">${(x.reasons || []).slice(0, 3).map((r) => `<span class="chip">${esc(r)}</span>`).join('')}${(x.flags || []).slice(0, 2).map((r) => `<span class="chip warn">${esc(r)}</span>`).join('')}</div>
+    </div>`).join('') : `<div class="empty"><strong>No re-ignition alerts yet</strong>An alert fires when a survivor scores ≥ ${thr}: volume running hotter than its hourly pace, buyers in control, and a higher low or breakout.</div>`;
+
+  const P = S.gPaper;
+  if (P) {
+    const c = P.config;
+    $('#gKill').innerHTML = killHtml(P.kill, `Model: ${sUsd(c.sizeSol)} (${c.sizeSol} SOL) per alert, filled at the next poll's price plus constant-product price impact from pool depth, ${c.feePct}% fee each side, +${c.extraSlippagePct}% slippage; sell ${c.tp1Fraction * 100}% at ${c.tp1Multiple}×, ${c.trailPct}% trailing stop, −${c.stopPct}% hard stop, ${c.maxHoldMin / 60}h max hold.`);
+    const all = [...P.open.map((p) => ({ ...p, status: 'open' })), ...P.recent.filter((r) => r.status !== 'open')];
+    $('#gPosHint').textContent = `${P.open.length} open`;
+    $('#gPositions tbody').innerHTML = all.length ? all.slice(0, 50).map((p) => {
+      const pnl = p.status === 'open' ? p.markPct : p.pnl_pct;
+      return `<tr data-gmint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : 'closed'}</td>
+        <td class="num" data-label="Entry mcap">${usd(p.entryMcap ?? p.entry_mcap)}</td><td class="num" data-label="Mark / exit">${usd(p.status === 'open' ? p.mcap : (p.events || []).slice(-1)[0]?.mcap)}</td>
+        <td class="num ${cls(pnl)}" data-label="P&amp;L">${signed(pnl, 1, '%')}</td><td class="faint" data-label="Exit">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : '–'))}</td><td class="num faint" data-label="Opened">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
+    }).join('') : `<tr><td colspan="7"><div class="empty"><strong>No paper trades yet</strong>Each re-ignition alert opens a simulated ${sUsd(c.sizeSol)} position at the next price reading.</div></td></tr>`;
+  }
+
+  const C = S.gCal;
+  if (C) {
+    if (!C.n) $('#gCal').innerHTML = `<div class="empty"><strong>No labeled snapshots yet</strong>Snapshots are labeled 6 hours after they are taken. Calibration fills in after the first 6 hours of uptime.</div>`;
+    else {
+      const bk = [...C.buckets.filter((x) => x.n > 0), C.rejected.n ? C.rejected : null].filter(Boolean);
+      barsChart($('#gCal'), bk.map((x) => x.label), [
+        { name: 'reached +50%', color: css('--accent'), values: bk.map((x) => x.up50Pct) },
+        { name: 'reached +100%', color: css('--up'), values: bk.map((x) => x.up100Pct) },
+        { name: 'fell 50%+', color: css('--down'), values: bk.map((x) => x.down50Pct) },
+      ], { labels: bk.map((x) => `n=${x.n}`) });
+      $('#gCal').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--accent')}"></i>+50% within 6h</span><span><i style="background:${css('--up')}"></i>+100%</span><span><i style="background:${css('--down')}"></i>fell 50%+</span></div>`);
+    }
+  }
+  renderGFilter();
+}
+function renderGFilter() {
+  const b = S.gBoard; if (!b) return;
+  const list = S.gFilter === 'warming' ? b.warming : b.rejected;
+  $('#gFilterHint').textContent = `${b.rejectedCount} filtered · ${b.warmingCount} warming`;
+  document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-selected', x.dataset.f === S.gFilter));
+  $('#gFilter').innerHTML = list.length ? list.map((t) => `<div class="mini-row" data-gmint="${t.mint}"><span class="sym">${esc(t.symbol || '?')}</span><span class="mono faint">${usd(t.liqUsd)} liq</span><span class="reason">${esc((t.reject || '').startsWith('liquidity') ? `below ${usd(b.stats.minLiqUsd)} minimum` : t.reject || '')}</span></div>`).join('')
+    : `<div class="empty">${S.gFilter === 'warming' ? 'No fresh graduates in their first minutes right now.' : 'Nothing filtered out right now.'}</div>`;
+}
+document.querySelectorAll('.seg button').forEach((x) => (x.onclick = () => { S.gFilter = x.dataset.f; renderGFilter(); }));
+$('#tab-grads').addEventListener('click', (e) => { const el = e.target.closest('[data-gmint]'); if (el) openGradDrawer(el.dataset.gmint); });
+
+async function openGradDrawer(mint) {
+  $('#drawer').classList.add('on'); $('#scrim').classList.add('on'); $('#drawer').setAttribute('aria-hidden', 'false');
+  $('#drawerBody').innerHTML = '<div class="skel" style="width:40%;height:28px"></div><div class="skel" style="margin-top:12px;width:70%"></div><div class="skel" style="margin-top:24px;height:140px"></div>';
+  let d; try { d = await get(`/api/grads/token/${mint}`); } catch { $('#drawerBody').innerHTML = '<div class="empty"><strong>No longer watched</strong>The token dropped off the watchlist (liquidity gone, aged out, or evicted).</div>'; return; }
+  const f = d.features || {}, parts = d.parts || {};
+  const pmax = { volume: 20, activity: 10, pressure: 15, structure: 20, liquidity: 15, survival: 10, social: 10, chasing: 15, distribution: 10, paidNoDemand: 5, thin: 6 };
+  const label = { volume: 'volume pace', activity: 'tx pace', pressure: 'buy pressure', structure: 'structure', liquidity: 'liquidity', survival: 'survival', social: 'social', chasing: 'chasing', distribution: 'distribution', paidNoDemand: 'paid, no demand', thin: 'thin pool' };
+  const socials = (d.info?.socials || []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.type === 'twitter' ? 'X' : x.type)}</a>`).join('');
+  const sites = (d.info?.websites || []).slice(0, 1).map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">Website</a>`).join('');
+  const yn = (v) => (v == null ? '–' : v ? 'yes' : 'no');
+  const feat = [['Mcap', usd(f.mcapUsd)], ['Liquidity', usd(f.liqUsd)], ['FDV / liquidity', f.fdvLiq != null ? `${n(f.fdvLiq, 1)}×` : '–'], ['vs migration', mult(f.vsMig, f.migEstimated)],
+    ['From tracked peak', f.fromPeak != null ? pct((f.fromPeak - 1) * 100, 0) : '–'], ['Volume 5m', usd(f.vol5)], ['Volume 1h', usd(f.vol1h)], ['Volume 24h', usd(f.vol24)],
+    ['Volume pace', f.volAccel != null ? `${n(f.volAccel, 2)}×` : '–'], ['Tx pace', f.txAccel != null ? `${n(f.txAccel, 2)}×` : '–'], ['Buys 5m', f.tx5 ? `${pct(f.buyRatio5 * 100, 0)} of ${f.tx5}` : '–'], ['Buys 1h', f.tx1h ? `${pct(f.buyRatio1h * 100, 0)} of ${f.tx1h}` : '–'],
+    ['Change 5m / 1h', `${f.c5 != null ? signed(f.c5, 0, '%') : '–'} / ${f.c1h != null ? signed(f.c1h, 0, '%') : '–'}`], ['Change 6h / 24h', `${f.c6h != null ? signed(f.c6h, 0, '%') : '–'} / ${f.c24 != null ? signed(f.c24, 0, '%') : '–'}`],
+    ['Higher low', yn(f.higherLow)], ['Breakout', yn(f.breakout)], ['1h base range', f.baseRangePct != null ? pct(f.baseRangePct, 0) : '–'], ['Liquidity 30m', f.liqTrend != null ? signed((f.liqTrend - 1) * 100, 0, '%') : '–'],
+    ['Paid boosts', f.boosts || 0], ['Socials / site', `${f.socials || 0} / ${f.hasSite ? 'yes' : 'no'}`], ['Pool', `${esc(d.dex || '–')} · ${esc(d.quote || '–')}`], ['Polls recorded', f.seriesPts ?? '–']];
+  $('#drawerBody').innerHTML = `
+    <h2 class="d-title">${esc(d.symbol || '?')}</h2><div class="d-sub">${esc(d.name || '')} · ${age((d.ageMin || 0) * 60)} since migration · via ${esc(d.source)}</div>
+    <div class="d-mint" title="Tap to copy" data-copy="${mint}">${mint}</div>
+    <div class="d-links"><a href="${esc(d.url || `https://dexscreener.com/solana/${mint}`)}" target="_blank" rel="noopener">DexScreener</a><a href="https://pump.fun/coin/${mint}" target="_blank" rel="noopener">pump.fun</a><a href="https://solscan.io/token/${mint}" target="_blank" rel="noopener">Solscan</a>${socials}${sites}</div>
+    ${d.series?.length > 1 ? `<div class="d-sec"><h3>Market cap (USD), since tracking</h3><div id="gSpark" class="chart spark"></div></div>` : ''}
+    <div class="d-sec"><h3>Re-ignition score ${d.reject ? `<span class="reject">· not scored: ${esc(d.reject)}</span>` : `· ${n(d.score, 1)}`}</h3>
+      <div class="parts">${Object.entries(parts).map(([k, v]) => `<div class="part ${v < 0 ? 'neg' : ''}"><span>${label[k] || k}</span><div class="bar"><i style="width:${Math.min(100, (Math.abs(v) / (pmax[k] || 10)) * 100)}%"></i></div><span>${n(v, 1)}</span></div>`).join('')}</div>
+      ${(d.reasons || []).length || (d.flags || []).length ? `<div class="chips" style="margin-top:10px">${(d.reasons || []).map((x) => `<span class="chip">${esc(x)}</span>`).join('')}${(d.flags || []).map((x) => `<span class="chip warn">${esc(x)}</span>`).join('')}</div>` : ''}</div>
+    <div class="d-sec"><h3>Features</h3><div class="feat">${feat.map(([a, b]) => `<div><span class="muted">${a}</span><span>${b ?? '–'}</span></div>`).join('')}</div></div>
+    ${d.alerts?.length ? `<div class="d-sec"><h3>Alert history</h3><div class="feat">${d.alerts.map((a) => `<div><span class="muted">${ago(a.ts)} ago · score ${Math.floor(a.score)}</span><span>${usd(a.mcap)}${a.max_6h ? ` → peak ${n(a.max_6h, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
+  if (d.series?.length > 1) lineChart($('#gSpark'), d.series, { zero: false, h: 140, yFmt: (v) => usd(v), color: css('--accent') });
 }
 
 // ---------- drawer ----------
@@ -309,23 +502,23 @@ async function openDrawer(mint) {
   const f = L?.features || d.snapshots.slice(-1)[0]?.features || {};
   const parts = L?.scoreParts || {};
   const sym = L?.symbol || st.symbol, name = L?.name || st.name;
-  const featRows = [['Mcap', `${n(f.mcapSol, 1)} SOL`], ['Curve', pct(f.progressPct, 1)], ['Net SOL in', signed(f.netSol, 2)], ['Net / min', signed(f.netSolPerMin, 2)], ['Flow 60s', signed(f.flow60Sol, 2)], ['Unique buyers', f.uniqueBuyers], ['Buyers / min', n(f.buyersPerMin, 1)], ['Buy/sell ratio', n(f.buySellRatio, 2)],
-    ['Top-10 hold', pct(f.top10Pct, 1)], ['Creator holds', pct(f.creatorHoldPct, 1)], ['Creator sold', pct(f.creatorSoldPct, 0)], ['Dev initial buy', `${n(f.initialBuySol, 2)} SOL`], ['Bundle share', pct(f.bundlePct, 0)], ['Repeat-trade share', pct((f.repeatTradeShare || 0) * 100, 0)], ['Drawdown from peak', pct(f.drawdownPct, 0)], ['Smart wallets', f.smartBuyers ?? 0],
+  const featRows = [['Mcap', sUsd(f.mcapSol)], ['Curve', pct(f.progressPct, 1)], ['Net inflow', sUsdSigned(f.netSol)], ['Net in / min', sUsdSigned(f.netSolPerMin)], ['Flow 60s', sUsdSigned(f.flow60Sol)], ['Unique buyers', f.uniqueBuyers], ['Buyers / min', n(f.buyersPerMin, 1)], ['Buy/sell ratio', n(f.buySellRatio, 2)],
+    ['Top-10 hold', pct(f.top10Pct, 1)], ['Creator holds', pct(f.creatorHoldPct, 1)], ['Creator sold', pct(f.creatorSoldPct, 0)], ['Dev initial buy', sUsd(f.initialBuySol)], ['Bundle share', pct(f.bundlePct, 0)], ['Repeat-trade share', pct((f.repeatTradeShare || 0) * 100, 0)], ['Drawdown from peak', pct(f.drawdownPct, 0)], ['Smart wallets', f.smartBuyers ?? 0],
     ['Creator launches', f.creatorLaunches ?? '–'], ['Creator grads', f.creatorGraduations ?? '–'], ['Telegram / X / web', `${f.hasTelegram ? 'Y' : '–'} / ${f.hasTwitter ? 'Y' : '–'} / ${f.hasWebsite ? 'Y' : '–'}`]];
   const pmax = { flow: 22, momentum: 10, breadth: 16, pressure: 8, distribution: 10, stage: 8, social: 10, smart: 15, creator: 6, skin: 4 };
   $('#drawerBody').innerHTML = `
     <h2 class="d-title">${esc(sym)}</h2><div class="d-sub">${esc(name)} · ${L ? `age ${age(L.ageSec)}` : 'archived'} ${L?.graduated || st.graduated ? '· <span class="up">graduated</span>' : ''}</div>
     <div class="d-mint" title="Click to copy" data-copy="${mint}">${mint}</div>
     <div class="d-links"><a href="https://pump.fun/coin/${mint}" target="_blank" rel="noopener">pump.fun</a><a href="https://solscan.io/token/${mint}" target="_blank" rel="noopener">Solscan</a><a href="https://dexscreener.com/solana/${mint}" target="_blank" rel="noopener">DexScreener</a>${L?.social?.links?.telegram ? `<a href="${esc(L.social.links.telegram)}" target="_blank" rel="noopener">Telegram</a>` : ''}${L?.social?.links?.twitter ? `<a href="${esc(L.social.links.twitter)}" target="_blank" rel="noopener">X</a>` : ''}</div>
-    ${L?.series?.length > 1 ? `<div class="d-sec"><h3>Market cap (SOL)</h3><div id="dSpark" class="chart spark"></div></div>` : ''}
+    ${L?.series?.length > 1 ? `<div class="d-sec"><h3>Market cap (USD)</h3><div id="dSpark" class="chart spark"></div></div>` : ''}
     <div class="d-sec"><h3>Score ${L?.reject ? `<span class="reject">· rejected: ${esc(L.reject)}</span>` : L?.score != null ? `· ${n(L.score, 1)}` : ''}</h3>
       <div class="parts">${Object.entries(parts).map(([k, v]) => `<div class="part ${v < 0 ? 'neg' : ''}"><span>${k}</span><div class="bar"><i style="width:${Math.min(100, (Math.abs(v) / (pmax[k] || 10)) * 100)}%"></i></div><span>${n(v, 1)}</span></div>`).join('') || '<div class="faint">No live score (token archived).</div>'}</div>
       ${L?.flags?.length ? `<div class="chips" style="margin-top:10px">${L.flags.map((x) => `<span class="chip warn">${esc(x)}</span>`).join('')}</div>` : ''}</div>
     <div class="d-sec"><h3>Features</h3><div class="feat">${featRows.map(([a, b]) => `<div><span class="muted">${a}</span><span>${esc(b ?? '–')}</span></div>`).join('')}</div></div>
     ${L?.topHolders?.length ? `<div class="d-sec"><h3>Top holders (wallets, excl. curve)</h3><div class="feat">${L.topHolders.map((h) => `<div><span class="mono">${short(h.w)}${h.creator ? ' <span class="acc">dev</span>' : ''}</span><span>${pct(h.pct, 2)}</span></div>`).join('')}</div></div>` : ''}
-    ${L?.lastTrades?.length ? `<div class="d-sec"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${short(t.w)}</span><span style="text-align:right">${n(t.sol, 3)}</span><span style="text-align:right" class="faint">${n(t.mcap, 1)}</span></div>`).join('')}</div></div>` : ''}
-    ${d.snapshots.length ? `<div class="d-sec"><h3>Snapshots</h3><div class="feat">${d.snapshots.map((s) => `<div><span class="muted">${s.checkpoint}s · score ${s.reject ? '✕' : n(s.score, 0)}</span><span>${n(s.mcap, 1)}${s.max_mcap_after ? ` → max ${n(s.max_mcap_after / s.mcap, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
-  if (L?.series?.length > 1) lineChart($('#dSpark'), L.series, { zero: false, h: 140, yFmt: (v) => n(v, 0), color: css('--accent') });
+    ${L?.lastTrades?.length ? `<div class="d-sec"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${short(t.w)}</span><span style="text-align:right">${sUsd(t.sol)}</span><span style="text-align:right" class="faint">${sUsd(t.mcap)}</span></div>`).join('')}</div></div>` : ''}
+    ${d.snapshots.length ? `<div class="d-sec"><h3>Snapshots</h3><div class="feat">${d.snapshots.map((s) => `<div><span class="muted">${s.checkpoint}s · score ${s.reject ? '✕' : n(s.score, 0)}</span><span>${sUsd(s.mcap)}${s.max_mcap_after ? ` → max ${n(s.max_mcap_after / s.mcap, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
+  if (L?.series?.length > 1) lineChart($('#dSpark'), L.series.map(([t, m]) => [t, m * (solPx() || 1)]), { zero: false, h: 140, yFmt: (v) => (solPx() ? usd(v) : n(v, 0)), color: css('--accent') });
 }
 function closeDrawer() { $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); $('#drawer').setAttribute('aria-hidden', 'true'); }
 $('#drawerClose').onclick = closeDrawer; $('#scrim').onclick = closeDrawer; addEventListener('keydown', (e) => e.key === 'Escape' && closeDrawer());
@@ -340,6 +533,8 @@ function connectSse() {
     es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = floorScores(JSON.parse(e.data)); renderBoard(); renderStatus(); });
     es.addEventListener('alert', (e) => { const a = JSON.parse(e.data); toast(`Alert · ${a.symbol} · score ${Math.round(a.score)}`); refreshAlerts(); });
     es.addEventListener('paper', () => { if (S.tab === 'perf') loadPerf(); });
+    es.addEventListener('gradAlert', (e) => { const a = JSON.parse(e.data); toast(`Re-ignition · ${a.symbol} · score ${Math.floor(a.score)}`); if (S.tab === 'grads') loadGrads(); });
+    es.addEventListener('gradPaper', () => { if (S.tab === 'grads') loadGrads(); });
   } catch { /* fallback below */ }
 }
 async function refreshAlerts() { try { S.alerts = await get('/api/alerts?limit=60'); renderAlerts(); } catch {} }
@@ -354,5 +549,7 @@ async function boot() {
   setInterval(poll, 3000);
   setInterval(refreshAlerts, 15000);
   setInterval(() => { if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); }, 20000);
+  setInterval(() => { if (S.tab === 'grads' && !document.hidden) loadGrads(); }, 15000);
+  if (location.hash === '#grads') document.querySelector('.tabs [data-tab=grads]')?.click();
 }
 boot();

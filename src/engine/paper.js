@@ -100,9 +100,8 @@ export const openPositions = (getToken) => [...open.values()].map((p) => pub(p, 
 export const isOpen = (mint) => open.has(mint) || pendingEntries.some((e) => e.mint === mint);
 
 /** Kill rule: is average return per trade (after fees, delay, slippage) reliably above zero? */
-export function killRule() {
+export function killStatsFrom(rows) {
   const K = config.killRule;
-  const rows = q.closedPapersAsc.all();
   const w = rows.slice(-K.windowTrades).map((r) => r.pnl_pct / 100);
   const n = w.length;
   const mean = n ? w.reduce((a, b) => a + b, 0) / n : 0;
@@ -121,3 +120,4 @@ export function killRule() {
     bestPct: n ? Math.max(...w) * 100 : 0, worstPct: n ? Math.min(...w) * 100 : 0,
   };
 }
+export const killRule = () => killStatsFrom(q.closedPapersAsc.all());
