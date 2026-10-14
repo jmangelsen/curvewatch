@@ -106,6 +106,15 @@ export const config = {
     hi: num('BAND_HI', 72),
   },
 
+  // Strategy lab: extra paper books, each with its own entry/exit, judged side by side (October 14, 2026 calibration).
+  strategies: {
+    // Labeled snapshots (198 tokens at score >= 50): only 60s net inflow and median buy size separated winners in BOTH halves.
+    // score>=50 & flow60>=12.6 & medBuy>=0.387 hit +25% net before -20% net 40% in each half (30 tokens) - still under the 44% breakeven.
+    flow: { enabled: bool('FLOW_ENABLED', true), minScore: num('FLOW_MIN_SCORE', 50), minFlow60Sol: num('FLOW_MIN_FLOW60_SOL', 12.6), minMedianBuySol: num('FLOW_MIN_MEDIAN_BUY_SOL', 0.387) },
+    // Replay of 143 v2 paper trades: wait 60s, enter only if price >= signal, TP +20% gross: 38% win, -8.1%/trade in both halves (live v2: -19.5%).
+    confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 20) },
+  },
+
   // Market conditions: rolling win rate of the last N closed paper trades (both books).
   // shadow = label and measure only (default: the replay showed the pause would have skipped BETTER trades);
   // enforce = while cold, paper entries are tagged gated and excluded from the kill rule, and strong signals are held back.
@@ -181,7 +190,7 @@ export const config = {
   healthcheckUrl: str('HEALTHCHECK_URL', ''), // e.g. https://hc-ping.com/<uuid>
   retention: {
     tradesDays: num('RETAIN_TRADES_DAYS', 14),
-    snapshotsDays: num('RETAIN_SNAPSHOTS_DAYS', 90),
+    snapshotsDays: num('RETAIN_SNAPSHOTS_DAYS', 30),
     walletsDays: num('RETAIN_WALLETS_DAYS', 30),
   },
 };

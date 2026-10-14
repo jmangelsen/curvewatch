@@ -43,7 +43,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar);
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar);
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -256,7 +256,7 @@ gcv.addEventListener('mousemove', (e) => { gHover = gHit(e); gcv.style.cursor = 
 gcv.addEventListener('mouseleave', () => { gHover = null; drawGradRadar(); });
 gcv.addEventListener('click', (e) => { const p = gHit(e); if (p) openGradDrawer(p.t.mint); });
 addEventListener('resize', drawGradRadar);
-function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); drawGradRadar(); requestAnimationFrame(radarLoop); }
+function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); drawGradRadar(); drawTerm(); requestAnimationFrame(radarLoop); }
 if (!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(radarLoop);
 const hit = (e) => { const b = cv.getBoundingClientRect(); const x = e.clientX - b.left, y = e.clientY - b.top; let best = null, bd = 1e9; for (const p of radarPts) { const d = Math.hypot(p.x - x, p.y - y); if (d < p.s + 4 && d < bd) { bd = d; best = p; } } return best; };
 cv.addEventListener('mousemove', (e) => { hover = hit(e); cv.style.cursor = hover ? 'pointer' : 'crosshair'; drawRadar(); });
@@ -304,7 +304,7 @@ function barsChart(el, cats, series, { h = 240, yMax = null, yFmt = (v) => `${n(
 function renderBooks() {
   const P = S.paper; if (!P?.books) return;
   const { books: B, legacyV1: L } = P.books, band = P.band;
-  $('#booksHint').textContent = `same exits (${P.config.rules}), same costs · kill rule needs ${B.main.kill.needed} trades each`;
+  $('#booksHint').textContent = `strategy lab · same costs · kill rule needs ${B.main.kill.needed} trades each`;
   const statusCls = (st) => ({ PASS: 'up', FAIL: 'down' }[st] || 'acc');
   const row = (name, sub, k, open, extra = '') => `<tr class="${extra}"><td><span class="book-name">${name}</span><span class="book-sub">${sub}</span></td>
     <td><span class="${extra ? '' : statusCls(k.status)}">${k.status === 'COLLECTING' ? `${k.n}/${k.needed}` : k.status}</span></td>
@@ -315,8 +315,8 @@ function renderBooks() {
     <td class="num">${open ?? '–'}</td></tr>`;
   $('#books').innerHTML = `<div class="btable-wrap"><table class="btable wide">
     <thead><tr><th>Book</th><th>Kill rule</th><th class="num">Win</th><th class="num">Avg / trade</th><th class="num">95% range</th><th class="num">P&amp;L</th><th class="num">Open</th></tr></thead>
-    <tbody>${row('Main', `score ≥ ${S.status?.alertScore ?? 72}`, B.main.kill, B.main.open)}${row('Band', `score ${band.lo}–${band.hi} (first entry)`, B.band.kill, B.band.open)}${L.n ? row('Old exits (v1)', 'main book before the change', L, null, 'legacy') : ''}</tbody></table></div>
-    <p class="small-note">Breakeven for +25% / −20% net exits is a 44% win rate. The replay of 60 past alerts put the new exits at 37% win and −7% per trade; the band's labeled-snapshot hit rate was 39% (31 tokens). Both are below breakeven until live data says otherwise.</p>`;
+    <tbody>${(P.books.order || Object.keys(B)).map((b) => row(B[b].label || b, B[b].entry || '', B[b].kill, B[b].open)).join('')}${L.n ? row('Old exits (v1)', 'main book before the change', L, null, 'legacy') : ''}</tbody></table></div>
+    <p class="small-note">Breakeven for Main, Band and Flow (+25% / −20% net) is a 44% win rate. Confirm uses a closer target (+20% gross, ≈ +13.5% net), so its breakeven win rate is about 60%. Calibration on October 14: no book cleared breakeven in replay; the best (Confirm) lost about 8% per trade. These run to find out, not because they are known to work.</p>`;
 }
 function renderMarket() {
   const m = S.paper?.market; if (!m) return;
@@ -324,7 +324,7 @@ function renderMarket() {
   const col = m.state === 'COLD' ? 'down' : m.state === 'WARM' ? 'up' : 'faint';
   $('#marketHint').textContent = `last ${c.window} closed paper trades, ${c.lookbackHours}h window`;
   const B = S.paper.books?.books || {};
-  const cmp = (b) => { const w = B[b]?.byMarket; if (!w) return ''; return `<tr><td>${b === 'main' ? 'Main' : 'Band'}</td>${['WARM', 'COLD'].map((st) => `<td class="num">${w[st].n ? `${pct(w[st].winRatePct, 0)} · ${signed(w[st].expectancyPct, 1, '%')}` : '–'}</td><td class="num faint">${w[st].n}</td>`).join('')}</tr>`; };
+  const cmp = (b) => { const w = B[b]?.byMarket; if (!w) return ''; return `<tr><td>${B[b]?.label || b}</td>${['WARM', 'COLD'].map((st) => `<td class="num">${w[st].n ? `${pct(w[st].winRatePct, 0)} · ${signed(w[st].expectancyPct, 1, '%')}` : '–'}</td><td class="num faint">${w[st].n}</td>`).join('')}</tr>`; };
   const ctx = m.context || {};
   $('#market').innerHTML = `
     <div class="mstate"><span class="big ${col}">${m.state}</span><span class="tag">${m.mode === 'enforce' ? 'enforcing' : 'shadow: measuring only'}</span>
@@ -337,7 +337,7 @@ function renderMarket() {
       <div><div class="label">Graduations 1h</div><div class="value">${n(ctx.grads1h, 0)}</div></div>
       <div><div class="label">SOL 1h</div><div class="value ${cls(ctx.sol1hPct)}">${ctx.sol1hPct == null ? '–' : signed(ctx.sol1hPct, 2, '%')}</div></div>
     </div>
-    <div class="btable-wrap"><table class="btable"><thead><tr><th>Entered while</th><th class="num">WARM win · avg</th><th class="num">n</th><th class="num">COLD win · avg</th><th class="num">n</th></tr></thead><tbody>${cmp('main')}${cmp('band')}</tbody></table></div>
+    <div class="btable-wrap"><table class="btable"><thead><tr><th>Entered while</th><th class="num">WARM win · avg</th><th class="num">n</th><th class="num">COLD win · avg</th><th class="num">n</th></tr></thead><tbody>${(S.paper.books?.order || ['main', 'band']).map(cmp).join('')}</tbody></table></div>
     <p class="small-note">${m.mode === 'enforce'
       ? 'Enforcing: while COLD, new paper entries are tagged paused and left out of the kill rule, and Telegram strong signals are held back.'
       : 'Shadow mode: every entry is tagged with the market state, nothing is blocked. In the replay of 60 alerts, a pause would have skipped trades that did better (45% win) than the ones kept (35%). Switch to enforce (MARKET_GATE_MODE=enforce) only if COLD entries here keep doing clearly worse than WARM ones.'}</p>`;
@@ -650,7 +650,7 @@ function connectSse() {
     es.addEventListener('status', (e) => { lastSse = Date.now(); S.status = JSON.parse(e.data); renderStatus(); });
     es.addEventListener('radar', (e) => { lastSse = Date.now(); S.radar = floorScores(JSON.parse(e.data)); renderBoard(); renderStatus(); });
     es.addEventListener('alert', (e) => { const a = JSON.parse(e.data); toast(`Alert · ${a.symbol} · score ${Math.round(a.score)}`); refreshAlerts(); });
-    es.addEventListener('paper', () => { if (S.tab === 'perf') loadPerf(); });
+    es.addEventListener('paper', (e) => { try { termTail(JSON.parse(e.data)); } catch {} if (S.tab === 'perf') { clearTimeout(S._perfT); S._perfT = setTimeout(() => { loadPerf(); loadTerm(); }, 1500); } });
     es.addEventListener('gradAlert', (e) => { const a = JSON.parse(e.data); toast(`Re-ignition · ${a.symbol} · score ${Math.floor(a.score)}`); if (S.tab === 'grads') loadGrads(); });
     es.addEventListener('gradPaper', () => { if (S.tab === 'grads') loadGrads(); });
   } catch { /* fallback below */ }
@@ -666,8 +666,388 @@ async function boot() {
   connectSse();
   setInterval(poll, 3000);
   setInterval(refreshAlerts, 15000);
-  setInterval(() => { if (S.tab === 'perf') loadPerf(); if (S.tab === 'intel') loadIntel(); }, 20000);
+  setInterval(() => { if (S.tab === 'perf') { loadPerf(); loadTerm(true); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); }, 20000);
   setInterval(() => { if (S.tab === 'grads' && !document.hidden) loadGrads(); }, 15000);
   if (location.hash === '#grads') document.querySelector('.tabs [data-tab=grads]')?.click();
 }
+// =====================================================================
+// Trade terminal: timeline (radar-styled canvas), strategy scoreboard, interactive console
+// =====================================================================
+const T = { book: '', days: 14, tl: null, sr: null, hover: null, pts: [], hist: [], hi: -1, tail: true, scan: 0, lastLoad: 0, live: false };
+const BOOK_COL = (b) => css(`--b-${b}`) || css('--accent');
+const BOOK_LABEL = (b) => ({ main: 'Main', band: 'Band', flow: 'Flow', confirm: 'Confirm' }[b] || b);
+const tcv = $('#termCanvas'), tctx = tcv.getContext('2d');
+const tout = $('#termOut');
+const out = (html, c = '') => { const d = document.createElement('div'); d.className = `ln ${c}`; d.innerHTML = html; tout.appendChild(d); while (tout.childElementCount > 600) tout.firstChild.remove(); tout.scrollTop = tout.scrollHeight; return d; };
+const pc = (x, d = 1) => (x == null || !Number.isFinite(x) ? '<span class="dim">–</span>' : `<span class="${x > 0 ? 'up' : x < 0 ? 'down' : 'dim'}">${x > 0 ? '+' : ''}${x.toFixed(d)}%</span>`);
+const tm = (t) => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const lk = (cmd, label) => `<span class="lk" data-cmd="${esc(cmd)}">${esc(label)}</span>`;
+const bookTag = (b) => `<span class="tag" style="color:${BOOK_COL(b)};border-color:${BOOK_COL(b)}55">${BOOK_LABEL(b)}</span>`;
+
+async function loadTerm(force = false) {
+  if (!force && Date.now() - T.lastLoad < 4000) return;
+  T.lastLoad = Date.now();
+  try {
+    [T.tl, T.sr] = await Promise.all([get(`/api/terminal/timeline?days=${T.days}`), get(`/api/terminal/strategies?days=${T.days}`)]);
+    renderTermControls(); renderBoardSb(); layoutTimeline();
+  } catch (e) { console.warn('terminal', e); }
+}
+function renderTermControls() {
+  const bs = T.tl?.books || [];
+  const el = $('#termBook');
+  const want = ['', ...bs.map((b) => b.id)].join(',');
+  if (el.dataset.k !== want) {
+    el.dataset.k = want;
+    el.innerHTML = [`<button type="button" data-b="" aria-pressed="${T.book === ''}">All</button>`, ...bs.map((b) => `<button type="button" data-b="${b.id}" aria-pressed="${T.book === b.id}">${b.label}</button>`)].join('');
+  }
+  $('#termLegend').innerHTML = bs.filter((b) => !T.book || b.id === T.book).map((b) => `<span><i style="background:${BOOK_COL(b.id)}"></i>${b.label}</span>`).join('');
+}
+$('#termBook').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; T.book = b.dataset.b; $('#termBook').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b)); renderTermControls(); layoutTimeline(); renderBoardSb(); });
+$('#termDays').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; T.days = Number(b.dataset.d); $('#termDays').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b)); loadTerm(true); });
+
+// ---- scoreboard ----
+function renderBoardSb() {
+  const R = T.sr?.strategies; if (!R) return;
+  const rows = R.filter((r) => !T.book || r.book === T.book);
+  $('#termBoard').innerHTML = rows.map((r) => {
+    const v = r.verdict === 'NOT WORKING' ? 'NOT' : r.verdict;
+    const lo = r.ciLowPct, hi = r.ciHighPct, X = (x) => 55 + Math.max(-50, Math.min(50, x)) * 1.0; // -50..+50% -> 5..105
+    const range = `<svg class="sb-range" viewBox="0 0 110 14"><line x1="5" x2="105" y1="7" y2="7" stroke="${css('--grid')}" stroke-width="6" stroke-linecap="round"/>
+      <line x1="55" x2="55" y1="1" y2="13" stroke="${css('--text-faint')}" stroke-width="1"/>
+      ${lo != null ? `<line x1="${X(lo)}" x2="${X(hi)}" y1="7" y2="7" stroke="${BOOK_COL(r.book)}" stroke-width="4" stroke-linecap="round" opacity=".85"/>` : ''}
+      ${r.avgPct != null ? `<circle cx="${X(r.avgPct)}" cy="7" r="3" fill="${css('--text')}"/>` : ''}</svg>`;
+    const top = r.causes.find((c) => !['TARGET', 'GRADUATED', 'SMALL WIN'].includes(c.cause));
+    return `<button class="sb-row" type="button" data-cmd="strategy ${r.book}">
+      <span class="bar" style="background:${BOOK_COL(r.book)}"></span>
+      <span style="min-width:0"><span class="sb-name">${r.label} <span class="vchip-s ${v}">${r.verdict}</span></span>
+        <span class="sb-entry" title="${esc(r.entry)}">${esc(r.entry)}</span>
+        <span class="sb-stats">${r.n} trades · ${r.winRatePct == null ? '–' : Math.round(r.winRatePct) + '%'} win (needs ${Math.round(r.breakevenWinPct)}%)${top ? ` · top loss: ${top.cause.toLowerCase()}` : ''}</span></span>
+      <span><span class="sb-avg ${cls(r.avgPct)}">${r.avgPct == null ? '–' : signed(r.avgPct, 1, '%')}</span>${range}</span></button>`;
+  }).join('') + `<div class="small-note">Bar = 95% range of average P&amp;L per trade (−50% to +50%), dot = average, tick = zero. Click a strategy for its full report.</div>`;
+}
+$('#termBoard').addEventListener('click', (e) => { const b = e.target.closest('[data-cmd]'); if (b) run(b.dataset.cmd); });
+
+// ---- timeline (canvas) ----
+function layoutTimeline() {
+  const tl = T.tl; T.pts = []; T.series = [];
+  if (!tl) return;
+  const px = tl.solUsd || solPx() || 0;
+  const now = Date.now(), t0 = now - T.days * 86400000;
+  const trades = tl.trades.filter((x) => (!T.book || x.book === T.book) && x.t >= t0);
+  // fit the time axis to the data when it covers only part of the window (fresh installs, restarts)
+  const first = trades.length ? Math.min(...trades.map((x) => x.entry || x.t)) : t0;
+  const tStart = Math.max(t0, first - Math.max(10 * 60000, (now - first) * 0.04));
+  T.fitted = tStart > t0;
+  const books = (tl.books || []).map((b) => b.id).filter((b) => !T.book || b === T.book);
+  const series = books.map((b) => { let c = 0; const pts = [[tStart, 0]]; for (const x of trades.filter((y) => y.book === b)) { c += (x.pnlSol || 0) * (px || 1); pts.push([x.t, c, x]); } return { b, pts }; });
+  T.series = series; T.t0 = tStart; T.t1 = now; T.trades = trades;
+  const all = series.flatMap((s) => s.pts.map((p) => p[1]));
+  T.y0 = Math.min(0, ...all); T.y1 = Math.max(0, ...all); if (T.y1 - T.y0 < 1) { T.y0 -= 1; T.y1 += 1; }
+}
+function drawTerm() {
+  if (S.tab !== 'perf') return;
+  const c = tctx, dpr = devicePixelRatio || 1, w = tcv.clientWidth, h = tcv.clientHeight; if (!w) return;
+  if (tcv.width !== Math.round(w * dpr)) { tcv.width = Math.round(w * dpr); tcv.height = Math.round(h * dpr); }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  const P = { l: 58, r: 14, t: 34, b: 26 };
+  const grid = css('--grid'), faint = css('--text-faint');
+  c.font = '11px Geist Mono, monospace'; c.lineWidth = 1;
+  if (!T.series?.length || !T.trades?.length) {
+    c.fillStyle = faint; c.textAlign = 'center'; c.fillText(T.tl ? 'No closed trades in this window yet' : 'Loading…', w / 2, h / 2); c.textAlign = 'left';
+    drawScan(c, P, w, h); return;
+  }
+  const X = (t) => P.l + ((t - T.t0) / (T.t1 - T.t0)) * (w - P.l - P.r);
+  const Y = (v) => P.t + (1 - (v - T.y0) / (T.y1 - T.y0)) * (h - P.t - P.b);
+  // grid
+  for (let i = 0; i <= 4; i++) { const v = T.y0 + ((T.y1 - T.y0) * i) / 4, y = Y(v); c.strokeStyle = grid; c.beginPath(); c.moveTo(P.l, y); c.lineTo(w - P.r, y); c.stroke(); c.fillStyle = faint; c.textAlign = 'right'; c.fillText(usd(v), P.l - 8, y + 4); }
+  c.textAlign = 'left';
+  const nT = w < 500 ? 3 : 6;
+  for (let i = 0; i <= nT; i++) { const t = T.t0 + ((T.t1 - T.t0) * i) / nT, x = X(t); c.strokeStyle = grid; c.beginPath(); c.moveTo(x, P.t); c.lineTo(x, h - P.b); c.stroke();
+    c.fillStyle = faint; c.textAlign = i === 0 ? 'left' : i === nT ? 'right' : 'center'; c.fillText(new Date(t).toLocaleString([], T.t1 - T.t0 <= 2 * 86400000 ? { hour: '2-digit', minute: '2-digit' } : { month: 'short', day: 'numeric' }), x, h - 8); }
+  if (T.fitted && w >= 560) { c.fillStyle = faint; c.textAlign = 'right'; c.fillText('axis fitted to recorded data', w - P.r, P.t - 8); c.textAlign = 'left'; }
+  c.textAlign = 'left';
+  c.setLineDash([3, 3]); c.strokeStyle = faint; c.beginPath(); c.moveTo(P.l, Y(0)); c.lineTo(w - P.r, Y(0)); c.stroke(); c.setLineDash([]);
+  drawScan(c, P, w, h);
+  // series with glow
+  T.pts = [];
+  for (const s of T.series) {
+    if (s.pts.length < 2) continue;
+    const col = BOOK_COL(s.b);
+    c.save(); c.shadowColor = col; c.shadowBlur = 8; c.strokeStyle = col; c.lineWidth = 1.8; c.beginPath();
+    s.pts.forEach((p, i) => { const x = X(p[0]), y = Y(p[1]); if (i) { c.lineTo(x, Y(s.pts[i - 1][1])); c.lineTo(x, y); } else c.moveTo(x, y); });
+    c.lineTo(X(T.t1), Y(s.pts[s.pts.length - 1][1])); c.stroke(); c.restore();
+    for (const p of s.pts.slice(1)) {
+      const tr = p[2], x = X(p[0]), y = Y(p[1]), r = 2.2 + Math.min(5, Math.abs(tr.pnlPct) / 12);
+      const win = tr.pnlPct > 0;
+      c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = win ? css('--up') : css('--down'); c.globalAlpha = win ? 1 : 0.75; c.fill(); c.globalAlpha = 1;
+      if (win) { c.beginPath(); c.arc(x, y, r + 3, 0, Math.PI * 2); c.strokeStyle = css('--up'); c.globalAlpha = 0.35; c.stroke(); c.globalAlpha = 1; }
+      T.pts.push({ x, y, r: r + 3, tr, b: s.b });
+    }
+  }
+  if (T.hover) {
+    const { x, y, tr, b } = T.hover;
+    c.strokeStyle = css('--border'); c.beginPath(); c.moveTo(x, P.t); c.lineTo(x, h - P.b); c.stroke();
+    const lines = [`${tr.symbol} · ${BOOK_LABEL(b)} · #${tr.id}`, `${tr.pnlPct > 0 ? '+' : ''}${tr.pnlPct.toFixed(1)}% · ${sUsdSigned(tr.pnlSol)}`, `${(tr.cause || tr.reason || '').toLowerCase()}`, tm(tr.t)];
+    c.font = '11px Geist Mono, monospace'; const bw = Math.max(...lines.map((l) => c.measureText(l).width)) + 20, bh = 70;
+    let bx = x + 12, by = y - bh - 8; if (bx + bw > w) bx = x - bw - 12; if (by < 4) by = y + 12;
+    c.fillStyle = css('--surface-3'); c.strokeStyle = css('--border'); c.beginPath(); c.roundRect(bx, by, bw, bh, 6); c.fill(); c.stroke();
+    lines.forEach((l, i) => { c.fillStyle = i === 0 ? css('--text') : i === 1 ? css(tr.pnlPct > 0 ? '--up' : '--down') : css('--text-muted'); c.font = i === 0 ? '600 12px Geist, sans-serif' : '11px Geist Mono, monospace'; c.fillText(l, bx + 10, by + 17 + i * 15); });
+  }
+}
+function drawScan(c, P, w, h) {
+  // radar-style scan line sweeping the time axis
+  T.scan = (T.scan + 0.0022) % 1;
+  const x = P.l + T.scan * (w - P.l - P.r), acc = css('--accent');
+  const g = c.createLinearGradient(x - 90, 0, x, 0); g.addColorStop(0, 'transparent'); g.addColorStop(1, acc + '1f');
+  c.fillStyle = g; c.fillRect(Math.max(P.l, x - 90), P.t, Math.min(90, x - P.l), h - P.t - P.b);
+  c.strokeStyle = acc + '66'; c.beginPath(); c.moveTo(x, P.t); c.lineTo(x, h - P.b); c.stroke();
+}
+const termHit = (e) => { const b = tcv.getBoundingClientRect(); const x = e.clientX - b.left, y = e.clientY - b.top; let best = null, bd = 1e9; for (const p of T.pts) { const d = Math.hypot(p.x - x, p.y - y); if (d < p.r + 6 && d < bd) { bd = d; best = p; } } return best; };
+tcv.addEventListener('mousemove', (e) => { T.hover = termHit(e); tcv.style.cursor = T.hover ? 'pointer' : 'crosshair'; });
+tcv.addEventListener('mouseleave', () => { T.hover = null; });
+tcv.addEventListener('click', (e) => { const p = termHit(e); if (p) { run(`why ${p.tr.id}`); $('#term').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } });
+addEventListener('resize', () => { if (S.tab === 'perf') drawTerm(); });
+
+// ---- console ----
+const CMDS = {
+  help: { args: '', desc: 'list commands', fn: cmdHelp },
+  strategies: { args: '', desc: 'scoreboard: every strategy, ranked by average P&L per trade', fn: cmdStrategies },
+  strategy: { args: '<book>', desc: 'full report: what worked, what did not, why, what to change', fn: cmdStrategy },
+  trades: { args: '[book] [win|loss|skipped] [n]', desc: 'recent trades with entry time, P&L and cause', fn: cmdTrades },
+  why: { args: '<id|SYMBOL>', desc: 'forensics for one trade: price path, entry features vs winners/losers, cause', fn: cmdWhy },
+  causes: { args: '[book]', desc: 'why trades won or lost, counted and averaged', fn: cmdCauses },
+  compare: { args: '', desc: 'every strategy against Main, with the gap per trade', fn: cmdCompare },
+  pnl: { args: '[24h|7d|14d]', desc: 'P&L per strategy over a window', fn: cmdPnl },
+  report: { args: '', desc: 'the two-week decision checklist', fn: cmdReport },
+  tail: { args: '[on|off]', desc: 'stream entries, exits and skips live (default on)', fn: (a) => { T.tail = a[0] !== 'off'; out(`live tail ${T.tail ? '<span class="up">on</span>' : '<span class="dim">off</span>'}`); $('#termLive').classList.toggle('off', !T.tail); } },
+  clear: { args: '', desc: 'clear the screen', fn: () => { tout.innerHTML = ''; } },
+};
+function cmdHelp() {
+  out('<span class="hd">Commands</span>');
+  out(`<table>${Object.entries(CMDS).map(([k, v]) => `<tr><td>${lk(k, k)} <span class="dim">${esc(v.args)}</span></td><td class="dim">${esc(v.desc)}</td></tr>`).join('')}</table>`);
+  out('<span class="dim">Tab completes, ↑/↓ recalls history, click any underlined item. Books: </span>' + (T.tl?.books || []).map((b) => lk(`strategy ${b.id}`, b.id)).join(' '));
+}
+async function ensureSr() { if (!T.sr) await loadTerm(true); return T.sr; }
+async function cmdStrategies() {
+  const sr = await ensureSr();
+  out(`<span class="hd">Strategies · last ${sr.days}d · costs ≈ ${sr.costPct.toFixed(1)}% round trip</span>`);
+  out(`<table><tr><th>book</th><th class="r">trades</th><th class="r">win</th><th class="r">needs</th><th class="r">avg/trade</th><th class="r">95% range</th><th class="r">P&amp;L</th><th>verdict</th></tr>${sr.strategies.map((r) => `<tr>
+    <td>${lk(`strategy ${r.book}`, r.label)}</td><td class="r">${r.n}</td><td class="r">${r.winRatePct == null ? '–' : Math.round(r.winRatePct) + '%'}</td><td class="r dim">${Math.round(r.breakevenWinPct)}%</td>
+    <td class="r">${pc(r.avgPct)}</td><td class="r dim">${r.ciLowPct == null ? '–' : `${r.ciLowPct.toFixed(0)}..${r.ciHighPct.toFixed(0)}%`}</td><td class="r ${cls(r.pnlSol)}">${sUsdSigned(r.pnlSol)}</td>
+    <td class="${r.verdict === 'WORKING' ? 'up' : r.verdict === 'NOT WORKING' ? 'down' : 'acc'}">${r.verdict}</td></tr>`).join('')}</table>`);
+}
+async function cmdStrategy(a) {
+  const sr = await ensureSr(); const b = (a[0] || T.book || 'main').toLowerCase();
+  const r = sr.strategies.find((x) => x.book === b || x.label.toLowerCase() === b);
+  if (!r) return out(`<span class="down">unknown book "${esc(b)}"</span>. Try: ${sr.strategies.map((x) => lk(`strategy ${x.book}`, x.book)).join(' ')}`);
+  out(`<span class="hd" style="color:${BOOK_COL(r.book)}">■ ${r.label}</span> <span class="${r.verdict === 'WORKING' ? 'up' : r.verdict === 'NOT WORKING' ? 'down' : 'acc'}">${r.verdict}</span> <span class="dim">· last ${sr.days}d</span>`);
+  out(`<span class="dim">entry</span>   ${esc(r.entry)}`);
+  out(`<span class="dim">exits</span>   +${r.exits.tpNetPct.toFixed(1)}% net target · −${r.exits.stopNetPct}% net stop · ${r.exits.maxHoldMin} min max · enters ${r.exits.delaySec}s after the signal`);
+  out(`<span class="dim">thesis</span>  ${esc(r.thesis)}`);
+  out(`<span class="dim">result</span>  ${r.n} trades · ${r.winRatePct == null ? '–' : Math.round(r.winRatePct) + '%'} win (breakeven ${Math.round(r.breakevenWinPct)}%) · avg ${pc(r.avgPct)} · 95% range ${r.ciLowPct == null ? '–' : `${pc(r.ciLowPct, 0)} to ${pc(r.ciHighPct, 0)}`} · ${sUsdSigned(r.pnlSol)}`);
+  if (r.worked.length) { out('<span class="up">What worked</span>'); r.worked.forEach((l) => out(`  ${esc(l)}`)); }
+  if (r.didnt.length) { out('<span class="down">What did not</span>'); r.didnt.forEach((l) => out(`  ${esc(l)}`)); }
+  if (r.causes.length) out(`<table><tr><th>cause</th><th class="r">trades</th><th class="r">share</th><th class="r">avg</th></tr>${r.causes.map((c) => `<tr><td>${esc(c.cause)}</td><td class="r">${c.n}</td><td class="r dim">${c.sharePct.toFixed(0)}%</td><td class="r">${pc(c.avgPct)}</td></tr>`).join('')}</table>`);
+  if (r.features.length) {
+    out('<span class="info">Winners vs losers at entry</span> <span class="dim">(median; separation: how often a winner beat a loser on it, 50% = no signal)</span>');
+    out(`<table><tr><th>feature</th><th class="r">winners</th><th class="r">losers</th><th class="r">separation</th></tr>${r.features.map((f) => `<tr><td>${esc(f.label)}</td><td class="r up">${fmtv(f.winners, f.unit)}</td><td class="r down">${fmtv(f.losers, f.unit)}</td><td class="r ${Math.abs(f.gap) >= 0.3 ? 'acc' : 'dim'}">${Math.round(f.auc * 100)}% ${f.gap > 0 ? '↑' : '↓'}</td></tr>`).join('')}</table>`);
+  }
+  if (r.skipped.n) out(`<span class="dim">skipped ${r.skipped.n} signals:</span> ${r.skipped.reasons.map((x) => `${esc(x.reason)} (${x.n})`).join(' · ')}`);
+  if (r.next.length) { out('<span class="acc">What to change</span>'); r.next.forEach((l) => out(`  ${esc(l)}`)); }
+  out(`${lk(`trades ${r.book} loss 15`, 'see losers')}  ${lk(`trades ${r.book} win 15`, 'see winners')}  ${lk(`causes ${r.book}`, 'causes')}`);
+}
+const fmtv = (v, u) => (v == null ? '–' : `${Number.isInteger(v) ? v : Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)}${u && u !== '×' ? ' ' + u : u}`);
+async function cmdTrades(a) {
+  let book = '', filt = '', lim = 20;
+  for (const x of a) { if (/^\d+$/.test(x)) lim = Math.min(100, +x); else if (['win', 'wins', 'loss', 'losses', 'skipped', 'skip', 'open'].includes(x)) filt = x.replace(/s$/, '').replace('losse', 'loss'); else book = x; }
+  const rows = (await get(`/api/terminal/trades?limit=${Math.max(60, lim * 4)}${book ? `&book=${encodeURIComponent(book)}` : ''}`)).filter((r) =>
+    !filt ? r.status !== 'skipped' : filt === 'win' ? r.status === 'closed' && r.pnl_pct > 0 : filt === 'loss' ? r.status === 'closed' && r.pnl_pct <= 0 : filt === 'skip' || filt === 'skipped' ? r.status === 'skipped' : r.status === filt).slice(0, lim);
+  out(`<span class="hd">Trades</span> <span class="dim">${book || 'all books'}${filt ? ' · ' + filt : ''} · newest first</span>`);
+  if (!rows.length) return out('<span class="dim">none yet</span>');
+  out(`<table><tr><th>#</th><th>book</th><th>token</th><th>entered</th><th class="r">signal→entry</th><th class="r">best</th><th class="r">P&amp;L</th><th>why</th></tr>${rows.map((r) => `<tr>
+    <td>${lk(`why ${r.id}`, r.id)}</td><td style="color:${BOOK_COL(r.book)}">${BOOK_LABEL(r.book)}</td><td>${esc(r.symbol)}</td><td class="dim">${tm(r.entry_ts)}</td>
+    <td class="r">${pc(r.entry_slip_pct)}</td><td class="r">${r.status === 'skipped' ? '' : pc(r.peakPct)}</td>
+    <td class="r">${r.status === 'closed' ? pc(r.pnl_pct) : r.status === 'open' ? '<span class="acc">open</span>' : '<span class="dim">skipped</span>'}</td>
+    <td class="dim">${esc(r.status === 'skipped' ? r.skip_reason : (r.cause || r.exit_reason || '').toLowerCase())}</td></tr>`).join('')}</table>`);
+}
+async function cmdWhy(a) {
+  if (!a[0]) return out('usage: why &lt;id|SYMBOL&gt;');
+  let d; try { d = await get(`/api/terminal/trade/${encodeURIComponent(a[0])}`); } catch { return out(`<span class="down">no trade "${esc(a[0])}"</span>`); }
+  const t = d.trade;
+  out(`<span class="hd">#${t.id} ${esc(t.symbol)}</span> ${bookTag(t.book)}<span class="${t.status === 'closed' ? (t.pnl_pct > 0 ? 'up' : 'down') : 'acc'}">${t.status === 'closed' ? `${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct.toFixed(1)}% · ${sUsdSigned(t.pnl_sol)}` : t.status}</span> <span class="dim">${t.cause || ''}</span>`);
+  out(`<span class="dim">${esc(t.name || '')} · ${t.mint}</span>`);
+  if (d.path?.length > 3) out(pathSvg(d));
+  d.narrative.forEach((l, i) => out(`${i === 0 ? '<span class="dim">' : ''}${esc(l)}${i === 0 ? '</span>' : ''}`));
+  if (d.compare?.length) out(`<table><tr><th>at entry</th><th class="r">this trade</th><th class="r">book winners</th><th class="r">book losers</th></tr>${d.compare.slice(0, 9).map((c) => {
+    const nearW = c.winnersMedian != null && c.losersMedian != null && Math.abs(c.value - c.winnersMedian) < Math.abs(c.value - c.losersMedian);
+    return `<tr><td>${esc(c.label)}</td><td class="r ${c.winnersMedian == null ? '' : nearW ? 'up' : 'down'}">${fmtv(c.value, c.unit)}</td><td class="r dim">${fmtv(c.winnersMedian, c.unit)}</td><td class="r dim">${fmtv(c.losersMedian, c.unit)}</td></tr>`; }).join('')}</table>`);
+  const ev = (t.events || []).map((e) => `${new Date(e.t).toLocaleTimeString()} ${e.type}${e.reason ? ' (' + e.reason + ')' : ''}${e.mcap ? ' @ ' + sUsd(e.mcap) : ''}`).join(' → ');
+  if (ev) out(`<span class="dim">${esc(ev)}</span>`);
+  out(`${lk(`strategy ${t.book}`, `${BOOK_LABEL(t.book)} report`)}  <a href="https://pump.fun/coin/${t.mint}" target="_blank" rel="noopener">pump.fun</a>  <a href="https://dexscreener.com/solana/${t.mint}" target="_blank" rel="noopener">DexScreener</a>`);
+}
+function pathSvg(d) {
+  const t = d.trade, p = d.path, w = 640, h = 120, P = { l: 6, r: 6, t: 8, b: 14 };
+  const ref = t.entry_mcap || p[0].mc, xs = p.map((x) => x.ts), ys = p.map((x) => (x.mc / ref - 1) * 100);
+  const tp = ((t.tp_mult || 1.25) / ((1 - 0.0125) ** 2 * 0.97) - 1) * 100, sl = ((1 - (t.stop_pct || 20) / 100) / ((1 - 0.0125) ** 2 * 0.97) - 1) * 100;
+  const y0 = Math.min(...ys, sl) - 3, y1 = Math.max(...ys, tp) + 3, X = (v) => P.l + ((v - xs[0]) / (xs[xs.length - 1] - xs[0] || 1)) * (w - P.l - P.r), Y = (v) => P.t + (1 - (v - y0) / (y1 - y0)) * (h - P.t - P.b);
+  const line = p.map((x, i) => `${i ? 'L' : 'M'}${X(x.ts).toFixed(1)},${Y(ys[i]).toFixed(1)}`).join('');
+  const mk = (ts, label, col) => (ts ? `<line x1="${X(ts)}" x2="${X(ts)}" y1="${P.t}" y2="${h - P.b}" stroke="${col}" stroke-dasharray="2 3"/><text x="${X(ts) + 3}" y="${h - 3}" fill="${col}" font-size="9">${label}</text>` : '');
+  const col = t.pnl_pct > 0 ? '#45c98f' : '#f0676c';
+  return `<svg class="tpath" viewBox="0 0 ${w} ${h}">
+    <line x1="0" x2="${w}" y1="${Y(tp)}" y2="${Y(tp)}" stroke="#45c98f" stroke-opacity=".5" stroke-dasharray="4 4"/><text x="${w - 4}" y="${Y(tp) - 3}" fill="#45c98f" font-size="9" text-anchor="end">target</text>
+    <line x1="0" x2="${w}" y1="${Y(sl)}" y2="${Y(sl)}" stroke="#f0676c" stroke-opacity=".5" stroke-dasharray="4 4"/><text x="${w - 4}" y="${Y(sl) + 10}" fill="#f0676c" font-size="9" text-anchor="end">stop</text>
+    <line x1="0" x2="${w}" y1="${Y(0)}" y2="${Y(0)}" stroke="#3a434c"/>
+    ${mk(t.signal_ts, 'signal', '#79b2ea')}${mk(t.entry_ts, 'entry', '#f2b23e')}${mk(t.exit_ts, 'exit', col)}
+    <path d="${line}" fill="none" stroke="#cfd6dd" stroke-width="1.3"/></svg>`;
+}
+async function cmdCauses(a) {
+  const sr = await ensureSr(); const b = a[0];
+  const rows = sr.strategies.filter((r) => !b || r.book === b);
+  const agg = {};
+  for (const r of rows) for (const c of r.causes) { (agg[c.cause] ||= { n: 0, s: 0, by: {} }); agg[c.cause].n += c.n; agg[c.cause].s += c.avgPct * c.n; agg[c.cause].by[r.book] = c.n; }
+  const tot = Object.values(agg).reduce((s, x) => s + x.n, 0);
+  out(`<span class="hd">Causes</span> <span class="dim">${b || 'all books'} · ${tot} closed trades</span>`);
+  const meaning = { TARGET: 'reached the profit target', GRADUATED: 'curve filled, sold at graduation', 'SMALL WIN': 'closed green another way', 'NO FOLLOW-THROUGH': 'never green after costs → entry selection', 'GAVE BACK': 'was green, reversed → exit/target', 'LATE ENTRY': 'price ran before the fill → speed', DUMP: 'one large sell → holder risk', STALLED: 'activity died → hold time' };
+  out(`<table><tr><th>cause</th><th class="r">trades</th><th class="r">share</th><th class="r">avg</th><th>meaning</th></tr>${Object.entries(agg).sort((x, y) => y[1].n - x[1].n).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r dim">${((v.n / tot) * 100).toFixed(0)}%</td><td class="r">${pc(v.s / v.n)}</td><td class="dim">${esc(meaning[k] || '')}</td></tr>`).join('')}</table>`);
+}
+async function cmdCompare() {
+  const sr = await ensureSr(); const m = sr.strategies.find((r) => r.book === 'main');
+  if (!m || m.avgPct == null) return out('<span class="dim">Main has no closed trades yet.</span>');
+  out(`<span class="hd">vs Main</span> <span class="dim">(${m.n} trades, avg ${m.avgPct.toFixed(1)}%)</span>`);
+  out(`<table><tr><th>book</th><th class="r">trades</th><th class="r">avg</th><th class="r">gap vs main</th><th>read</th></tr>${sr.strategies.filter((r) => r.book !== 'main').map((r) => {
+    const gap = r.avgPct == null ? null : r.avgPct - m.avgPct; const enough = r.n >= 30 && m.n >= 30;
+    return `<tr><td>${lk(`strategy ${r.book}`, r.label)}</td><td class="r">${r.n}</td><td class="r">${pc(r.avgPct)}</td><td class="r">${gap == null ? '–' : `<span class="${gap > 0 ? 'up' : 'down'}">${gap > 0 ? '+' : ''}${gap.toFixed(1)} pts</span>`}</td><td class="dim">${!enough ? 'needs 30+ trades each' : gap > 0 ? 'better so far' : 'worse so far'}</td></tr>`; }).join('')}</table>`);
+  out('<span class="dim">Significance (95% ranges) is in the Report tab’s decision checklist.</span>');
+}
+async function cmdPnl(a) {
+  const d = { '24h': 1, '1d': 1, '7d': 7, '14d': 14, '30d': 30 }[a[0]] || T.days;
+  const sr = await get(`/api/terminal/strategies?days=${d}`);
+  out(`<span class="hd">P&amp;L · last ${d}d</span>`);
+  out(`<table>${sr.strategies.map((r) => `<tr><td style="color:${BOOK_COL(r.book)}">${r.label}</td><td class="r">${r.n} trades</td><td class="r ${cls(r.pnlSol)}">${sUsdSigned(r.pnlSol)}</td><td class="r">${pc(r.avgPct)}/trade</td></tr>`).join('')}</table>`);
+}
+async function cmdReport() {
+  const r = await get(`/api/report?days=14&tz=${new Date().getTimezoneOffset()}`);
+  out(`<span class="hd">Two-week checklist</span> <span class="dim">coverage ${Math.round(r.coverage.pct)}% of hours</span>`);
+  for (const v of r.verdicts) out(`<span class="${v.tone === 'good' ? 'up' : v.tone === 'bad' ? 'down' : 'acc'}">${esc(v.verdict.padEnd(16))}</span> ${esc(v.q)}<br><span class="dim">                 ${esc(v.detail)}</span>`);
+  out(`<span class="lk" data-tab="report">open the Report tab</span>`);
+}
+async function run(line) {
+  line = line.trim(); if (!line) return;
+  out(esc(line), 'cmd');
+  T.hist.push(line); T.hi = T.hist.length;
+  const [c, ...a] = line.split(/\s+/);
+  const k = Object.keys(CMDS).find((x) => x === c.toLowerCase()) || Object.keys(CMDS).find((x) => x.startsWith(c.toLowerCase()));
+  if (!k) return out(`<span class="down">unknown command "${esc(c)}"</span> · type ${lk('help', 'help')}`);
+  try { await CMDS[k].fn(a.map((x) => x.toLowerCase() === x ? x : x)); } catch (e) { out(`<span class="down">error: ${esc(e.message)}</span>`); }
+}
+$('#termForm').addEventListener('submit', (e) => { e.preventDefault(); const i = $('#termInput'); const v = i.value; i.value = ''; run(v); });
+$('#termInput').addEventListener('keydown', (e) => {
+  const i = e.target;
+  if (e.key === 'ArrowUp') { e.preventDefault(); if (T.hi > 0) { T.hi--; i.value = T.hist[T.hi] || ''; } }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); if (T.hi < T.hist.length) { T.hi++; i.value = T.hist[T.hi] || ''; } }
+  else if (e.key === 'Tab') {
+    e.preventDefault(); const parts = i.value.split(' ');
+    const pool = parts.length === 1 ? Object.keys(CMDS) : ['main', 'band', 'flow', 'confirm', 'win', 'loss', 'skipped', '24h', '7d', '14d', 'on', 'off'];
+    const m = pool.filter((x) => x.startsWith(parts[parts.length - 1].toLowerCase()));
+    if (m.length === 1) { parts[parts.length - 1] = m[0]; i.value = parts.join(' ') + ' '; } else if (m.length > 1) out(`<span class="dim">${m.join('  ')}</span>`);
+  }
+});
+tout.addEventListener('click', (e) => { const l = e.target.closest('[data-cmd]'); if (l) run(l.dataset.cmd); const tb = e.target.closest('[data-tab]'); if (tb) document.querySelector(`.tabs [data-tab=${tb.dataset.tab}]`)?.click(); });
+$('#termChips').innerHTML = ['strategies', 'compare', 'causes', 'trades loss 15', 'trades win 15', 'pnl 24h', 'report', 'help'].map((c) => `<button type="button" data-cmd="${c}">${c}</button>`).join('');
+$('#termChips').addEventListener('click', (e) => { const b = e.target.closest('[data-cmd]'); if (b) run(b.dataset.cmd); });
+function termTail(ev) {
+  if (!T.tail || !ev?.pos) return;
+  const p = ev.pos, t = new Date().toLocaleTimeString();
+  if (ev.type === 'entry') out(`<span class="dim">${t}</span> ${bookTag(p.book)}<span class="info">ENTRY</span> ${lk(`why ${p.id}`, `#${p.id}`)} ${esc(p.symbol)} @ ${sUsd(p.entryMcap)}${p.signalMcap ? ` <span class="dim">(${signed((p.entryMcap / p.signalMcap - 1) * 100, 1, '%')} vs signal)</span>` : ''}`);
+  else if (ev.type === 'exit') out(`<span class="dim">${t}</span> ${bookTag(p.book)}<span class="${p.pnlPct > 0 ? 'up' : 'down'}">EXIT ${p.pnlPct > 0 ? '+' : ''}${p.pnlPct.toFixed(1)}%</span> ${lk(`why ${p.id}`, `#${p.id}`)} ${esc(p.symbol)} <span class="dim">${esc((p.cause || p.reason || '').toLowerCase())}</span>`);
+  else if (ev.type === 'skip') out(`<span class="dim">${t}</span> ${bookTag(p.book)}<span class="dim">SKIP ${esc(p.symbol)} · ${esc(p.reason)}</span>`);
+}
+function termWelcome() {
+  if (T.welcomed) return; T.welcomed = true;
+  out('<span class="acc">CURVEWATCH TRADE TERMINAL</span> <span class="dim">· paper trades only · type</span> ' + lk('help', 'help') + ' <span class="dim">or click a dot on the timeline</span>');
+  out('<span class="dim">Every trade is labeled with why it ended the way it did. Live entries, exits and skips stream below.</span>');
+  cmdStrategies();
+}
+
+// =====================================================================
+// Report tab: two-week performance comparison
+// =====================================================================
+const R = { days: 14, data: null };
+const repBookCol = (b) => (b === 'grad' ? css('--up') : BOOK_COL(b));
+async function loadReport() {
+  try { R.data = await get(`/api/report?days=${R.days}&tz=${new Date().getTimezoneOffset()}`); renderReport(); }
+  catch (e) { $('#repRange').textContent = `Report unavailable (${e.message})`; }
+}
+$('#repDays').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; R.days = Number(b.dataset.d); $('#repDays').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', x === b)); loadReport(); });
+const dfmt = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+const rs = (x, d = 1) => (x == null ? '–' : `${x > 0 ? '+' : ''}${n(x, d)}%`);
+function renderReport() {
+  const d = R.data; if (!d) return;
+  const px = d.solUsd || solPx();
+  const toUsd = (sol) => (px ? usd(sol * px, { sign: true }) : `${n(sol, 2)} SOL`);
+  $('#repRange').textContent = `${dfmt(d.since)} – ${dfmt(d.until)} · ${d.days} days · split into halves at ${new Date(d.splitAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · generated ${new Date(d.generatedAt).toLocaleTimeString()}`;
+  const totN = d.bookOrder.reduce((s, b) => s + (d.books[b]?.n || 0), 0);
+  const maxH = 24;
+  $('#repCoverage').innerHTML = `<div class="cov">
+    <div><div class="label">Hours recorded</div><div class="value ${d.coverage.pct >= 80 ? 'up' : 'acc'}">${pct(d.coverage.pct, 0)}</div><div class="sub">${d.coverage.hours} of ${d.coverage.possibleHours} h · needs 80%+</div></div>
+    <div><div class="label">Closed paper trades</div><div class="value">${totN}</div><div class="sub">across ${d.bookOrder.length} books</div></div>
+    <div><div class="label">Strong signals graded</div><div class="value">${d.strong.labeled}</div><div class="sub">${d.strong.hitRatePct == null ? 'none graded yet' : `${pct(d.strong.hitRatePct, 0)} hit · breakeven ${d.breakevenPct}%`}</div></div>
+    <div><div class="label">Market pause</div><div class="value">${esc(String(d.gateMode).toUpperCase())}</div><div class="sub">${d.gateMode === 'shadow' ? 'tags entries, blocks nothing' : 'blocking entries when COLD'}</div></div></div>
+    <div class="covbar" title="hours recorded per day">${d.daily.map((x) => `<i class="${x.hours ? '' : 'zero'}" style="height:${Math.max(8, (x.hours / maxH) * 100)}%" title="${x.date}: ${x.hours} h"></i>`).join('')}</div>`;
+  $('#repVerdicts').innerHTML = d.verdicts.map((v) => `<div class="verdict ${v.tone}"><div class="vq">${esc(v.q)}</div><span class="vchip">${esc(v.verdict)}</span><div class="vd">${esc(v.detail)}</div></div>`).join('');
+  $('#repBooksHint').textContent = `current exit rules (${d.rules}) · gated entries excluded · first half vs second half by exit time`;
+  $('#repBooks').innerHTML = `<div class="btable-wrap"><table class="btable wide"><thead><tr><th>Book</th><th class="num">Trades</th><th class="num">Win</th><th class="num">Avg / trade</th><th class="num">95% range</th><th class="num">P&amp;L</th><th class="num">1st half</th><th class="num">2nd half</th><th>Kill rule</th></tr></thead><tbody>${d.bookOrder.map((b) => {
+    const x = d.books[b]; if (!x) return '';
+    return `<tr><td><span style="color:${repBookCol(b)}">■</span> <b>${esc(d.bookLabels[b] || b)}</b><div class="small-note">${esc(d.bookEntry[b] || '')}</div></td><td class="num">${x.n}</td><td class="num">${x.n ? pct(x.winRatePct, 0) : '–'}</td>
+      <td class="num ${cls(x.avgPct)}">${rs(x.avgPct)}</td><td class="num">${x.ciLowPct == null ? '–' : `${rs(x.ciLowPct, 0)} to ${rs(x.ciHighPct, 0)}`}</td><td class="num ${cls(x.pnlSol)}">${toUsd(x.pnlSol)}</td>
+      <td class="num ${cls(x.week1.avgPct)}">${x.week1.n ? `${rs(x.week1.avgPct)} <span class="muted">(${x.week1.n})</span>` : '–'}</td><td class="num ${cls(x.week2.avgPct)}">${x.week2.n ? `${rs(x.week2.avgPct)} <span class="muted">(${x.week2.n})</span>` : '–'}</td>
+      <td><span class="pill ${x.kill.status === 'PASS' ? 'up' : x.kill.status === 'FAIL' ? 'down' : 'acc'}">${x.kill.status}</span> <span class="muted">${x.kill.n}/${x.kill.needed}</span></td></tr>`;
+  }).join('')}</tbody></table></div>`;
+  renderRepEquity(d, px);
+  const M = d.marketCmp, mc = (s) => `${s.n} trades · ${s.n ? pct(s.winRatePct, 0) + ' win · ' : ''}<span class="${cls(s.avgPct)}">${rs(s.avgPct)}</span>`;
+  $('#repMarket').innerHTML = `<div class="btable-wrap"><table class="btable"><thead><tr><th>Book</th><th>WARM</th><th>COLD</th></tr></thead><tbody>
+    ${Object.entries(M.perBook).map(([b, v]) => `<tr><td><span style="color:${repBookCol(b)}">■</span> ${esc(d.bookLabels[b] || b)}</td><td>${mc(v.WARM)}</td><td>${mc(v.COLD)}</td></tr>`).join('')}
+    <tr><td><b>All curve books</b></td><td>${mc(M.WARM)}</td><td>${mc(M.COLD)}</td></tr></tbody></table></div>
+    <p class="small-note">WARM − COLD: ${M.warmMinusCold.diff == null ? 'not enough data' : `${signed(M.warmMinusCold.diff, 1, ' pts')} per trade, 95% range ${signed(M.warmMinusCold.lo, 1)} to ${signed(M.warmMinusCold.hi, 1)}`}. ${M.UNKNOWN.n} entries had no market state yet. The pause is only worth enforcing if that range is clearly above zero.</p>`;
+  const bk = d.bookOrder;
+  $('#repDaily').innerHTML = `<div class="btable-wrap"><table class="btable wide wide-d"><thead><tr><th>Date</th><th class="num">Hours</th><th class="num">Launches</th><th class="num">Alerts</th><th class="num">Grad alerts</th><th class="num">Strong</th>${bk.map((b) => `<th class="num">${esc(d.bookLabels[b] || b)}</th>`).join('')}<th class="num">COLD share</th></tr></thead><tbody>
+    ${[...d.daily].reverse().map((x) => `<tr><td>${x.date}</td><td class="num">${x.hours}</td><td class="num">${n(x.launches, 0)}</td><td class="num">${x.alerts}</td><td class="num">${x.gradAlerts}</td><td class="num">${x.strong}</td>
+      ${bk.map((b) => { const s = x.books[b]; return `<td class="num">${s?.n ? `<span class="${cls(s.avgPct)}">${rs(s.avgPct)}</span> <span class="muted">${s.n}·${pct(s.winRatePct, 0)}</span>` : '<span class="muted">–</span>'}</td>`; }).join('')}
+      <td class="num">${x.coldSharePct == null ? '–' : pct(x.coldSharePct, 0)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function renderRepEquity(d, px) {
+  const el = $('#repEquity'), w = Math.max(300, el.clientWidth || 600), h = 230, P = { l: 56, r: 10, t: 10, b: 24 };
+  const series = d.bookOrder.map((b) => ({ b, pts: (d.equity[b] || []).map(([t, v]) => [t, v * (px || 1)]) })).filter((s) => s.pts.length);
+  $('#repEqLegend').innerHTML = d.bookOrder.map((b) => `<span><i style="background:${repBookCol(b)}"></i>${esc(d.bookLabels[b] || b)}</span>`).join('');
+  if (!series.length) { el.innerHTML = `<div class="empty">No closed trades in this window yet.</div>`; return; }
+  const firstT = Math.min(...series.map((s) => s.pts[0][0])), t1 = d.until;
+  const t0 = Math.max(d.since, firstT - Math.max(10 * 60000, (t1 - firstT) * 0.04)), vals = series.flatMap((s) => s.pts.map((p) => p[1]));
+  const short = t1 - t0 <= 2 * 86400000;
+  let y0 = Math.min(0, ...vals), y1 = Math.max(0, ...vals); if (y1 - y0 < 1) { y0 -= 1; y1 += 1; }
+  const X = (t) => P.l + ((t - t0) / (t1 - t0)) * (w - P.l - P.r), Y = (v) => P.t + (1 - (v - y0) / (y1 - y0)) * (h - P.t - P.b);
+  const grid = [0, 1, 2, 3, 4].map((i) => { const v = y0 + ((y1 - y0) * i) / 4; return `<line x1="${P.l}" x2="${w - P.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${P.l - 6}" y="${Y(v) + 4}" text-anchor="end" fill="var(--text-faint)" font-size="10" font-family="var(--font-mono)">${px ? usd(v) : n(v, 2)}</text>`; }).join('');
+  const ticks = [0, 0.5, 1].map((f) => { const t = t0 + (t1 - t0) * f; return `<text x="${X(t)}" y="${h - 6}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" fill="var(--text-faint)" font-size="10">${short ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : dfmt(t)}</text>`; }).join('');
+  const lines = series.map((s) => { const p = [[t0, 0], ...s.pts, [t1, s.pts[s.pts.length - 1][1]]]; return `<path d="${p.map((q, i) => `${i ? 'L' : 'M'}${X(q[0]).toFixed(1)},${Y(q[1]).toFixed(1)}`).join('')}" fill="none" stroke="${repBookCol(s.b)}" stroke-width="1.8"/>`; }).join('');
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="height:${h}px">${grid}<line x1="${P.l}" x2="${w - P.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--text-faint)" stroke-dasharray="3 3"/><line x1="${X(Math.max(d.splitAt, t0))}" x2="${X(Math.max(d.splitAt, t0))}" y1="${P.t}" y2="${h - P.b}" stroke="var(--border)" stroke-dasharray="2 4"/>${lines}${ticks}</svg>`;
+}
+const dl = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
+$('#repMd').onclick = () => {
+  const d = R.data; if (!d) return; const px = d.solUsd || solPx();
+  const L = [`# Curvewatch performance report`, ``, `${new Date(d.since).toISOString().slice(0, 10)} to ${new Date(d.until).toISOString().slice(0, 10)} (${d.days} days). Paper trading only. Coverage ${Math.round(d.coverage.pct)}% of hours (${d.coverage.hours}/${d.coverage.possibleHours}).`, ``, `## Decision checklist`, ``];
+  for (const v of d.verdicts) L.push(`- **${v.q}** ${v.verdict}. ${v.detail}`);
+  L.push('', '## Books', '', '| Book | Entry | Trades | Win | Avg/trade | 95% range | P&L (USD) | 1st half | 2nd half | Kill rule |', '|---|---|---|---|---|---|---|---|---|---|');
+  for (const b of d.bookOrder) { const x = d.books[b]; L.push(`| ${d.bookLabels[b]} | ${d.bookEntry[b]} | ${x.n} | ${x.n ? Math.round(x.winRatePct) + '%' : '–'} | ${rs(x.avgPct)} | ${x.ciLowPct == null ? '–' : `${rs(x.ciLowPct, 0)} to ${rs(x.ciHighPct, 0)}`} | ${px ? usd(x.pnlSol * px, { sign: true }) : x.pnlSol.toFixed(3) + ' SOL'} | ${rs(x.week1.avgPct)} (${x.week1.n}) | ${rs(x.week2.avgPct)} (${x.week2.n}) | ${x.kill.status} ${x.kill.n}/${x.kill.needed} |`); }
+  L.push('', '## Daily', '', `| Date | Hours | Launches | Alerts | ${d.bookOrder.map((b) => d.bookLabels[b]).join(' | ')} |`, `|---|---|---|---|${d.bookOrder.map(() => '---').join('|')}|`);
+  for (const x of d.daily) L.push(`| ${x.date} | ${x.hours} | ${x.launches} | ${x.alerts} | ${d.bookOrder.map((b) => (x.books[b]?.n ? `${rs(x.books[b].avgPct)} (${x.books[b].n})` : '–')).join(' | ')} |`);
+  L.push('', 'Avg/trade is after fees, entry delay and slippage. A 95% range that includes zero means the result is not distinguishable from break-even.');
+  dl(`curvewatch-report-${new Date().toISOString().slice(0, 10)}.md`, L.join('\n'), 'text/markdown');
+};
+$('#repCsv').onclick = () => {
+  const d = R.data; if (!d) return;
+  const head = ['date', 'hours', 'launches', 'alerts', 'grad_alerts', 'strong', ...d.bookOrder.flatMap((b) => [`${b}_n`, `${b}_win_pct`, `${b}_avg_pct`]), 'cold_share_pct'];
+  const rows = d.daily.map((x) => [x.date, x.hours, x.launches, x.alerts, x.gradAlerts, x.strong, ...d.bookOrder.flatMap((b) => { const s = x.books[b] || {}; return [s.n || 0, s.winRatePct?.toFixed(1) ?? '', s.avgPct?.toFixed(2) ?? '']; }), x.coldSharePct?.toFixed(1) ?? '']);
+  dl(`curvewatch-daily-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...rows].map((r) => r.join(',')).join('\n'), 'text/csv');
+};
+addEventListener('resize', () => { if (S.tab === 'report' && R.data) renderRepEquity(R.data, R.data.solUsd || solPx()); });
+
 boot();

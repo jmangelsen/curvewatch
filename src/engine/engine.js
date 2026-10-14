@@ -117,12 +117,14 @@ export class Engine extends EventEmitter {
           for (const cp of L.snapshotCheckpointsSec) {
             if (age >= cp && !t.snapshots.some((x) => x.checkpoint === cp)) {
               t.addSnapshot(cp);
-              snapRows.push({ mint, checkpoint: cp, ts: nowMs, mcap: t.mcap, score: s.score, reject: s.reject, features: JSON.stringify(compact(f)) });
+              // rejected tokens (~70% of snapshots) keep score + reason only: their feature vectors were 60%+ of the database
+              snapRows.push({ mint, checkpoint: cp, ts: nowMs, mcap: t.mcap, score: s.score, reject: s.reject, features: s.reject ? null : JSON.stringify(compact(f)) });
             }
           }
           const S = config.scoring;
           if (!t.alertId && !s.reject && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec) this.fireAlert(t, f, s);
-          this.maybeBandEntry(t, s, age);
+          this.maybeBandEntry(t, s, age, f);
+          this.maybeFlowEntry(t, s, age, f);
         } else {
           t.toLite();
           if (!t.alertId && !paper.isOpen(mint)) this.pp?.unwatchTrades(mint);
@@ -158,13 +160,31 @@ export class Engine extends EventEmitter {
   }
 
   /** Parallel paper book: first time a live, unrejected score lands in [lo, hi) inside the alert age window. */
-  maybeBandEntry(t, s, age) {
+  maybeBandEntry(t, s, age, f) {
     const B = config.band, S = config.scoring;
     if (!B.enabled || t.bandAt || s.reject || s.score < B.lo || s.score >= B.hi || age < S.minAgeSec || age > S.maxAgeSec) return;
     t.bandAt = Date.now(); t.bandScore = s.score;
     this.startRecording(t);
-    paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score });
+    paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score, features: f });
+    this.maybeConfirm(t, s, f);
     this.counters.bandEntries = (this.counters.bandEntries || 0) + 1;
+  }
+
+  /** Flow book: real money arriving (60s net inflow and median buy size), first time it qualifies. */
+  maybeFlowEntry(t, s, age, f) {
+    const F = config.strategies.flow, S = config.scoring;
+    if (!F.enabled || t.flowAt || s.reject || s.score < F.minScore || age < S.minAgeSec || age > S.maxAgeSec) return;
+    if (!(f.flow60Sol >= F.minFlow60Sol && f.medianBuySol >= F.minMedianBuySol)) return;
+    t.flowAt = Date.now();
+    this.startRecording(t);
+    paper.scheduleEntry(t, t.alertId || null, { book: 'flow', score: s.score, features: f });
+  }
+
+  /** Confirm book: one per token, on its first main or band signal; the entry itself checks price after the wait. */
+  maybeConfirm(t, s, f) {
+    if (!config.strategies.confirm.enabled || t.confirmAt) return;
+    t.confirmAt = Date.now();
+    paper.scheduleEntry(t, t.alertId || null, { book: 'confirm', score: s.score, features: f });
   }
 
   fireAlert(t, f, s) {
@@ -176,7 +196,8 @@ export class Engine extends EventEmitter {
     t.alertSnap = { mcap: t.mcap, maxAfter: t.mcap, runMin: t.mcap, minBeforeMax: t.mcap, minAfter: t.mcap };
     t.snapshots.push(t.alertSnap); // reuse the max/min tracking machinery
     this.counters.alerts++; this.hour().alerts++;
-    paper.scheduleEntry(t, id, { book: 'main', score: s.score });
+    paper.scheduleEntry(t, id, { book: 'main', score: s.score, features: f });
+    this.maybeConfirm(t, s, f);
     const alert = { id, mint: t.mint, symbol: t.symbol, name: t.name, ts: t.alertedAt, score: s.score, mcap: t.mcap, ageSec: f.ageSec, progressPct: f.progressPct, reasons: s.reasons, flags: s.flags };
     this.emit('alert', alert);
     log.info(`ALERT #${id} ${t.symbol} score ${s.score} mcap ${round(t.mcap, 1)} SOL age ${round(f.ageSec, 0)}s`);

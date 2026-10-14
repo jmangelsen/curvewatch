@@ -147,6 +147,7 @@ if (cfg.grads.enabled) {
 }
 refreshSmartWallets();
 paper.restoreOpen(engine.getToken);
+try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
 startServer({ engine, status, grads, strong, gateView });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

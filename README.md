@@ -231,6 +231,59 @@ Breakeven for +25% / −20% net is a 44% win rate. Labeled snapshots scoring 65�
 
 ---
 
+## 5d. Strategy lab, trade terminal, report (October 14, 2026)
+
+### Calibration that drove these changes
+About 4.3 hours of labeled data (7,479 labeled, unrejected snapshots; 122 alerts). "Hit" = the token reached +25% net before −20% net from that snapshot.
+
+| Score band | Hit rate | Note |
+|---|---|---|
+| 40–50 | 14% | 111 tokens |
+| 50–55 | 27% | |
+| 55–60 | 20% | |
+| 60–65 | 25% | |
+| 65–72 | 30% | 41% first half, 24% second half: did not hold |
+| 72–80 | 19% | 63 tokens |
+| 80+ | 38% | 8 tokens, too few to trust |
+
+- Above 50, the score barely separates winners from losers. Breakeven for +25%/−20% exits is 44%.
+- Only 60s net inflow and median buy size separated winners in both halves. score ≥ 50 & inflow ≥ 12.6 SOL & median buy ≥ 0.387 SOL hit 40% in each half (30 tokens, 95% range 25–58%). The cutoffs were chosen on the full set, so expect some shrinkage. → Flow book.
+- Replay of 143 live v2 paper trades (actual: −19.5% per trade). Waiting 60s, entering only if price ≥ signal, and taking +20% gross gave 38% win and −8.1% per trade, consistent in both halves. → Confirm book. Still negative.
+- Anti-chase filters and breakeven stops did not help in replay.
+- Nothing tested is profitable after the ~5.4% round-trip cost. The books exist to find out on more data, not because they are known to work.
+
+### Books
+| Book | Entry | Exits (net of costs) | Breakeven win rate |
+|---|---|---|---|
+| Main | score ≥ 72 | +25% / −20%, 60 min | 44% |
+| Band | score first lands in 65–72 | same | 44% |
+| Flow | score ≥ 50, 60s inflow ≥ 12.6 SOL, median buy ≥ 0.387 SOL | same | 44% |
+| Confirm | main or band signal, wait 60s, only if price ≥ signal | +20% gross (≈ +13.5% net) / −20% | ~60% |
+
+Every trade stores the signal price and time, entry slippage, entry features, best and worst point, the largest single drop, and a cause:
+TARGET, GRADUATED, SMALL WIN, NO FOLLOW-THROUGH (selection), GAVE BACK (exit), LATE ENTRY (speed), DUMP (holder risk), STALLED (activity died). Confirm skips are stored with status `skipped` and a reason. Older trades are labeled once at startup from the trade tape (marked "labeled after the fact").
+
+### Trade terminal (Performance tab)
+- Timeline: cumulative USD P&L per book. Each dot is a closed trade (green = win). Hover for details; click to open `why`.
+- Scoreboard: per-book verdict, win rate vs breakeven, average per trade, and a 95% range bar.
+- Console: `help`, `strategies`, `strategy <book>`, `trades [book] [win|loss|skipped] [n]`, `why <id|SYMBOL>`, `causes [book]`, `compare`, `pnl [24h|7d|14d]`, `report`, `tail on|off`, `clear`. Tab completes, ↑/↓ recalls history, and live ENTRY/EXIT/SKIP lines stream in.
+- API: `/api/terminal/strategies?days=`, `/api/terminal/timeline?days=`, `/api/terminal/trades?book=&limit=&before=`, `/api/terminal/trade/:id|SYMBOL`.
+
+### Report tab
+`/api/report?days=7|14|30&tz=<minutes>`: coverage, decision checklist, books compared (first vs second half), cumulative P&L, WARM vs COLD, and a daily table. Exports to Markdown and CSV. The "ready for real money" answer stays NO until coverage is ≥ 80% and a book is positive with confidence in both halves.
+
+### Performance work
+- Rejected snapshots (~70%) no longer store feature JSON. Snapshots were 52 MB of a 94 MB DB after 6 hours.
+- Snapshot retention is now 30 days (was 90).
+- The strong-signal history query is cached for 10 minutes and uses a partial index: 72 ms → 0.5 ms. Uncached, it would have grown to seconds per alert.
+
+### Connecting Telegram
+1. In Telegram, message @BotFather → `/newbot` → copy the token. Keep it private.
+2. Open your new bot and send it `/start`.
+3. On the server: `TELEGRAM_BOT_TOKEN=<token> npm run tg-setup`. This prints your numeric chat_id and sends a test message.
+4. Add `TELEGRAM_BOT_TOKEN=` and `TELEGRAM_CHAT_ID=` to `.env` (optional: `TELEGRAM_MODE=strong|all`, `TELEGRAM_STRONG_CHAT_ID=`), then restart (`docker compose up -d` or `systemctl restart curvewatch`).
+5. On the Performance tab, press "Send test message".
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

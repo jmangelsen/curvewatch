@@ -66,6 +66,12 @@ export class Strong {
   constructor() { this.counters = { evaluated: 0, fired: 0, suppressedRate: 0, belowBar: 0 }; }
 
   history(kind, score) {
+    // cached per kind and whole score point for 10 min: the query scans the labeled set and would grow with the DB
+    const ck = `${kind}:${Math.round(score)}`, hit = (this._hc ||= new Map()).get(ck);
+    if (hit && Date.now() - hit.at < 600000) return hit.v;
+    const v = this._history(kind, score); this._hc.set(ck, { at: Date.now(), v }); return v;
+  }
+  _history(kind, score) {
     const p = { gt: grossTarget(kind), gs: grossStop(kind), lo: score - C.scoreBand, hi: score + C.scoreBand, since: Date.now() - C.lookbackDays * 86400000 };
     const r = (kind === 'curve' ? Q.curveHist : Q.gradHist).get(p);
     const n = r?.n || 0, hits = r?.hits || 0;

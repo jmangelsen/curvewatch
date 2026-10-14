@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   PRIMARY KEY (mint, checkpoint)
 );
 CREATE INDEX IF NOT EXISTS idx_snap_ts ON snapshots(ts);
+CREATE INDEX IF NOT EXISTS idx_snap_labeled ON snapshots(score, mint) WHERE reject IS NULL AND max_mcap_after IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mint TEXT NOT NULL, ts INTEGER NOT NULL, score REAL, mcap REAL,
@@ -94,7 +95,7 @@ export const q = {
     exit_ts=@exitTs, exit_reason=@exitReason, pnl_sol=@pnlSol, pnl_pct=@pnlPct, events=@events WHERE id=@id`),
   voidPaper: db.prepare(`UPDATE paper_trades SET status='void', exit_ts=?, exit_reason='voided (state lost)' WHERE id=?`),
   openPapers: db.prepare(`SELECT * FROM paper_trades WHERE status='open'`),
-  allPapers: db.prepare(`SELECT * FROM paper_trades ORDER BY id DESC LIMIT ?`),
+  allPapers: db.prepare(`SELECT * FROM paper_trades WHERE status != 'skipped' ORDER BY id DESC LIMIT ?`),
   closedPapersAsc: db.prepare(`SELECT * FROM paper_trades WHERE status='closed' ORDER BY exit_ts ASC`),
 
   upsertCreatorLaunch: db.prepare(`INSERT INTO creators (wallet,launches,first_seen,last_seen) VALUES (?,1,?,?)

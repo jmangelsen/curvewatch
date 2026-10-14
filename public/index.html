@@ -27,6 +27,7 @@
     <button role="tab" aria-selected="true" data-tab="live">Live</button>
     <button role="tab" aria-selected="false" data-tab="grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="perf">Performance</button>
+    <button role="tab" aria-selected="false" data-tab="report">Report</button>
     <button role="tab" aria-selected="false" data-tab="intel">Intel</button>
   </nav>
   <div class="top-right">
@@ -124,6 +125,25 @@
   <!-- PERFORMANCE -->
   <section id="tab-perf" class="tab-panel" hidden>
     <div class="grid-perf">
+      <article class="card term-card">
+        <div class="card-head term-head">
+          <h2>Trade terminal</h2><span class="live-dot" id="termLive" title="live"></span>
+          <span class="hint">every paper trade: when, what it made, and why</span>
+          <div class="term-ctrls">
+            <div class="seg" role="group" aria-label="Strategy" id="termBook"></div>
+            <div class="seg" role="group" aria-label="Window" id="termDays"><button type="button" data-d="1">24h</button><button type="button" data-d="7">7d</button><button type="button" data-d="14" aria-pressed="true">14d</button></div>
+          </div>
+        </div>
+        <div class="term-grid">
+          <div class="term-chart"><canvas id="termCanvas" aria-label="Cumulative paper P&amp;L by strategy, each dot a closed trade"></canvas><div class="term-legend" id="termLegend"></div></div>
+          <div class="term-board" id="termBoard"></div>
+        </div>
+        <div class="term" id="term">
+          <div class="term-out" id="termOut" role="log" aria-live="polite"></div>
+          <div class="term-chips" id="termChips"></div>
+          <form class="term-in" id="termForm" autocomplete="off"><span class="ps1">cw&gt;</span><input id="termInput" spellcheck="false" autocapitalize="off" aria-label="Terminal command" placeholder="help · strategies · why 123 · trades flow loss"/></form>
+        </div>
+      </article>
       <article class="card strong-card">
         <div class="card-head"><h2>Telegram strong signals</h2><span class="hint" id="strongHint"></span>
           <button class="btn" id="tgTest" type="button">Send test message</button></div>
@@ -162,6 +182,29 @@
   </section>
 
   <!-- INTEL -->
+  <section id="tab-report" class="tab-panel" hidden>
+    <div class="grid-report">
+      <article class="card rep-head">
+        <div class="rep-title">
+          <div><h2>Performance comparison report</h2><p class="hint" id="repRange">Loading…</p></div>
+          <div class="rep-actions">
+            <div class="seg" role="group" aria-label="Report window" id="repDays">
+              <button type="button" data-d="7">7d</button><button type="button" data-d="14" aria-pressed="true">14d</button><button type="button" data-d="30">30d</button>
+            </div>
+            <button class="btn" id="repMd" type="button">Download report (.md)</button>
+            <button class="btn" id="repCsv" type="button">Daily CSV</button>
+          </div>
+        </div>
+        <div id="repCoverage"></div>
+      </article>
+      <article class="card rep-verdicts"><div class="card-head"><h2>Decision checklist</h2><span class="hint">each answer stays "not enough data" until the sample can support it</span></div><div id="repVerdicts" class="verdicts"></div></article>
+      <article class="card rep-books"><div class="card-head"><h2>Books compared</h2><span class="hint" id="repBooksHint"></span></div><div id="repBooks"></div></article>
+      <article class="card rep-equity"><div class="card-head"><h2>Cumulative P&amp;L</h2><span class="hint">paper, USD at today's SOL price</span></div><div id="repEquity" class="chart"></div><div id="repEqLegend" class="radar-legend static"></div></article>
+      <article class="card rep-market"><div class="card-head"><h2>Market conditions: WARM vs COLD</h2><span class="hint">both curve books, by state at entry</span></div><div id="repMarket"></div></article>
+      <article class="card rep-daily"><div class="card-head"><h2>Daily</h2><span class="hint">by exit day, your local time · hours = hours with recorded data</span></div><div id="repDaily"></div></article>
+    </div>
+  </section>
+
   <section id="tab-intel" class="tab-panel" hidden>
     <div class="grid-intel">
       <article class="card ds-card">

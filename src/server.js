@@ -9,6 +9,8 @@ import * as paper from './engine/paper.js';
 import { getSmartList } from './engine/intel.js';
 import { logger } from './log.js';
 import { notify, tgEnabled } from './engine/telegram.js';
+import { buildReport } from './report.js';
+import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js';
 
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +76,17 @@ export function startServer({ engine, status, grads, strong, gateView }) {
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
 
   app.get('/api/market', (req, res) => res.json(gateView()));
+  // Trade terminal
+  const safe = (fn) => (req, res) => { try { const r = fn(req); if (r == null) return res.status(404).json({ error: 'not found' }); res.json(r); } catch (e) { log.warn('terminal', e.message); res.status(500).json({ error: e.message }); } };
+  app.get('/api/terminal/trades', safe((req) => tradeList({ book: String(req.query.book || ''), limit: Number(req.query.limit) || 50, before: Number(req.query.before) || 1e15 })));
+  app.get('/api/terminal/trade/:id', safe((req) => tradeDetail(req.params.id)));
+  app.get('/api/terminal/strategies', safe((req) => strategyReport({ days: Number(req.query.days) || 14 })));
+  app.get('/api/terminal/timeline', safe((req) => timeline({ days: Number(req.query.days) || 14 })));
+
+  app.get('/api/report', (req, res) => {
+    try { res.json(buildReport({ days: Number(req.query.days) || 14, tzOffsetMin: Number(req.query.tz) || 0 })); }
+    catch (e) { log.warn('report failed', e.message); res.status(500).json({ error: 'report failed' }); }
+  });
 
   // Strong signals + Telegram test
   app.get('/api/strong', (req, res) => res.json(strong.view(Math.min(100, Number(req.query.limit) || 30))));
