@@ -5,7 +5,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { db, q } from '../db.js';
 import { logger } from '../log.js';
-import { HYPOTHESES, HORIZONS, PASS_BAR } from './hypotheses.js';
+import { HYPOTHESES, HORIZONS, PASS_BAR, windowsOf } from './hypotheses.js';
 import { roundTrip, zFamily } from './stats.js';
 const log = logger('edgelab');
 
@@ -22,7 +22,7 @@ const RUN_EVERY_MS = Number(process.env.EDGE_RUN_MIN || 15) * 60000;
 const hyp = Object.fromEntries(HYPOTHESES.map((h) => [h.id, h]));
 const hzn = Object.fromEntries(HORIZONS.map((h) => [h.id, h]));
 const reg = {}, regHash = {};
-for (const h of HYPOTHESES) for (const z of HORIZONS) {
+for (const h of HYPOTHESES) for (const z of windowsOf(h, HORIZONS)) {
   const key = `${h.id}@${z.id}`;
   const hash = createHash('sha1').update(h.id + h.test.toString() + JSON.stringify(z)).digest('hex').slice(0, 8);
   const k = `edge_reg:${key}:${hash}`;

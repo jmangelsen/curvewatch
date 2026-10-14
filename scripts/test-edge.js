@@ -1,7 +1,7 @@
 // Edge Lab pass-logic tests (pure statistics, no database).
 import assert from 'node:assert/strict';
 import { evaluate, invNorm, zFamily, netOf, roundTrip } from '../src/edgelab/stats.js';
-import { HYPOTHESES, HORIZONS, PASS_BAR } from '../src/edgelab/hypotheses.js';
+import { HYPOTHESES, HORIZONS, PASS_BAR, windowsOf } from '../src/edgelab/hypotheses.js';
 
 let pass = 0, fail = 0;
 const test = (name, fn) => { try { fn(); pass++; console.log('  ok  ', name); } catch (e) { fail++; console.log('  FAIL', name, '\n      ', e.message); } };
@@ -66,7 +66,25 @@ test('registry: unique ids, sane thresholds, pass bar is 300 tokens', () => {
   assert.equal(PASS_BAR.minTokens, 300);
   for (const z of HORIZONS) assert.ok(z.exit > z.entry);
   const f = { smartBuyers: 2, bundlePct: 0, flow60Sol: 1, progressPct: 5, uniqueBuyers: 12, tinyBuyShare: 0.1, repeatTradeShare: 0.1, mcapSol: 50 };
-  for (const h of HYPOTHESES) assert.equal(typeof h.test(f, { score: 70, mcap: 50 }), 'boolean', h.id);
+  for (const h of HYPOTHESES) assert.equal(typeof h.test(f, { score: 70, mcap: 50 }, { ts: 1e6, entry: 60, tr: [] }), 'boolean', h.id);
+});
+
+const H = Object.fromEntries(HYPOTHESES.map((h) => [h.id, h]));
+test('tracked tests run only on windows where the 60 s condition is observable', () => {
+  assert.deepEqual(windowsOf(H.tracked60, HORIZONS).map((z) => z.id), ['60-180', '120-300', '300-600']);
+  for (const z of windowsOf(H.tracked60, HORIZONS)) assert.ok(z.entry >= 60);
+  assert.ok(windowsOf(H.trackedpre, HORIZONS).every((z) => z.entry >= 120));
+  assert.equal(windowsOf(H.quiet, HORIZONS).length, HORIZONS.length);
+});
+test('tracked60: no look-ahead, 60 s cutoff, realized variant needs realized basis', () => {
+  const at = 1_000_000, x = (tr) => ({ ts: at, entry: 60, tr });
+  assert.equal(H.tracked60.test({}, {}, x([{ ts: at - 5000, age: 55, basis: 'proxy' }])), true);
+  assert.equal(H.tracked60.test({}, {}, x([{ ts: at + 1000, age: 59, basis: 'proxy' }])), false, 'buy after the entry snapshot must not count');
+  assert.equal(H.tracked60.test({}, {}, x([{ ts: at - 1000, age: 61, basis: 'proxy' }])), false, 'buy after 60 s');
+  assert.equal(H.tracked60real.test({}, {}, x([{ ts: at - 5000, age: 30, basis: 'proxy' }])), false);
+  assert.equal(H.tracked60real.test({}, {}, x([{ ts: at - 5000, age: 30, basis: 'realized' }])), true);
+  assert.equal(H.trackedpre.test({}, {}, { ts: at, entry: 300, tr: [{ ts: at - 1, age: 290, basis: 'proxy' }] }), true);
+  assert.equal(H.trackedpre.test({}, {}, { ts: at, entry: 300, tr: [] }), false);
 });
 
 console.log(`\n${fail ? fail + ' failed, ' : 'all '}${pass} passed`);

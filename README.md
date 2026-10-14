@@ -348,7 +348,7 @@ PASS needs all of: 50+ trades, the 99% low bound of average P&L per trade above 
 ## 5f. Edge Lab, 38.5% stop, tape drill, smart-wallet tracker (October 14, 2026)
 
 ### Edge Lab (tab "Edge Lab")
-Pre-registered hypothesis tests (src/edgelab/). 18 ideas x 5 entry/exit windows (30-60 s, 30-120 s, 60-180 s, 120-300 s, 300-600 s) = 90 tests; 5 are reference tests (all tokens, alert >= 72, score band 65-72) that can never pass. Each test is hashed (definition + window) at registration; changing a definition creates a new test that starts at zero. Only tokens launched after registration count toward the pass bar. The worker runs every `EDGE_RUN_MIN` minutes against a read-only DB connection.
+Pre-registered hypothesis tests (src/edgelab/). 21 ideas over 5 entry/exit windows (30-60 s, 30-120 s, 60-180 s, 120-300 s, 300-600 s) = 98 tests (18 ideas on all 5 windows, 3 tracked-wallet ideas on a subset); 5 are reference tests (all tokens, alert >= 72, score band 65-72) that can never pass. Each test is hashed (definition + window) at registration; changing a definition creates a new test that starts at zero. Only tokens launched after registration count toward the pass bar. The worker runs every `EDGE_RUN_MIN` minutes against a read-only DB connection.
 
 A test PASSES only if all six checks hold:
 1. 300+ tokens counted since registration.
@@ -359,6 +359,14 @@ A test PASSES only if all six checks hold:
 6. Beats the all-tokens reference over the same window.
 
 Costs per round trip = max(model 8.25%, audited fill realism 11.4%). Exits are labeled from the token's own snapshots first, then the graduation 1 h peak, then the finalized 1 h mcap. FAIL = 300+ tokens and a net mean <= 0. Status at writing: 0 pass, several FAIL, the rest collecting.
+
+### Tracked-wallet tests (registered October 14, 2026, 19:41 UTC)
+Family "Tracked wallets", 8 tests. Context passed to each test = buys recorded live in `smart_trades` by wallets that were on the tracked list at the moment they bought, with age in seconds since launch. Only buys at or before the entry snapshot count (no look-ahead). Hypotheses can now declare `horizons` to run on a subset of windows.
+- `tracked60`: a tracked wallet (any basis) bought within 60 s of launch. Windows 60-180, 120-300, 300-600 (entry at 60 s or later, so the full 60 s is observable).
+- `tracked60real`: same, only wallets on the realized +50% basis. Same windows.
+- `trackedpre`: a tracked wallet bought any time before entry. Windows 120-300, 300-600.
+The family test count rose from 85 to 93, so the Bonferroni z went from about 3.68 to 3.70. Existing tests kept their registration hashes.
+Caveat: like every Edge Lab test, only tokens that pass the hard rejects are sampled. At registration, 3 of the 4 early tracked-wallet buys were on rejected tokens (creator sold 100%, non-SOL quote), so these tests may fill slowly.
 
 ### Stop at 38.5%
 All paper stops (PAPER, GRAD, STRONG, CONFIRM) are 38.5%. Replay of 1,053 live exits: 38.5% stop -16.4%/trade vs -13.9% at 20%, -12.2% at 10%, -18.1% with no stop; 38.5% plus a 30 s time stop -11.7%. A wider stop raises the breakeven win rate (about 60.6% at the current take-profit) and stops overshoot on thin curves, so realized losses exceed 38.5%. This was set on request, not because the data favors it.

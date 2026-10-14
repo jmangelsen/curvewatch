@@ -3,7 +3,9 @@
 // launched after it was registered (its definition hash first seen), so ideas formed on old data cannot pass on it.
 // Changing a filter changes its hash and restarts its count. Add new ideas at the bottom; never edit one to fit.
 //
-// f = compact features at the snapshot (see engine.compact), s = { score, mcap, reject }
+// f = compact features at the snapshot (see engine.compact), s = { score, mcap, reject },
+// x = { ts, entry, tr } extra context (tracked-wallet buys). Optional `horizons` limits a hypothesis to some windows.
+export const windowsOf = (hy, all) => (hy.horizons ? all.filter((z) => hy.horizons.includes(z.id)) : all);
 
 export const HORIZONS = [
   { id: '30-60', entry: 30, exit: 60, label: 'enter at 30 s, exit at 60 s' },
@@ -41,6 +43,19 @@ export const HYPOTHESES = [
   // ---- social / size ----
   { id: 'socials', family: 'Social', label: 'X, Telegram and website all set', thesis: 'More effort from the team.', test: (f) => !!(f.hasTwitter && f.hasTelegram && f.hasWebsite) },
   { id: 'midcap', family: 'Size', label: 'Market cap 40–90 SOL', thesis: 'Past the dust stage, far from graduation. Oct 14 paper data looked least bad here.', test: (f, s) => f.mcapSol >= 40 && f.mcapSol < 90 },
+  // ---- tracked smart wallets (registered Oct 14, 2026) ----
+  // x.tr = live-recorded buys by wallets that were on the tracked list AT THE TIME of the buy (smart_trades), each with
+  // age = seconds after launch. Only buys at or before the entry snapshot count, so there is no look-ahead.
+  // Runs only where entry is at 60 s or later, so "first 60 s" is fully observable at entry.
+  { id: 'tracked60', family: 'Tracked wallets', label: 'Tracked wallet bought in the first 60 s', horizons: ['60-180', '120-300', '300-600'],
+    thesis: 'A top-15 tracked wallet (any basis) buying within a minute of launch marks the token before the crowd.',
+    test: (f, s, x) => x.tr.some((b) => b.age <= 60 && b.ts <= x.ts) },
+  { id: 'tracked60real', family: 'Tracked wallets', label: 'Realized-basis tracked wallet bought in the first 60 s', horizons: ['60-180', '120-300', '300-600'],
+    thesis: 'Same, but only wallets ranked on realized +50% hits (not the peak-based proxy). The version that matters once rankings mature.',
+    test: (f, s, x) => x.tr.some((b) => b.age <= 60 && b.ts <= x.ts && b.basis === 'realized') },
+  { id: 'trackedpre', family: 'Tracked wallets', label: 'Tracked wallet bought before entry', horizons: ['120-300', '300-600'],
+    thesis: 'Faster-filling companion: any tracked buy between launch and the entry snapshot (2 or 5 min).',
+    test: (f, s, x) => x.tr.some((b) => b.ts <= x.ts) },
 ];
 
 // Pass bar (all must hold). Written here so the UI, README and tests read the same numbers.

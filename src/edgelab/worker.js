@@ -2,7 +2,7 @@
 // Read-only database connection (WAL lets it read while the scanner writes).
 import { parentPort, workerData } from 'node:worker_threads';
 import Database from 'better-sqlite3';
-import { HYPOTHESES, HORIZONS, PASS_BAR } from './hypotheses.js';
+import { HYPOTHESES, HORIZONS, PASS_BAR, windowsOf } from './hypotheses.js';
 import { evaluate, netOf, eta, histogram } from './stats.js';
 
 const { dbPath, reg, cost, replayCfg } = workerData;
@@ -20,6 +20,14 @@ const tok = new Map();
 for (const r of db.prepare(`SELECT t.mint, t.symbol, t.graduated, t.graduated_at, t.peak_mcap_1h, t.mcap_1h, t.finalized, COALESCE(t.gap,0) gap
   FROM tokens t WHERE t.mint IN (SELECT mint FROM snapshots WHERE features IS NOT NULL)`).iterate()) tok.set(r.mint, r);
 
+// tracked-wallet buys recorded live (wallet was on the tracked list when it bought)
+const trBuys = new Map(); // mint -> [{ ts, age, basis, wallet }]
+try {
+  for (const r of db.prepare(`SELECT s.mint, s.ts, s.basis, s.wallet, t.created_at FROM smart_trades s JOIN tokens t ON t.mint = s.mint WHERE s.is_buy = 1`).iterate()) {
+    let a = trBuys.get(r.mint); if (!a) trBuys.set(r.mint, (a = [])); a.push({ ts: r.ts, age: (r.ts - r.created_at) / 1000, basis: r.basis, wallet: r.wallet });
+  }
+} catch { /* tracker tables not created yet */ }
+const NO_TR = [];
 const quality = { entries: 0, exitSnapshot: 0, exitGraduated: 0, exitFinal: 0, pending: 0, excludedGap: 0, badMcap: 0 };
 const samples = Object.fromEntries(HORIZONS.map((h) => [h.id, []])); // horizon -> [{ mint, ts, gross, f, s }]
 for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features FROM snapshots WHERE features IS NOT NULL AND reject IS NULL AND COALESCE(gap,0) = 0 AND checkpoint IN (${entryCps.join(',')}) ORDER BY ts`).iterate()) {
@@ -38,18 +46,18 @@ for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features
     }
     if (!(exit > 0)) { quality.pending++; continue; }
     quality[kind === 'snap' ? 'exitSnapshot' : kind === 'grad' ? 'exitGraduated' : 'exitFinal']++;
-    samples[h.id].push({ mint: r.mint, ts: r.ts, gross: (exit / r.mcap - 1) * 100, f, s: { score: r.score, mcap: r.mcap } });
+    samples[h.id].push({ mint: r.mint, ts: r.ts, gross: (exit / r.mcap - 1) * 100, f, s: { score: r.score, mcap: r.mcap }, x: { ts: r.ts, entry: h.entry, tr: trBuys.get(r.mint) || NO_TR } });
   }
 }
 
 // ---------- 2. evaluate ----------
-const tests = HYPOTHESES.flatMap((hy) => HORIZONS.map((hz) => ({ hy, hz, key: `${hy.id}@${hz.id}` })));
+const tests = HYPOTHESES.flatMap((hy) => windowsOf(hy, HORIZONS).map((hz) => ({ hy, hz, key: `${hy.id}@${hz.id}` })));
 const m = tests.filter((t) => !t.hy.reference).length;
 const out = [];
 const universeTest = HYPOTHESES.find((h) => h.reference)?.test || (() => true);
 for (const { hy, hz, key } of tests) {
   const since = reg[key] ?? Date.now();
-  const all = samples[hz.id].filter((x) => { try { return hy.test(x.f, x.s); } catch { return false; } });
+  const all = samples[hz.id].filter((x) => { try { return hy.test(x.f, x.s, x.x); } catch { return false; } });
   const toRow = (x) => ({ ts: x.ts, net: netOf(x.gross, cost.primary), gross: x.gross, mint: x.mint });
   const counted = all.filter((x) => x.ts >= since).map(toRow), context = all.map(toRow);
   const uCounted = samples[hz.id].filter((x) => x.ts >= since && universeTest(x.f, x.s)).map(toRow);

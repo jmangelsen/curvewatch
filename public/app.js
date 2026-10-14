@@ -1487,7 +1487,7 @@ function renderEdge() {
         <span class="bchip" data-drill="edge_bar" data-label="Pass bar">beats <b>all tokens</b></span>
       </div></div>
     <div class="e-kpis">
-      ${tile('edge_all', 'Tests', String(c.tests), `${v.hypotheses.length} ideas × ${v.horizons.length} windows`)}
+      ${tile('edge_all', 'Tests', String(c.tests), `${v.hypotheses.length} ideas over ${v.horizons.length} windows`)}
       ${tile('edge_pass', 'Passing', String(c.pass), 'clear every check')}
       ${tile('edge_candidate', 'Candidates', String(c.candidate), 'positive, check missing')}
       ${tile('edge_fail', 'Failed', String(c.fail), 'net ≤ 0 on 300+')}
@@ -1529,7 +1529,7 @@ function renderEdgeMap() {
   g += `<text x="${l}" y="${H - 1}" font-size="10" fill="#6b737d">tokens counted (log) →</text>`;
   const pts = rows.map((x) => `<circle class="pt" tabindex="0" data-drill="edge:${x.key}" data-label="${esc(x.label)}" data-value="${sp(x.loPct)} lower bound" data-sub="${esc(x.window)} · n ${x.n}" cx="${X(x.n).toFixed(1)}" cy="${Y(x.loPct).toFixed(1)}" r="${innerWidth < 720 ? 6 : 5}" fill="${col[x.status]}" fill-opacity=".85"><title>${esc(x.label)} · ${esc(x.window)} · n ${x.n} · lower bound ${sp(x.loPct)}</title></circle>`).join('');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = g + pts + (rows.length ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="13" fill="#6b737d">No test has 2+ tokens in this view yet${EX.scope === 'counted' ? ' · switch to All history for context' : ''}</text>`);
+  svg.innerHTML = g + pts + (rows.length ? '' : `<text x="${W / 2}" y="${H / 2 - 9}" text-anchor="middle" font-size="13" fill="#6b737d">No test has 2+ tokens in this view yet</text>${EX.scope === 'counted' ? `<text x="${W / 2}" y="${H / 2 + 11}" text-anchor="middle" font-size="12" fill="#6b737d">Switch to All history for context</text>` : ''}`);
   $('#eMapHint').textContent = EX.scope === 'counted' ? `tokens since each test was registered · y = net lower bound (z ${n(v.z, 2)}) · tap a dot` : 'all history (context only, cannot pass) · tap a dot';
   $('#eLegend').innerHTML = Object.entries(col).map(([k, c]) => `<span><i style="background:${c}"></i>${k.toLowerCase()}</span>`).join('') + `<span>dashed lines: ${B.minTokens} tokens and +${B.marginPts} pts</span>`;
 }
