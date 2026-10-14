@@ -73,7 +73,14 @@ Within 10 seconds the Live tab shows launches. Alerts fire a few times per hour 
 1. Create an Ubuntu 24.04 VPS with 2 vCPU and 4 GB RAM (Hetzner, DigitalOcean, Vultr, or similar). Use a US region close to you; latency doesn't matter much for a human-in-the-loop screener.
 2. Add your SSH key and note the IP address.
 
-### 3.2 Server setup (run once, as root)
+### 3.2 Fastest path: one command
+From your computer: `scp curvewatch.zip root@YOUR_VPS_IP:/opt/`, then on the VPS:
+```bash
+apt-get update && apt-get install -y unzip && cd /opt && unzip -o curvewatch.zip && cd curvewatch && bash deploy/install.sh
+```
+It installs Docker, the firewall, swap and security updates, creates `.env` with a random dashboard password, optionally saves your Telegram token and chat_id, builds and starts the container, waits for health, and installs the backup and backtest cron jobs. Safe to re-run. The manual steps below do the same thing.
+
+### 3.2b Server setup (manual, run once, as root)
 ```bash
 ssh root@YOUR_VPS_IP
 apt-get update && apt-get install -y git
@@ -147,7 +154,7 @@ journalctl -u curvewatch -f
 | PumpPortal down | launches still arrive from on-chain create events | nothing |
 | All trade feeds down > 3 min | Telegram "feed unhealthy"; healthcheck pings stop, so you get an email | `docker compose logs --tail 200 curvewatch`; restart |
 | Process crash / OOM | Docker `restart: unless-stopped` (or systemd `Restart=always`) | check logs; memory is capped at 768 MB heap |
-| Disk growth | retention: trades 14 d, snapshots 90 d, losing wallets 30 d; WAL checkpoint every 6 h | `du -sh data/`; expect ~150–400 MB/week |
+| Disk growth | retention: trades 14 d, snapshots 30 d (rejected tokens store no features), losing wallets 30 d; WAL checkpoint every 6 h | `du -sh data/`; expect roughly 1–3 GB at steady state (trade tape dominates) |
 | Metadata gateway blocks | per-token fallback across two Pinata gateways | if `Metadata ok/fail` (Intel → System) degrades, add a gateway in `src/engine/metadata.js` |
 | Pump.fun protocol upgrade changes the event layout | decoder only reads the stable leading fields, and the self-test pins a real mainnet sample | run `npm run selftest`; if decode fails, update `src/sources/decode.js` |
 
