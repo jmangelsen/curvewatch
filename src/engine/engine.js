@@ -1,4 +1,5 @@
 // Orchestrator: token lifecycle, evaluation loop, snapshots, alerts, outcome labeling.
+import { scorePositions, isTracked, onTrackedTrade } from './smartTracker.js';
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { q, tx, db } from '../db.js';
@@ -82,6 +83,7 @@ export class Engine extends EventEmitter {
       return;
     }
     if (!t.applyTrade(ev)) return;
+    if (isTracked(ev.wallet)) onTrackedTrade(ev, t);
     this.counters.trades++;
     if (!t.initialBuySol && ev.wallet === t.creator && ev.isBuy && t.trades.length <= 2) {
       t.initialBuySol = ev.sol; q.updateInitialBuy.run(ev.sol, t.initialMcap, t.mint);
@@ -258,7 +260,8 @@ export class Engine extends EventEmitter {
       recordCreatorOutcome(t.creator, { graduated: t.graduated, rugged, peak });
     })();
     learnWallets(t);
-    t.firstBuyAt = new Map(); t.firstBuyMcap = new Map();
+    try { scorePositions(t); } catch (e) { /* tracker optional */ }
+    t.firstBuyAt = new Map(); t.firstBuyMcap = new Map(); t.pos = new Map();
     this.counters.finalized++;
   }
 

@@ -23,6 +23,8 @@ import { initHealth, healthView, health } from './health.js';
 import { auditFills, fillsView, startFillAudit } from './fills.js';
 import { benchmarks } from './benchmarks.js';
 import { makeDrill } from './drill.js';
+import { startEdgeLab, edgeView, edgeDetail } from './edgelab/index.js';
+import { startTracker, trackerView } from './engine/smartTracker.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 
 const log = logger('main');
@@ -164,6 +166,8 @@ initHealth({ feeds, paper, engine });
 paper.restoreOpen(engine.getToken, { downSec: health.restoredDowntimeSec });
 setInterval(() => { try { paper.tick(engine.getToken); } catch (e) { log.error('paper tick failed', e.stack); } }, 1000);
 startFillAudit();
+startEdgeLab({ fills: () => fillsView({ scope: 'all' }) });
+startTracker({ engine });
 const healthData = (scope) => {
   const t = Date.now();
   const overdueAlerts = db.prepare(`SELECT COUNT(*) n FROM alerts WHERE finalized = 0 AND ts < ?`).get(t - (config.lifecycle.outcomeHorizonSec + 600) * 1000).n;
@@ -175,7 +179,7 @@ const healthData = (scope) => {
     random: { pool: engine.counters.randomPool ?? null, noMatch: engine.counters.randomNoMatch || 0 } } });
 };
 try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
-startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads }) });
+startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail }), edgeView, edgeDetail, trackerView });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

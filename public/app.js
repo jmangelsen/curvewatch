@@ -316,7 +316,7 @@ function renderBooks() {
   $('#books').innerHTML = `<div class="btable-wrap"><table class="btable wide">
     <thead><tr><th>Book</th><th>Kill rule</th><th class="num">Win</th><th class="num">Avg / trade</th><th class="num">95% range</th><th class="num">P&amp;L</th><th class="num">Open</th></tr></thead>
     <tbody>${(P.books.order || Object.keys(B)).map((b) => row(B[b].label || b, B[b].entry || '', B[b].kill, B[b].open)).join('')}${L.n ? row('Old exits (v1)', 'main book before the change', L, null, 'legacy') : ''}</tbody></table></div>
-    <p class="small-note">Breakeven for Main, Band and Flow (+25% / −20% net) is a 44% win rate. Confirm uses a closer target (+20% gross, ≈ +13.5% net), so its breakeven win rate is about 60%. Calibration on October 14: no book cleared breakeven in replay; the best (Confirm) lost about 8% per trade. These run to find out, not because they are known to work.</p>`;
+    <p class="small-note">Breakeven win rate = stop ÷ (target + stop). Main, Band and Flow (+25% target, −${STOPX()}% stop, net): ${n(STOPX() / (25 + STOPX()) * 100, 0)}%. Confirm (+20% gross ≈ +13.5% net): about ${n(STOPX() / (13.5 + STOPX()) * 100, 0)}%. The stop is a trigger: thin curves fill below it. Replay on October 14 showed wider stops lost more per trade (−20%: −13.9%, −40%: −16.7%); the 38.5% stop runs to measure that live. These books run to find out, not because they are known to work.</p>`;
 }
 function renderMarket() {
   const m = S.paper?.market; if (!m) return;
@@ -629,13 +629,13 @@ async function openDrawer(mint) {
     <div class="d-mint" title="Click to copy" data-copy="${mint}">${mint}</div>
     <div class="d-links"><a href="https://pump.fun/coin/${mint}" target="_blank" rel="noopener">pump.fun</a><a href="https://solscan.io/token/${mint}" target="_blank" rel="noopener">Solscan</a><a href="https://dexscreener.com/solana/${mint}" target="_blank" rel="noopener">DexScreener</a>${L?.social?.links?.telegram ? `<a href="${esc(L.social.links.telegram)}" target="_blank" rel="noopener">Telegram</a>` : ''}${L?.social?.links?.twitter ? `<a href="${esc(L.social.links.twitter)}" target="_blank" rel="noopener">X</a>` : ''}</div>
     ${L?.series?.length > 1 ? `<div class="d-sec"><h3>Market cap (USD)</h3><div id="dSpark" class="chart spark"></div></div>` : ''}
-    <div class="d-sec"><h3>Score ${L?.reject ? `<span class="reject">· rejected: ${esc(L.reject)}</span>` : L?.score != null ? `· ${n(L.score, 1)}` : ''}</h3>
+    <div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Score history"><h3>Score ${L?.reject ? `<span class="reject">· rejected: ${esc(L.reject)}</span>` : L?.score != null ? `· ${n(L.score, 1)}` : ''}</h3>
       <div class="parts">${Object.entries(parts).map(([k, v]) => `<div class="part ${v < 0 ? 'neg' : ''}"><span>${k}</span><div class="bar"><i style="width:${Math.min(100, (Math.abs(v) / (pmax[k] || 10)) * 100)}%"></i></div><span>${n(v, 1)}</span></div>`).join('') || '<div class="faint">No live score (token archived).</div>'}</div>
       ${L?.flags?.length ? `<div class="chips" style="margin-top:10px">${L.flags.map((x) => `<span class="chip warn">${esc(x)}</span>`).join('')}</div>` : ''}</div>
-    <div class="d-sec"><h3>Features</h3><div class="feat">${featRows.map(([a, b]) => `<div><span class="muted">${a}</span><span>${esc(b ?? '–')}</span></div>`).join('')}</div></div>
+    <div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Token record"><h3>Features</h3><div class="feat">${featRows.map(([a, b]) => `<div><span class="muted">${a}</span><span>${esc(b ?? '–')}</span></div>`).join('')}</div></div>
     ${L?.topHolders?.length ? `<div class="d-sec"><h3>Top holders (wallets, excl. curve)</h3><div class="feat">${L.topHolders.map((h) => `<div><span class="mono">${short(h.w)}${h.creator ? ' <span class="acc">dev</span>' : ''}</span><span>${pct(h.pct, 2)}</span></div>`).join('')}</div></div>` : ''}
-    ${L?.lastTrades?.length ? `<div class="d-sec"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${short(t.w)}</span><span style="text-align:right">${sUsd(t.sol)}</span><span style="text-align:right" class="faint">${sUsd(t.mcap)}</span></div>`).join('')}</div></div>` : ''}
-    ${d.snapshots.length ? `<div class="d-sec"><h3>Snapshots</h3><div class="feat">${d.snapshots.map((s) => `<div><span class="muted">${s.checkpoint}s · score ${s.reject ? '✕' : n(s.score, 0)}</span><span>${sUsd(s.mcap)}${s.max_mcap_after ? ` → max ${n(s.max_mcap_after / s.mcap, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
+    ${L?.lastTrades?.length ? `<div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Recorded trades"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${short(t.w)}</span><span style="text-align:right">${sUsd(t.sol)}</span><span style="text-align:right" class="faint">${sUsd(t.mcap)}</span></div>`).join('')}</div></div>` : ''}
+    ${d.snapshots.length ? `<div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Checkpoint snapshots"><h3>Snapshots</h3><div class="feat">${d.snapshots.map((s) => `<div><span class="muted">${s.checkpoint}s · score ${s.reject ? '✕' : n(s.score, 0)}</span><span>${sUsd(s.mcap)}${s.max_mcap_after ? ` → max ${n(s.max_mcap_after / s.mcap, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
   if (L?.series?.length > 1) lineChart($('#dSpark'), L.series.map(([t, m]) => [t, m * (solPx() || 1)]), { zero: false, h: 140, yFmt: (v) => (solPx() ? usd(v) : n(v, 0)), color: css('--accent') });
 }
 function closeDrawer() { $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); $('#drawer').setAttribute('aria-hidden', 'true'); }
@@ -675,6 +675,7 @@ async function boot() {
 // =====================================================================
 const T = { book: '', days: 14, tl: null, sr: null, hover: null, pts: [], hist: [], hi: -1, tail: true, scan: 0, lastLoad: 0, live: false };
 const BOOK_COL = (b) => css(`--b-${b}`) || css('--accent');
+const STOPX = () => S.paper?.config?.stopPct ?? S.status?.paper?.stopPct ?? 38.5;
 const BOOK_LABEL = (b) => ({ main: 'Main', band: 'Band', flow: 'Flow', confirm: 'Confirm', random: 'Random', grad: 'Graduates' }[b] || b);
 const tcv = $('#termCanvas'), tctx = tcv.getContext('2d');
 const tout = $('#termOut');
@@ -1057,6 +1058,7 @@ boot();
 const HX = { data: null, range: 24 * 60, scope: 'test', hover: null, open: new Set() };
 async function loadHealth() {
   try { HX.data = await get(`/api/health?scope=${HX.scope}`); renderHealth(); } catch (e) { console.warn('health', e); }
+  try { const m = await get('/api/tape/marks?mins=1440'); HX.marks = new Map(); for (const [e, x, p] of m.marks) { for (const [t, k] of [[e, 'in'], [x, p >= 0 ? 'win' : 'loss']]) { if (!t) continue; const mi = Math.floor(t / 60000), o = HX.marks.get(mi) || { in: 0, win: 0, loss: 0 }; o[k]++; HX.marks.set(mi, o); } } } catch { /* markers optional */ }
 }
 async function pollHealthDot() {
   try { const d = HX.data && S.tab === 'health' ? HX.data : await get('/api/health'); if (S.tab !== 'health') HX.data = d; setHDot(d); } catch {}
@@ -1153,7 +1155,7 @@ function renderFills(f) {
   $('#hFills').innerHTML = `<div class="fk">${tiles.map(([l, v, s2]) => `<div><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s2}</div></div>`).join('')}</div>
     <div class="fgrid">
       <div class="hist"><h3>Entry price vs real buyers (paper ÷ real − 1)</h3>${f.entry.n ? histSvg(f.entry.hist, { bad: (lo) => lo < 0 }) : '<div class="empty">No matched entries yet</div>'}<p class="small-note">Left of zero: paper bought cheaper than real wallets did, so the model is too optimistic.</p></div>
-      <div class="hist"><h3>Stop exits: points past the −${S.paper?.config?.stopPct ?? 20}% stop</h3>${f.stops.n ? histSvg(f.stops.hist, { unit: '', bad: (lo) => lo >= 5 }) : '<div class="empty">No stop exits yet</div>'}<p class="small-note">A stop is a trigger, not a price. Thin curves dump through it before the sell lands.</p></div>
+      <div class="hist"><h3>Stop exits: points past the −${STOPX()}% stop</h3>${f.stops.n ? histSvg(f.stops.hist, { unit: '', bad: (lo) => lo >= 5 }) : '<div class="empty">No stop exits yet</div>'}<p class="small-note">A stop is a trigger, not a price. Thin curves dump through it before the sell lands.</p></div>
       <div><h3>By book</h3><div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Stop over</th></tr></thead><tbody>${bk.length ? bk.map(([b, v]) =>
         `<tr><td><span class="dotc" style="background:${BOOK_COL(b)}"></span>${BOOK_LABEL(b)}</td><td class="num">${sg(v.entryMedianPct)} <span class="hint">${v.entryN}</span></td><td class="num">${sg(v.exitMedianPct)} <span class="hint">${v.exitN}</span></td><td class="num">${v.stopOverMedianPts == null ? '–' : n(v.stopOverMedianPts, 1)} <span class="hint">${v.stopN}</span></td></tr>`).join('') : '<tr><td colspan="4" class="hint">No trades in this scope</td></tr>'}</tbody></table></div>
         <dl class="kv" style="margin-top:var(--space-3)"><dt>Gap-flagged (excluded)</dt><dd>${f.integrity.gap}</dd><dt>Restored after restart</dt><dd>${f.integrity.restored}</dd><dt>Voided (14 d)</dt><dd>${f.integrity.voided}</dd></dl></div>
@@ -1190,6 +1192,9 @@ function drawStrip() {
     if (m[2] > 0) { g.fillStyle = dn; g.globalAlpha = .7; g.fillRect(x, 0, Math.max(bw, 1), base * Math.min(1, m[2] / 60)); }
     if (m[4] > 0) { g.fillStyle = ac; g.globalAlpha = .9; g.fillRect(x, base + 3, Math.max(bw, 1.5), 3); }
   }
+  if (HX.marks) { for (let i = 0; i < N; i++) { const k = HX.marks.get(start + i); if (!k) continue; const x = i * bw, w = Math.max(bw, 2);
+      if (k.in) { g.globalAlpha = 1; g.fillStyle = ac; g.fillRect(x, 0, w, 4); }
+      if (k.win || k.loss) { g.globalAlpha = 1; g.fillStyle = k.win >= k.loss ? up : dn; g.fillRect(x, 5, w, 4); } } }
   g.globalAlpha = 1;
   stripScan = (stripScan + W / 600) % W;
   const grd = g.createLinearGradient(stripScan - 60, 0, stripScan, 0); grd.addColorStop(0, 'rgba(242,178,62,0)'); grd.addColorStop(1, 'rgba(242,178,62,.18)');
@@ -1200,8 +1205,8 @@ function drawStrip() {
     g.fillText(new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }), x, H - 3); }
   if (HX.hover != null) { const i = Math.floor(HX.hover / bw), m = map.get(start + i), tip = $('#hTip');
     g.fillStyle = 'rgba(255,255,255,.5)'; g.fillRect(i * bw, 0, Math.max(bw, 1), base);
-    tip.hidden = false; const t = (start + i) * 60000;
-    tip.textContent = `${new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} · ${!m || m[3] < 1 ? 'not running' : m[1] == null ? 'up (backfilled)' : `${n(m[1], 0)} trades${m[2] ? ` · gap ${n(m[2], 0)}s` : ''}${m[4] ? ` · ${m[4]} reconnects` : ''}`}`;
+    tip.hidden = false; const t = (start + i) * 60000, mk = HX.marks?.get(start + i);
+    tip.textContent = `${new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} · ${!m || m[3] < 1 ? 'not running' : m[1] == null ? 'up (backfilled)' : `${n(m[1], 0)} trades${m[2] ? ` · gap ${n(m[2], 0)}s` : ''}${m[4] ? ` · ${m[4]} reconnects` : ''}`}` + (mk ? ` · ${mk.in ? mk.in + ' entr' + (mk.in > 1 ? 'ies' : 'y') : ''}${mk.in && (mk.win + mk.loss) ? ', ' : ''}${mk.win + mk.loss ? (mk.win + mk.loss) + ' exit' + (mk.win + mk.loss > 1 ? 's' : '') : ''}` : '') + ' · tap for trades';
     tip.style.left = `${Math.min(Math.max(HX.hover - tip.offsetWidth / 2, 4), W - tip.offsetWidth - 4)}px`; }
 }
 {
@@ -1209,6 +1214,16 @@ function drawStrip() {
   const pos = (e) => { const r = cv.getBoundingClientRect(); HX.hover = (e.touches ? e.touches[0].clientX : e.clientX) - r.left; };
   cv.addEventListener('pointermove', pos); cv.addEventListener('pointerdown', pos);
   cv.addEventListener('pointerleave', () => { HX.hover = null; $('#hTip').hidden = true; });
+  // tap a column: 1h view -> that minute, 6h -> its 10-minute block, 24h -> its hour
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect(), N = HX.range, i = Math.floor(((e.clientX - r.left) / r.width) * N);
+    const nowMin = Math.floor(Date.now() / 60000), minute = nowMin - N + Math.max(0, Math.min(N - 1, i));
+    const span = N <= 60 ? 1 : N <= 360 ? 10 : 60, a = Math.floor(minute / span) * span * 60000, b = a + span * 60000;
+    const f = (t) => new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    let ent = 0, ex = 0; for (let m = a / 60000; m < b / 60000; m++) { const k = HX.marks?.get(m); if (k) { ent += k.in; ex += k.win + k.loss; } }
+    HX.hover = null; $('#hTip').hidden = true;
+    openDrill({ key: `tape:${a}-${b}`, label: span === 1 ? `Minute ${f(a)}` : `${f(a)}–${f(b)}`, value: `${ent} entr${ent === 1 ? 'y' : 'ies'} · ${ex} exit${ex === 1 ? '' : 's'}`, sub: span === 1 ? 'one minute of the tape' : `${span}-minute block of the tape` });
+  });
 }
 setInterval(() => { if (document.hidden) return; if (S.tab === 'health') loadHealth(); else pollHealthDot(); }, 15000);
 setTimeout(pollHealthDot, 2500);
@@ -1264,7 +1279,7 @@ function tileKey(label, el) {
   const M = {
     'launches / min': 'launches', 'tracking now': 'tracking', 'graduations 1h': 'grads', 'alerts': 'alerts', 'sol 1h': 'sol',
     'watching': 'g_watch', 're-ignition alerts': 'g_alerts', 'min liquidity': 'g_liq',
-    'launches recorded': 'ds_launches', 'graduations': 'ds_launches', 'launches 24h': 'launches', 'grad rate 24h': 'grads', 'rugs 24h': 'ds_rugs',
+    'launches recorded': 'ds_launches', 'graduations': 'ds_grads', 'launches 24h': 'launches24', 'grad rate 24h': 'grads', 'rugs 24h': 'ds_rugs',
     'telegram': 'strong', 'strong signals 24h': 'strong', 'labeled hit rate': 'strong', 'calibrated share': 'strong', 'strong signals graded': 'strong',
     'hours recorded': 'rep_cov', 'closed paper trades': 'rep_trades', 'market pause': 'rep_gate',
     'last 24 h': 'h_cov', 'last 7 days': 'h_cov', 'last 14 days': 'h_cov', 'current test': 'h_cov', 'gaps (14 d)': 'h_gaps', 'launch capture': 'h_capture',
@@ -1277,7 +1292,7 @@ function tileKey(label, el) {
   for (const [k, v] of Object.entries(M)) if (L.startsWith(k)) return v;
   return { live: 'launches', grads: 'g_watch', perf: 'paper_exp', report: 'rep_trades', intel: 'ds_launches', health: 'h_cov' }[tab] || null;
 }
-const TAB_NAME = { live: 'Live', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health' };
+const TAB_NAME = { live: 'Live', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health', edge: 'Edge Lab' };
 function tileFrom(el) {
   if (el.dataset.drill) return { key: el.dataset.drill, label: el.dataset.label || el.querySelector('h3, .label, td')?.textContent?.trim(), value: el.dataset.value || '', sub: el.dataset.sub || '' };
   if (el.matches('.verdict')) { const q = el.querySelector('.vq')?.textContent || '', Q = q.toLowerCase();
@@ -1299,42 +1314,68 @@ function findTile(t) {
   return null;
 }
 document.addEventListener('click', (e) => {
-  if (e.target.closest('.drill')) return;
+  // a handler that re-rendered the tapped element detaches it; never treat a detached target as a new tile tap
+  if (!e.target.isConnected || e.target.closest('.drill')) return;
   const el = findTile(e.target); if (!el) return;
   const t = tileFrom(el); if (!t.key) return;
   e.preventDefault(); openDrill(t);
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('#drill').hidden) return closeDrill();
+  if (e.key === 'Escape' && !$('#drill').hidden) return DR.stack.length ? drillBack() : closeDrill();
   if ((e.key === 'Enter' || e.key === ' ') && document.activeElement?.dataset?.tile) { e.preventDefault(); document.activeElement.click(); }
 });
 // keyboard / screen-reader affordance for tiles rendered later
-new MutationObserver(() => { clearTimeout(decorate.t); decorate.t = setTimeout(decorate, 120); }).observe(document.body, { childList: true, subtree: true });
+// throttled (not debounced): constant live re-renders must not postpone marking new tiles as tappable
+new MutationObserver(() => { if (decorate.t) return; decorate.t = requestAnimationFrame(() => { decorate.t = 0; decorate(); }); }).observe(document.body, { childList: true, subtree: true });
 function decorate() {
-  document.querySelectorAll('.kpi, .mini-kpis > div, .mctx > div, .fk > div, .lift > div, .strong-top > div, .kill-grid > div, .cov > div').forEach((el) => {
-    if (el.dataset.tile || !el.querySelector(':scope > .label, :scope > h3')) return; el.dataset.tile = '1'; el.tabIndex = 0; el.setAttribute('role', 'button'); el.setAttribute('aria-label', `${el.querySelector(':scope > .label, :scope > h3').textContent}: open detail`);
+  const mark = (el) => {
+    if (el.dataset.tile) return; el.dataset.tile = '1';
+    if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+    if (!/^(TR|BUTTON|A)$/.test(el.tagName)) el.setAttribute('role', 'button');
+    const lab = el.dataset.label || el.querySelector(':scope > .label, :scope > h3, .cl span, .vq')?.textContent?.trim();
+    if (lab) el.setAttribute('aria-label', `${lab}: open detail`);
+    // iOS Safari only dispatches taps on a non-interactive element to a delegated listener when the element itself
+    // is clickable; a direct (no-op) listener plus cursor:pointer makes every tile reliably tappable.
+    el.addEventListener('click', NOOP);
+  };
+  document.querySelectorAll(`main ${TILE_SEL.split(', ').join(', main ')}, header #solPill, header #killBadge, header [data-drill], .drawer [data-drill]`).forEach(mark);
+  document.querySelectorAll('main div, main article').forEach((el) => {
+    if (el.dataset.tile || !el.offsetParent) return;
+    if (!(el.querySelector(':scope > .label') && el.querySelector(':scope > .value'))) return;
+    if (el.closest('.drill, .drawer, table, button, a, .seg, .term-card')) return;
+    mark(el);
   });
 }
+const NOOP = () => {};
 const DR = { stack: [], data: null, sort: {}, shown: {} };
 function closeDrill() { $('#drill').hidden = true; document.body.style.overflow = ''; DR.stack = []; }
 $('#drill').addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) return closeDrill();
+  if (e.target.closest('[data-back]')) return drillBack();
+  const nd = e.target.closest('tr[data-drill]');
+  if (nd && !e.target.closest('a')) { e.stopPropagation(); openDrill({ key: nd.dataset.drill, label: nd.dataset.label || nd.querySelector('td')?.textContent?.trim(), value: nd.dataset.value || '', sub: nd.dataset.sub || '' }, { nested: true }); $('#drillBody').scrollTop = 0; return; }
   const th = e.target.closest('th[data-col]'); if (th) { const ti = +th.dataset.t, c = th.dataset.col, cur = DR.sort[ti]; DR.sort[ti] = { c, dir: cur?.c === c && cur.dir === 'desc' ? 'asc' : 'desc' }; renderDrill(); return; }
   const more = e.target.closest('.more'); if (more) { DR.shown[more.dataset.t] = (DR.shown[more.dataset.t] || 50) + 100; renderDrill(); return; }
-  const tr = e.target.closest('tr[data-mint]'); if (tr && !e.target.closest('a') && typeof openDrawer === 'function' && tr.dataset.kind !== 'grad') { closeDrill(); openDrawer(tr.dataset.mint); }
+  const tr = e.target.closest('tr[data-mint]'); if (tr && !e.target.closest('a')) { closeDrill(); if (tr.dataset.kind === 'grad') { if (typeof openGradDrawer === 'function') openGradDrawer(tr.dataset.mint); } else if (typeof openDrawer === 'function') openDrawer(tr.dataset.mint); }
 });
 let drillTouchY = null;
 $('#drill').addEventListener('touchstart', (e) => { if (e.target.closest('.drill-grab, .drill-head')) drillTouchY = e.touches[0].clientY; }, { passive: true });
 $('#drill').addEventListener('touchend', (e) => { if (drillTouchY != null && e.changedTouches[0].clientY - drillTouchY > 80) closeDrill(); drillTouchY = null; });
-async function openDrill(t) {
+async function openDrill(t, { nested = false } = {}) {
+  if (nested && DR.tile) DR.stack.push({ tile: DR.tile, data: DR.data }); else if (!nested) DR.stack = [];
   DR.tile = t; DR.sort = {}; DR.shown = {}; DR.data = null;
   $('#drill').hidden = false; document.body.style.overflow = 'hidden';
-  $('#drillCrumb').textContent = `${TAB_NAME[S.tab] || ''} · ${t.label || ''}`.trim();
+  drillCrumb();
   $('#drillTitle').textContent = t.label || 'Detail';
   $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div><div class="empty">Loading detail…</div>`;
-  try { DR.data = await get(`/api/drill/${t.key}`); renderDrill(); }
+  try { DR.data = await get(`/api/drill/${encodeURIComponent(t.key)}`); renderDrill(); }
   catch (e) { $('#drillBody').insertAdjacentHTML('beforeend', `<div class="empty"><strong>Detail unavailable</strong>${esc(e.message)}</div>`); $('#drillBody .empty').remove(); }
 }
+function drillCrumb() {
+  const t = DR.tile, path = [TAB_NAME[S.tab] || '', ...DR.stack.map((x) => x.tile.label), t?.label || ''].filter(Boolean);
+  $('#drillCrumb').innerHTML = `${DR.stack.length ? '<button class="drill-back" data-back>‹ Back</button>' : ''}${esc(path.join(' · '))}`;
+}
+function drillBack() { const prev = DR.stack.pop(); if (!prev) return closeDrill(); DR.tile = prev.tile; DR.data = prev.data; DR.sort = {}; DR.shown = {}; drillCrumb(); renderDrill(); $('#drillBody').scrollTop = 0; }
 const shortM = (m) => (m ? `${m.slice(0, 4)}…${m.slice(-4)}` : '–');
 function dfx(v, f, row) {
   if (v == null || v === '' || (typeof v === 'number' && !Number.isFinite(v))) return '–';
@@ -1396,7 +1437,7 @@ function renderDrill() {
     const lim = DR.shown[ti] || 50;
     return `<div class="drill-tbl"><h3>${esc(tb.title)} <span class="hint">· ${rows.length} rows${rows.length ? ' · tap a column to sort' : ''}</span></h3>
       ${rows.length ? `<div class="table-wrap"><table><thead><tr>${tb.cols.map((c) => `<th data-t="${ti}" data-col="${c.k}" class="${NUMF.has(c.fmt) ? 'num' : ''}" ${so?.c === c.k ? `aria-sort="${so.dir === 'asc' ? 'ascending' : 'descending'}"` : ''}>${esc(c.h)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_)/.test(d.key) ? `data-mint="${esc(r.mint)}"` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.drill ? `data-drill="${esc(r.drill)}" data-label="${esc(r.label || '')}" data-value="${esc(r.loPct == null ? '' : signed(r.loPct, 1, '%') + ' lower bound')}" data-sub="${esc(r.window || '')}"` : r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_|book_|edge|tape|tok|tr_|wallet)/.test(d.key) ? `data-mint="${esc(r.mint)}"${r.kind === 'grad' ? ' data-kind="grad"' : ''}` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
       ${rows.length > lim ? `<button class="more" data-t="${ti}">Show ${Math.min(100, rows.length - lim)} more</button>` : ''}` : '<div class="empty">No rows yet.</div>'}</div>`;
   }).join('');
   $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
@@ -1413,3 +1454,162 @@ function renderDrill() {
     svg.addEventListener('pointerleave', () => { $('#drillCross').setAttribute('visibility', 'hidden'); $('#drillTip').hidden = true; });
   }
 }
+
+// ================= Edge Lab =================
+const EX = { data: null, scope: 'counted', fam: 'All', win: 'All' };
+const ST_LABEL = { PASS: 'PASS', CANDIDATE: 'CANDIDATE', FAIL: 'FAIL', COLLECTING: 'COLLECTING' };
+const stc = (s) => `<span class="st st-${s}">${ST_LABEL[s] || s}</span>`;
+const etaTxt = (e) => { const d = e?.daysLeft; if (d == null) return 'no tokens yet'; if (d === 0) return 'bar sample reached';
+  const why = e.spanLeft >= (e.tokenDays ?? 0) ? 'for the 3-day span' : 'at the current rate'; return d < 1 / 24 ? `under an hour ${why}` : d < 1 ? `about ${Math.ceil(d * 24)} h ${why}` : `about ${n(d, 1)} days ${why}`; };
+const sp = (v, d = 1) => (v == null || !Number.isFinite(v) ? '–' : signed(v, d, '%'));
+async function loadEdge() {
+  try { EX.data = await get('/api/edge'); renderEdge(); } catch (e) { $('#eHero').innerHTML = `<div class="empty"><strong>Edge Lab unavailable</strong>${esc(e.message)}</div>`; }
+}
+const eRow = (t) => (EX.scope === 'counted' ? t : { ...t, ...t.context, halves: null, robustMeanPct: null, vsUniverse: null, checks: {} });
+function renderEdge() {
+  const v = EX.data; if (!v) return;
+  const B = v.bar;
+  if (!v.ready) { $('#eHero').innerHTML = `<div class="e-verdict"><div class="eyebrow">Edge Lab</div><h2>First run in progress</h2><p>Results appear about 45 seconds after the scanner starts, then refresh every ${v.runEveryMin} minutes.</p></div>`; return; }
+  const c = v.counts, Cst = v.costs, Q = v.quality;
+  const verdict = c.pass ? `${c.pass} test${c.pass > 1 ? 's' : ''} passed the bar` : c.candidate ? `No pass yet · ${c.candidate} candidate${c.candidate > 1 ? 's' : ''}` : 'No edge has passed yet';
+  const sub = c.pass ? 'A pass is evidence, not a guarantee. Re-check it on fresh data before any real money.' :
+    `Every test needs ${B.minTokens} tokens launched after it was registered. Until then it is collecting, and all-history numbers are context only.`;
+  const lead = v.leader, close = v.closest;
+  const tile = (key, label, value, s) => `<div class="kpi" data-drill="${key}" data-label="${esc(label)}" data-value="${esc(value)}" data-sub="${esc(s || '')}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(s || '')}</div></div>`;
+  const ageMin = Math.round((Date.now() - v.runAt) / 60000);
+  $('#eHero').innerHTML = `<div class="e-verdict"><div class="eyebrow">Edge Lab · paper research only</div><h2>${esc(verdict)}</h2><p>${esc(sub)}</p>
+      <div class="e-bar">
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">tokens <b>≥ ${B.minTokens}</b></span>
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">span <b>≥ ${B.minSpanDays} days</b></span>
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">lower bound <b>≥ +${B.marginPts} pts</b></span>
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">both halves <b>&gt; 0</b></span>
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">best ${B.dropTopPct}% removed <b>&gt; 0</b></span>
+        <span class="bchip" data-drill="edge_bar" data-label="Pass bar">beats <b>all tokens</b></span>
+      </div></div>
+    <div class="e-kpis">
+      ${tile('edge_all', 'Tests', String(c.tests), `${v.hypotheses.length} ideas × ${v.horizons.length} windows`)}
+      ${tile('edge_pass', 'Passing', String(c.pass), 'clear every check')}
+      ${tile('edge_candidate', 'Candidates', String(c.candidate), 'positive, check missing')}
+      ${tile('edge_fail', 'Failed', String(c.fail), 'net ≤ 0 on 300+')}
+      ${tile('edge_collecting', 'Collecting', String(c.collecting), `under ${B.minTokens} tokens`)}
+      ${tile('edge_costs', 'Cost per round trip', pct(Cst.primary * 100, 1), Cst.basis)}
+      ${tile('edge_bar', 'Strictness', `z ${n(v.z, 2)}`, `1% error over ${v.m} tests`)}
+      ${tile('edge_quality', 'Labeled entries', n(Q.exitSnapshot + Q.exitGraduated + Q.exitFinal, 0), `run ${ageMin < 1 ? 'just now' : ageMin + ' min ago'} · ${n(v.ms / 1000, 1)} s`)}
+      ${close ? `<div class="e-lead" data-drill="edge:${close.key}" data-label="${esc(close.label)}" data-value="${close.n} / ${close.needed} tokens" data-sub="${esc(close.window)}">
+        <span>Closest to ${B.minTokens}: <b>${esc(close.label)}</b> · ${esc(close.window)}</span><span class="nbar ${close.n >= close.needed ? 'full' : ''}"><span style="width:${Math.min(100, (close.n / close.needed) * 100)}%"></span></span>
+        <span class="faint">${close.n} of ${close.needed} tokens · ${n(close.spanDays ?? 0, 1)} of ${B.minSpanDays} days · pass possible in ${etaTxt(close.eta)}</span></div>` : ''}
+      ${lead ? `<div class="e-lead" data-drill="edge:${lead.key}" data-label="${esc(lead.label)}" data-value="${sp(lead.loPct)} lower bound" data-sub="${esc(lead.window)}">
+        <span>Best lower bound so far: <b>${esc(lead.label)}</b> · ${esc(lead.window)}</span>${stc(lead.status)}<span class="faint">${sp(lead.loPct)} lower · ${sp(lead.meanPct)} mean · n ${lead.n}</span></div>` : ''}
+    </div>`;
+  // filters
+  const fams = ['All', ...new Set(v.hypotheses.map((h) => h.family).filter((f) => f !== 'Reference')), 'Reference'];
+  $('#eFam').innerHTML = fams.map((f) => `<button data-f="${esc(f)}" aria-selected="${EX.fam === f}">${esc(f)}</button>`).join('');
+  $('#eWin').innerHTML = ['All', ...v.horizons.map((h) => h.id)].map((w) => `<button data-w="${w}" aria-selected="${EX.win === w}">${w === 'All' ? 'All windows' : w.replace('-', '→') + 's'}</button>`).join('');
+  renderEdgeMap(); renderEdgeBoard(); renderEdgeSide();
+}
+function edgeRows() {
+  const v = EX.data; const hy = Object.fromEntries(v.hypotheses.map((h) => [h.id, h]));
+  return v.tests.map(eRow).filter((t) => (EX.fam === 'All' ? !t.reference : hy[t.hyp].family === EX.fam) && (EX.win === 'All' || t.horizon === EX.win));
+}
+function renderEdgeMap() {
+  const v = EX.data, B = v.bar, svg = $('#eMap'); if (!svg) return;
+  const rows = edgeRows().filter((t) => t.n > 1 && t.loPct != null);
+  const W = Math.max(320, svg.clientWidth || 800), H = svg.clientHeight || 340, l = 46, r = 14, t = 14, b = 30;
+  const maxN = Math.max(B.minTokens * 3, ...rows.map((x) => x.n));
+  const X = (nn) => l + (Math.log10(Math.max(1, nn)) / Math.log10(maxN)) * (W - l - r);
+  const los = rows.map((x) => x.loPct);
+  const ylo = Math.max(-80, Math.min(-10, ...los) - 2), yhi = Math.max(B.marginPts + Math.max(8, (B.marginPts - ylo) * 0.12), ...los.map((x) => x + 2));
+  const Y = (y) => t + (1 - (Math.max(ylo, Math.min(yhi, y)) - ylo) / (yhi - ylo)) * (H - t - b);
+  const col = { PASS: css('--up'), CANDIDATE: css('--accent'), FAIL: css('--down'), COLLECTING: css('--text-faint') };
+  let g = `<rect x="${X(B.minTokens)}" y="${t}" width="${W - r - X(B.minTokens)}" height="${Y(B.marginPts) - t}" fill="${css('--up')}" opacity=".08"/>
+    <text x="${W - r - 6}" y="${t + 14}" text-anchor="end" font-size="11" fill="${css('--up')}" font-family="monospace">PASS ZONE</text>`;
+  for (const yv of [ylo, ylo / 2, 0]) g += `<line x1="${l}" x2="${W - r}" y1="${Y(yv)}" y2="${Y(yv)}" stroke="rgba(127,127,127,${yv === 0 ? '.35' : '.18'})"/><text x="${l - 6}" y="${Y(yv) + 3}" text-anchor="end" font-size="10" fill="#6b737d" font-family="monospace">${Math.round(yv)}%</text>`;
+  g += `<line x1="${l}" x2="${W - r}" y1="${Y(B.marginPts)}" y2="${Y(B.marginPts)}" stroke="${css('--up')}" stroke-dasharray="4 4"/><text x="${l + 4}" y="${Y(B.marginPts) - 4}" font-size="10" fill="${css('--up')}" font-family="monospace">+${B.marginPts} pts after costs</text>`;
+  for (const xv of [10, 30, 100, B.minTokens, 1000, 3000, 10000].filter((x) => x <= maxN)) g += `<line x1="${X(xv)}" x2="${X(xv)}" y1="${t}" y2="${H - b}" stroke="${xv === B.minTokens ? css('--up') : 'rgba(127,127,127,.12)'}" ${xv === B.minTokens ? 'stroke-dasharray="4 4"' : ''}/><text x="${X(xv)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#6b737d" font-family="monospace">${xv >= 1000 ? xv / 1000 + 'k' : xv}</text>`;
+  g += `<text x="${l}" y="${H - 1}" font-size="10" fill="#6b737d">tokens counted (log) →</text>`;
+  const pts = rows.map((x) => `<circle class="pt" tabindex="0" data-drill="edge:${x.key}" data-label="${esc(x.label)}" data-value="${sp(x.loPct)} lower bound" data-sub="${esc(x.window)} · n ${x.n}" cx="${X(x.n).toFixed(1)}" cy="${Y(x.loPct).toFixed(1)}" r="${innerWidth < 720 ? 6 : 5}" fill="${col[x.status]}" fill-opacity=".85"><title>${esc(x.label)} · ${esc(x.window)} · n ${x.n} · lower bound ${sp(x.loPct)}</title></circle>`).join('');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = g + pts + (rows.length ? '' : `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="13" fill="#6b737d">No test has 2+ tokens in this view yet${EX.scope === 'counted' ? ' · switch to All history for context' : ''}</text>`);
+  $('#eMapHint').textContent = EX.scope === 'counted' ? `tokens since each test was registered · y = net lower bound (z ${n(v.z, 2)}) · tap a dot` : 'all history (context only, cannot pass) · tap a dot';
+  $('#eLegend').innerHTML = Object.entries(col).map(([k, c]) => `<span><i style="background:${c}"></i>${k.toLowerCase()}</span>`).join('') + `<span>dashed lines: ${B.minTokens} tokens and +${B.marginPts} pts</span>`;
+}
+function eCiBar(t, B) {
+  if (t.loPct == null || t.meanPct == null) return '<span class="faint">–</span>';
+  const lo = -40, hi = 15, P = (x) => `${((Math.max(lo, Math.min(hi, x)) - lo) / (hi - lo)) * 100}%`;
+  return `<span class="cibar" title="lower bound ${sp(t.loPct)} · mean ${sp(t.meanPct)}"><span class="ax"></span><span class="zero" style="left:${P(0)}"></span><span class="goal" style="left:${P(B.marginPts)}"></span>
+    <span class="rng ${t.loPct >= B.marginPts ? 'ok' : ''}" style="left:${P(t.loPct)};width:calc(${P(t.meanPct)} - ${P(t.loPct)})"></span><span class="mu" style="left:${P(t.meanPct)}"></span></span>`;
+}
+function renderEdgeBoard() {
+  const v = EX.data, B = v.bar;
+  const rows = edgeRows().sort((a, b) => (b.loPct ?? -1e9) - (a.loPct ?? -1e9) || b.n - a.n);
+  const total = rows.length; if (!EX.all) rows.splice(15);
+  const more = total > 15 ? `<button class="more e-more" data-eall>${EX.all ? 'Show top 15' : `Show all ${total} tests`}</button>` : '';
+  const cards = `<div class="ecards">${rows.map((t) => `<div class="ecard" data-drill="edge:${t.key}" data-label="${esc(t.label)}" data-value="${sp(t.loPct)} lower bound" data-sub="${esc(t.window)} · ${t.n} tokens">
+      <div class="ec-top"><span class="hl">${esc(t.label)}</span>${stc(t.status)}</div>
+      <div class="ec-meta"><span>${esc(t.family)} · ${t.horizon.replace('-', '→')}s</span><span class="nbar ${t.n >= B.minTokens ? 'full' : ''}"><span style="width:${Math.min(100, (t.n / B.minTokens) * 100)}%"></span></span><span>${t.n}/${B.minTokens}</span></div>
+      <div class="ec-nums"><span>net <b class="${cls(t.meanPct)}">${sp(t.meanPct)}</b></span><span>lower <b class="${cls(t.loPct)}">${sp(t.loPct)}</b></span><span>vs all <b class="${cls(t.vsUniverse?.diff)}">${sp(t.vsUniverse?.diff)}</b></span></div></div>`).join('')}</div>`;
+  const banner = EX.scope === 'context' ? '<div class="e-banner">All-history view: includes tokens from before each test was registered. Shown for context; only the Counted view can pass.</div>' : '';
+  $('#eBoard').innerHTML = banner + (rows.length ? `<div class="table-wrap e-tbl"><table class="etable"><thead><tr><th>Hypothesis</th><th class="hide-m">Window</th><th>Tokens</th><th class="num">Net mean</th><th class="num">Lower bound</th><th class="hide-m">vs +${B.marginPts} goal</th><th class="num hide-m">Halves</th><th class="num hide-m">vs all</th><th>Status</th></tr></thead><tbody>
+    ${rows.map((t) => `<tr data-drill="edge:${t.key}" data-label="${esc(t.label)}" data-value="${sp(t.loPct)} lower bound" data-sub="${esc(t.window)} · ${t.n} tokens">
+      <td><span class="hl">${esc(t.label)}</span><span class="fam">${esc(t.family)}<span class="show-m"> · ${t.horizon.replace('-', '→')}s</span></span></td>
+      <td class="hide-m">${t.horizon.replace('-', '→')}s</td>
+      <td class="num"><span class="nbar ${t.n >= B.minTokens ? 'full' : ''}"><span style="width:${Math.min(100, (t.n / B.minTokens) * 100)}%"></span></span>${t.n}</td>
+      <td class="num ${cls(t.meanPct)}">${sp(t.meanPct)}</td><td class="num ${cls(t.loPct)}">${sp(t.loPct)}</td><td class="hide-m">${eCiBar(t, B)}</td>
+      <td class="num hide-m">${t.halves ? `${sp(t.halves.first, 0)} / ${sp(t.halves.second, 0)}` : '–'}</td>
+      <td class="num hide-m ${cls(t.vsUniverse?.diff)}">${sp(t.vsUniverse?.diff)}</td><td>${stc(t.status)}</td></tr>`).join('')}
+    </tbody></table></div>${cards}${more}` : '<div class="empty">No tests in this filter.</div>');
+}
+function renderEdgeSide() {
+  const v = EX.data, R = v.replay, Q = v.quality;
+  const best = R?.rules?.length ? Math.max(...R.rules.map((r) => r.meanPct ?? -1e9)) : null;
+  $('#eReplay').innerHTML = `<div class="card-head"><h2>Exit replay</h2><span class="hint">${R?.withTape ?? 0} closed paper trades replayed on the tape · tap for detail</span></div>
+    ${R?.rules ? `<div class="table-wrap"><table class="etable"><thead><tr><th>Exit rule</th><th class="num">Avg / trade</th><th class="num hide-m">95% low</th><th class="num">Win</th></tr></thead><tbody>
+    ${R.rules.map((r) => `<tr class="${r.id === 'current' ? 'cur' : ''}" data-drill="edge_replay" data-label="Exit replay" data-value="${esc(r.label)}: ${sp(r.meanPct)}" data-sub="${r.n} trades"><td>${esc(r.label)}${r.id === 'current' ? ' <span class="st st-COLLECTING">LIVE</span>' : ''}${r.meanPct === best ? ' <span class="st st-CANDIDATE">BEST</span>' : ''}</td><td class="num ${cls(r.meanPct)}">${sp(r.meanPct)}</td><td class="num hide-m ${cls(r.lo95)}">${sp(r.lo95)}</td><td class="num">${pct(r.winPct, 0)}</td></tr>`).join('')}
+    </tbody></table></div><p class="small-note">Same costs and ${S.paper?.config?.exitDelaySec ?? 2} s exit delay for every rule. A wider stop lets more losers recover but makes the ones that don't cost more; this table shows which effect is winning on your data.</p>` : `<div class="empty">${esc(R?.error || 'No replayable trades yet.')}</div>`}`;
+  const lab = Q.exitSnapshot + Q.exitGraduated + Q.exitFinal;
+  const qt = (label, val, s) => `<div class="kpi" data-drill="edge_quality" data-label="${esc(label)}" data-value="${esc(val)}" data-sub="${esc(s)}"><div class="label">${esc(label)}</div><div class="value">${esc(val)}</div><div class="sub">${esc(s)}</div></div>`;
+  $('#eQuality').innerHTML = `<div class="card-head"><h2>Labeling quality</h2><span class="hint">how each entry got its exit price</span></div>
+    <div class="e-kpis" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+      ${qt('Labeled', n(lab, 0), `of ${n(Q.entries, 0)} entry snapshots`)}
+      ${qt('Own later snapshot', pct((Q.exitSnapshot / Math.max(1, lab)) * 100, 1), 'cleanest exit price')}
+      ${qt('Graduation / idle exits', n(Q.exitGraduated + Q.exitFinal, 0), 'priced at graduation or last trade')}
+      ${qt('Excluded', n(Q.pending + Q.excludedGap + Q.badMcap, 0), 'pending, gap, or bad price')}
+    </div>`;
+  $('#eMethod').innerHTML = `<div class="card-head"><h2>How a test can pass</h2><span class="hint">written before testing</span></div><ol>
+    <li><b>Registered in advance.</b> Each idea has fixed thresholds and a definition hash. Only tokens launched after registration count, so ideas formed on old data cannot pass on that data. Editing an idea restarts its count.</li>
+    <li><b>One token, one observation.</b> Entry at the token's snapshot at the window start, exit at its snapshot at the window end. No repeats of the same token.</li>
+    <li><b>Costs first.</b> Every return is net of a ${pct(v.costs.primary * 100, 1)} round trip (${esc(v.costs.basis)}${v.costs.audited != null ? `; model ${pct(v.costs.model * 100, 1)}, audited ${pct(v.costs.audited * 100, 1)} from ${v.costs.auditN} real fills` : ''}).</li>
+    <li><b>Corrected for luck.</b> ${v.m} tests run at once, so the lower bound uses z = ${n(v.z, 2)} (1% family-wise error, Bonferroni) instead of 1.96.</li>
+    <li><b>Six checks, all required:</b> ${v.bar.minTokens}+ tokens spread over ${v.bar.minSpanDays}+ days, lower bound ≥ +${v.bar.marginPts} pts, both halves positive, still positive without the best ${v.bar.dropTopPct}%, and better than all tokens in the same window.</li>
+    <li><b>Known optimism.</b> Entries fill instantly at the snapshot price; live entries fill seconds later. Treat a pass as permission to paper-trade the idea live, not to fund it.</li></ol>`;
+}
+document.addEventListener('click', (e) => {
+  const s = e.target.closest('#eScope button'); if (s) { EX.scope = s.dataset.s; $('#eScope').querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b === s)); renderEdgeMap(); renderEdgeBoard(); return; }
+  if (e.target.closest('[data-eall]')) { EX.all = !EX.all; renderEdgeBoard(); return; }
+  const f = e.target.closest('#eFam button'); if (f) { EX.fam = f.dataset.f; EX.all = false; renderEdge(); return; }
+  const w = e.target.closest('#eWin button'); if (w) { EX.win = w.dataset.w; renderEdge(); }
+});
+document.querySelector('.tabs [data-tab=edge]')?.addEventListener('click', () => { if (!S.paper) get('/api/paper').then((p) => { S.paper = p; }).catch(() => {}); loadEdge(); });
+setInterval(() => { if (S.tab === 'edge' && !document.hidden) loadEdge(); }, 60000);
+addEventListener('resize', () => { if (S.tab === 'edge' && EX.data) renderEdgeMap(); });
+
+// ================= Smart wallet tracker (Intel tab) =================
+const swS = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
+async function loadTracker() {
+  let v; try { v = await get('/api/tracker'); } catch (e) { $('#trWallets').innerHTML = `<div class="empty"><strong>Tracker unavailable</strong>${esc(e.message)}</div>`; return; }
+  const C = v.config, k = (key, label, value, sub) => `<div data-drill="${key}" data-label="${esc(label)}" data-value="${esc(value)}" data-sub="${esc(sub)}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  $('#trHint').textContent = `top ${C.topN} wallets returning +${C.profitPct}% or more on over ${Math.round(C.minRate * 100)}% of positions · ${C.minPositions}+ scored positions · live trades`;
+  $('#trKpis').innerHTML = k('tracker', 'Tracked wallets', `${v.counts.tracked} / ${C.topN}`, `${v.counts.realized} realized · ${v.counts.proxy} proxy`)
+    + k('tracker', 'Wallets scored', n(v.scored.wallets || 0, 0), `${n(v.scored.positions || 0, 0)} positions · ${n(v.scored.eligible || 0, 0)} with ${C.minPositions}+`)
+    + k('tr_trades', 'Their trades 24 h', n(v.day.n || 0, 0), `${n(v.day.buys || 0, 0)} buys · ${n(v.day.tokens || 0, 0)} tokens`)
+    + k('tr_open', 'Open positions', n(v.open.length, 0), `on ${new Set(v.open.map((r) => r.mint)).size} live tokens`);
+  $('#trWallets').innerHTML = v.wallets.length ? `<div class="table-wrap"><table class="board tr-tbl"><thead><tr><th>#</th><th>Wallet</th><th class="num">Hit +${C.profitPct}%</th><th class="num">95% low</th><th class="num">Positions</th><th>Basis</th></tr></thead><tbody>
+    ${v.wallets.map((r) => `<tr data-drill="wallet:${esc(r.wallet)}" data-label="Wallet ${swS(r.wallet)}" data-value="${pct(r.rate * 100, 0)} hit rate" data-sub="${r.k} of ${r.n} · ${r.basis}"><td class="num">${r.rank}</td><td class="mono">${swS(r.wallet)}</td><td class="num up">${pct(r.rate * 100, 0)}</td><td class="num">${pct(r.lo * 100, 0)}</td><td class="num">${r.k}/${r.n}</td><td><span class="st ${r.basis === 'realized' ? 'st-PASS' : 'st-COLLECTING'}">${r.basis.toUpperCase()}</span></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="empty">No wallet qualifies yet. Positions are scored one hour after each token launches.</div>';
+  const feed = v.recent.slice(0, 40);
+  $('#trFeed').innerHTML = feed.length ? `<div class="tr-feed">${feed.map((t) => `<div class="tr-row" data-mint="${esc(t.mint)}"><span class="faint">${ago(t.ts)}</span><span class="${t.is_buy ? 'up' : 'down'}">${t.is_buy ? 'BUY' : 'SELL'}</span><span class="mono">#${t.rank} ${swS(t.wallet)}</span><span>${esc(t.symbol || swS(t.mint))}</span><span class="num">${usd((t.sol || 0) * (solPx() || 0))}</span></div>`).join('')}</div>`
+    : '<div class="empty">No trades from tracked wallets yet. They are recorded the moment they happen.</div>';
+}
+$('#trFeed')?.addEventListener('click', (e) => { const r = e.target.closest('[data-mint]'); if (r) openDrawer(r.dataset.mint); });
+document.querySelector('.tabs [data-tab=intel]')?.addEventListener('click', loadTracker);
+setInterval(() => { if (S.tab === 'intel' && !document.hidden) loadTracker(); }, 10000);

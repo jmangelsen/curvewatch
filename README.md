@@ -345,6 +345,35 @@ PASS needs all of: 50+ trades, the 99% low bound of average P&L per trade above 
 ### Tests
 `npm test` runs the paper-engine tests (entry delay, target and stop with exit delay, idle exit, confirm skip, gap flags, kill rule, restart restore) against a throwaway database with a fake clock. `npm run selftest` checks decoding, curve math and scoring.
 
+## 5f. Edge Lab, 38.5% stop, tape drill, smart-wallet tracker (October 14, 2026)
+
+### Edge Lab (tab "Edge Lab")
+Pre-registered hypothesis tests (src/edgelab/). 18 ideas x 5 entry/exit windows (30-60 s, 30-120 s, 60-180 s, 120-300 s, 300-600 s) = 90 tests; 5 are reference tests (all tokens, alert >= 72, score band 65-72) that can never pass. Each test is hashed (definition + window) at registration; changing a definition creates a new test that starts at zero. Only tokens launched after registration count toward the pass bar. The worker runs every `EDGE_RUN_MIN` minutes against a read-only DB connection.
+
+A test PASSES only if all six checks hold:
+1. 300+ tokens counted since registration.
+2. Those tokens span 3+ days (added beyond the 300-token spec: the broadest test reached 300 tokens in about 50 minutes, one market regime).
+3. Lower confidence bound of net mean >= +2 points after costs, using a Bonferroni-corrected z (1% family error over all non-reference tests, z about 3.7).
+4. Both chronological halves positive.
+5. Still positive with the best 1% of tokens removed.
+6. Beats the all-tokens reference over the same window.
+
+Costs per round trip = max(model 8.25%, audited fill realism 11.4%). Exits are labeled from the token's own snapshots first, then the graduation 1 h peak, then the finalized 1 h mcap. FAIL = 300+ tokens and a net mean <= 0. Status at writing: 0 pass, several FAIL, the rest collecting.
+
+### Stop at 38.5%
+All paper stops (PAPER, GRAD, STRONG, CONFIRM) are 38.5%. Replay of 1,053 live exits: 38.5% stop -16.4%/trade vs -13.9% at 20%, -12.2% at 10%, -18.1% with no stop; 38.5% plus a 30 s time stop -11.7%. A wider stop raises the breakeven win rate (about 60.6% at the current take-profit) and stops overshoot on thin curves, so realized losses exceed 38.5%. This was set on request, not because the data favors it.
+
+### Uptime tape drill (Health tab)
+Amber ticks on the tape = paper entries, green/red ticks = exits (by P&L). Tap any column: 1h range opens that minute, 6h opens its 10-minute block, 24h opens its hour. The drill lists every paper trade event in order (entries, partial take-profits, stops, exits) for curve and graduate books, positions open during the window, alerts, feed uptime and market trade flow, plus a minute-by-minute table where each minute opens nested (with Back). Trade rows open the token drawer. API: `GET /api/drill/tape:<startMs>-<endMs>` (capped at 6 h), `GET /api/tape/marks?mins=1440`.
+
+### Smart-wallet tracker (Intel tab)
+- Metric: for every wallet position (buy >= `TRACK_MIN_BUY_SOL`), return = (SOL from sells + tokens still held x price at the token's 1 h label) / SOL spent - 1. A hit = return >= +`TRACK_PROFIT_PCT`% (50).
+- Selection: wallets with >= `TRACK_MIN_POSITIONS` (8) scored positions and hit rate > `TRACK_MIN_RATE` (0.65), excluding wallets above `TRACK_MAX_POS_PER_DAY` (spray bots), ranked by the Wilson 95% lower bound, top `TRACK_TOP_N` (15). Refreshed every `TRACK_REFRESH_MIN` minutes.
+- Proxy fill: until 15 wallets qualify on the realized metric, empty slots come from the older record (win = token peaked at 3x+ after the wallet's early buy, or graduated). Rows are labeled PROXY. That is peak-touching, not profit-taking; treat it as a watchlist.
+- Every buy/sell by a tracked wallet is stored live (`smart_trades`), open positions are marked to the curve, and per-wallet drills show scored positions and trades. Tables: wallet_perf, wallet_positions, smart_trades (30-day retention).
+- The scoring feature `smartBuyers` still uses the older smart set; it was not switched, so the paper-test fingerprint is unchanged.
+- API: `GET /api/tracker`, drills `tracker`, `tr_trades`, `tr_open`, `wallet:<address>`.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

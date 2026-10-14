@@ -6,7 +6,7 @@
 //   2. Is the band book better than the main book?
 //   3. Should the market-conditions pause be enforced (do COLD entries do worse than WARM)?
 //   4. Is the graduates book profitable?
-//   5. Are strong signals hitting +25% before -20% often enough (44% breakeven)?
+//   5. Are strong signals hitting +target% before -stop% often enough (breakeven = stop / (target + stop))?
 //   6. Is anything ready for real money (profitable overall AND in both weeks separately)?
 // Plus data coverage, because a report built on 30% of the hours is not a two-week report.
 import { config } from './config.js';
@@ -16,7 +16,8 @@ import { CFG, CFG_SINCE } from './version.js';
 import { market } from './market.js';
 
 const DAY = 86400000, HOUR = 3600000;
-const BREAKEVEN_PCT = 44; // +25% / -20% net: p*25 = (1-p)*20  ->  p = 44.4%
+// p*target = (1-p)*stop  ->  p = stop / (target + stop). +25% / -38.5% -> 60.6%
+const BREAKEVEN_PCT = (config.strong.stopPct / (config.strong.targetPct + config.strong.stopPct)) * 100;
 
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens(created_at)'); } catch { /* ignore */ }
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_exit ON paper_trades(exit_ts)'); } catch { /* ignore */ }
@@ -177,7 +178,7 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
       : { q, verdict: 'NO', tone: 'bad', detail: `No book's 95% range against Random is above zero (${ok.map((x) => `${STRATEGIES[x.b].label} ${fmtPts(x.d.diff)}`).join(', ')}). The score is not yet shown to beat chance.` }); }
   }
   {
-    const q = 'Are strong signals hitting +25% before −20% often enough?';
+    const q = `Are strong signals hitting +${config.strong.targetPct}% before −${config.strong.stopPct}% often enough?`;
     if (strong.labeled < 30) v.push({ q, verdict: 'NOT ENOUGH DATA', tone: 'wait', detail: `${strong.labeled} of 30 strong signals graded.${strong.hitRatePct != null ? ` ${fmt0(strong.hitRatePct)} hit so far.` : ''} Breakeven is ${BREAKEVEN_PCT}%.` });
     else if (strong.lo > BREAKEVEN_PCT) v.push({ q, verdict: 'YES', tone: 'good', detail: `${fmt0(strong.hitRatePct)} hit (95% low bound ${fmt0(strong.lo)}) over ${strong.labeled}, above the ${BREAKEVEN_PCT}% breakeven.` });
     else if (strong.hi < BREAKEVEN_PCT) v.push({ q, verdict: 'NO', tone: 'bad', detail: `${fmt0(strong.hitRatePct)} hit (95% high bound ${fmt0(strong.hi)}): below the ${BREAKEVEN_PCT}% breakeven.` });

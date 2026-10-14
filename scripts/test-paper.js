@@ -67,7 +67,7 @@ test('take profit triggers on a trade and fills after the exit delay', () => {
 test('stop: price keeps falling during the exit delay, so the fill is worse than the trigger', () => {
   const t = mk('STOP');
   openUp(t);
-  t.move(0.76); paper.onTrade(t.mint);
+  t.move(0.55); paper.onTrade(t.mint);
   let r = row(t.mint);
   assert.equal(r.status, 'open'); assert.ok(r.trigger_pct <= -P.stopPct, `trigger at/below stop, got ${r.trigger_pct}`);
   t.move(0.8); adv(P.exitDelaySec + 0.1); paper.onTrade(t.mint);
@@ -134,7 +134,7 @@ test('restart restore: a position on a token no longer in memory is rebuilt from
   const r1 = row(t.mint);
   assert.equal(r1.status, 'open'); assert.equal(r1.restored, 1); assert.ok(!r1.gap, 'short downtime: not flagged');
   // live trade arrives for the ghost: drop through the stop
-  const k = t.vsol * t.vtok, vsol = t.vsol * Math.sqrt(0.7);
+  const k = t.vsol * t.vtok, vsol = t.vsol * Math.sqrt(0.5);
   assert.equal(paper.ghostTrade({ mint: t.mint, vsol, vtok: k / vsol, isBuy: false, sol: 0.1, tok: 1, slot: 2, sig: 's2', wallet: 'w2' }), true);
   adv(P.exitDelaySec + 0.1); paper.ghostTrade({ mint: t.mint, vsol, vtok: k / vsol, isBuy: false, sol: 0.1, tok: 1, slot: 3, sig: 's3', wallet: 'w3' });
   const r2 = row(t.mint);

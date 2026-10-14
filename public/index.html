@@ -30,6 +30,7 @@
     <button role="tab" aria-selected="false" data-tab="report" data-short="Report">Report</button>
     <button role="tab" aria-selected="false" data-tab="intel" data-short="Intel">Intel</button>
     <button role="tab" aria-selected="false" data-tab="health" data-short="Health">Health<span class="hdot" id="hDot"></span></button>
+    <button role="tab" aria-selected="false" data-tab="edge" data-short="Edge">Edge Lab</button>
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
@@ -191,7 +192,7 @@
     <div class="grid-health">
       <article class="card h-hero" id="hHero"><div class="empty">Loading data health…</div></article>
       <article class="card h-strip">
-        <div class="card-head"><h2>Uptime tape</h2><span class="hint">each column is one minute of trade data · red = gap or down</span>
+        <div class="card-head"><h2>Uptime tape</h2><span class="hint">each column is one minute · red = gap or down · amber tick = paper entry, green/red tick = exit · tap any column for its trades</span>
           <div class="seg" id="hRange"><button data-r="24h" aria-selected="true">24h</button><button data-r="6h" aria-selected="false">6h</button><button data-r="1h" aria-selected="false">1h</button></div></div>
         <div class="strip-wrap"><canvas id="hStrip" height="120"></canvas><div class="strip-tip" id="hTip" hidden></div></div>
         <div id="hCov" class="mini-kpis"></div>
@@ -233,6 +234,12 @@
 
   <section id="tab-intel" class="tab-panel" hidden>
     <div class="grid-intel">
+      <article class="card tr-card" id="trCard">
+        <div class="card-head"><h2>Smart wallet tracker</h2><span class="hint" id="trHint">top 15 wallets hitting +50% on more than 65% of positions · live trades</span></div>
+        <div id="trKpis" class="mini-kpis"></div>
+        <div class="tr-grid"><div><h3 class="tr-h">Tracked wallets <span class="hint">tap a wallet</span></h3><div id="trWallets"></div></div>
+          <div><h3 class="tr-h">Live trades <span class="hint">tap a trade for the token</span></h3><div id="trFeed"></div></div></div>
+      </article>
       <article class="card ds-card">
         <div class="card-head"><h2>Dataset</h2><span class="hint">every launch is recorded and labeled 1h later</span></div>
         <div id="dsKpis" class="mini-kpis"></div>
@@ -254,6 +261,26 @@
         <div class="card-head"><h2>System</h2></div>
         <div id="sys" class="sys"></div>
       </article>
+    </div>
+  </section>
+
+  <section id="tab-edge" class="tab-panel" hidden>
+    <div class="grid-edge">
+      <article class="card e-hero" id="eHero"><div class="empty">Loading Edge Lab…</div></article>
+      <article class="card e-map">
+        <div class="card-head"><h2>Pass map</h2><span class="hint" id="eMapHint">each dot is one hypothesis × window · tap a dot</span>
+          <div class="seg" id="eScope"><button data-s="counted" aria-selected="true">Counted</button><button data-s="context" aria-selected="false">All history</button></div></div>
+        <div class="e-plot"><svg id="eMap" role="img" aria-label="Tokens counted versus lower bound for every test"></svg></div>
+        <div class="e-legend" id="eLegend"></div>
+      </article>
+      <article class="card e-board">
+        <div class="card-head"><h2>Leaderboard</h2><span class="hint">best lower bound first · tap a row for its evidence</span>
+          <div class="seg" id="eFam"></div><div class="seg" id="eWin"></div></div>
+        <div id="eBoard"></div>
+      </article>
+      <article class="card" id="eReplay"></article>
+      <article class="card" id="eQuality"></article>
+      <article class="card e-method" id="eMethod"></article>
     </div>
   </section>
 </main>

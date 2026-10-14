@@ -80,6 +80,16 @@ export const config = {
     minWinRate: num('SMART_MIN_WIN_RATE', 0.35),
     maxEarlyBuysPerDay: num('SMART_MAX_BUYS_PER_DAY', 150), // above this it's a spray bot, not skill
   },
+  // Smart-wallet tracker: wallets whose positions return >= +profitPct (realized + marked at the 1 h label) more than minRate of the time
+  smartTracker: {
+    topN: num('TRACK_TOP_N', 15),
+    profitPct: num('TRACK_PROFIT_PCT', 50),
+    minRate: num('TRACK_MIN_RATE', 0.65),
+    minPositions: num('TRACK_MIN_POSITIONS', 8),
+    minBuySol: num('TRACK_MIN_BUY_SOL', 0.05),      // ignore dust positions
+    maxPositionsPerDay: num('TRACK_MAX_POS_PER_DAY', 150), // spray bots are excluded
+    refreshMin: num('TRACK_REFRESH_MIN', 10),
+  },
 
   // ---- Paper trading (the kill-rule judge) ----
   paper: {
@@ -94,7 +104,7 @@ export const config = {
     tp1Multiple: num('PAPER_TP1_MULT', 1.25),
     tp1Fraction: num('PAPER_TP1_FRACTION', 1),
     trailPct: num('PAPER_TRAIL_PCT', 35),
-    stopPct: num('PAPER_STOP_PCT', 20),
+    stopPct: num('PAPER_STOP_PCT', 38.5),
     maxHoldMin: num('PAPER_MAX_HOLD_MIN', 60),
     idleExitMin: num('PAPER_IDLE_EXIT_MIN', 10),
     // Exits are checked on every trade of an open token; once a target/stop triggers, the sell fills at the curve
@@ -118,7 +128,7 @@ export const config = {
     // Control group: at each Main/Band/Flow signal, buy a random OTHER eligible token matched on age and mcap.
     // Every strategy must beat this, not just zero; otherwise the score adds nothing over picking at random.
     random: { enabled: bool('RANDOM_ENABLED', true), ageTolPct: num('RANDOM_AGE_TOL_PCT', 50), mcapTolPct: num('RANDOM_MCAP_TOL_PCT', 40) },
-    confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 20) },
+    confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 38.5) },
   },
 
   // Market conditions: rolling win rate of the last N closed paper trades (both books).
@@ -164,7 +174,7 @@ export const config = {
     tp1Multiple: num('GRAD_PAPER_TP1_MULT', 1.5),
     tp1Fraction: num('GRAD_PAPER_TP1_FRACTION', 0.5),
     trailPct: num('GRAD_PAPER_TRAIL_PCT', 25),
-    stopPct: num('GRAD_PAPER_STOP_PCT', 30),
+    stopPct: num('GRAD_PAPER_STOP_PCT', 38.5),
     maxHoldMin: num('GRAD_PAPER_MAX_HOLD_MIN', 360),
   },
 
@@ -175,7 +185,7 @@ export const config = {
   strong: {
     enabled: bool('STRONG_ENABLED', true),
     targetPct: num('STRONG_TARGET_PCT', 25),
-    stopPct: num('STRONG_STOP_PCT', 20),
+    stopPct: num('STRONG_STOP_PCT', 38.5),
     minHitPct: num('STRONG_MIN_HIT_PCT', 45),
     minSamples: num('STRONG_MIN_SAMPLES', 30),
     scoreBand: num('STRONG_SCORE_BAND', 6), // "similar" = historical snapshots within +/- this many score points

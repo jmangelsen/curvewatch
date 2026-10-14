@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
+import { tapeMarks } from './drill.js';
 import { q } from './db.js';
 import { datasetStats, calibration, alertStats } from './stats.js';
 import * as paper from './engine/paper.js';
@@ -15,7 +16,7 @@ import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js'
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -56,7 +57,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     res.json(d);
   });
   app.get('/api/paper', (req, res) => {
-    res.json({ open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
+    res.json({ config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
   });
   app.get('/api/dataset', (req, res) => res.json(cDataset()));
   app.get('/api/calibration', (req, res) => {
@@ -81,6 +82,10 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/fills', (req, res) => { try { res.json(fillsView({ scope: req.query.scope === 'all' ? 'all' : 'test' })); } catch (e) { res.status(500).json({ error: e.message }); } });
   app.get('/api/benchmarks', (req, res) => { try { res.json(benchmarks()); } catch (e) { log.warn('benchmarks', e.stack); res.status(500).json({ error: e.message }); } });
 
+  app.get('/api/edge', (req, res) => { try { res.json(edgeView()); } catch (e) { log.warn('edge', e.stack); res.status(500).json({ error: e.message }); } });
+  app.get('/api/edge/:key', (req, res) => { const d = edgeDetail(req.params.key); d ? res.json(d) : res.status(404).json({ error: 'not computed yet' }); });
+  app.get('/api/tracker', (req, res) => { try { res.json(trackerView()); } catch (e) { log.warn('tracker', e.stack); res.status(500).json({ error: e.message }); } });
+  app.get('/api/tape/marks', (req, res) => { const mins = Math.min(1440, Math.max(10, Number(req.query.mins) || 1440)); res.json({ since: Date.now() - mins * 60000, marks: tapeMarks(Date.now() - mins * 60000) }); });
   app.get('/api/drill/:key', (req, res) => { try { const d = drill(req.params.key); if (!d) return res.status(404).json({ error: 'unknown tile' }); res.json(d); } catch (e) { log.warn('drill', req.params.key, e.stack); res.status(500).json({ error: e.message }); } });
 
   // Trade terminal

@@ -6,6 +6,8 @@ import { db } from './db.js';
 import { config } from './config.js';
 import { market } from './market.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
+import { benchmarks } from './benchmarks.js';
+import { trackerView, walletDetail } from './engine/smartTracker.js';
 import { closedCurrent, killStatsFrom, STRATEGIES } from './engine/paper.js';
 
 const H = 3600000, D = 86400000;
@@ -14,6 +16,8 @@ const sampleSol = () => { if (market.solUsd) { solHist.push([Date.now(), market.
 setTimeout(sampleSol, 15000); setInterval(sampleSol, 60000);
 
 const C = (h, k, fmt = 'text', o = {}) => ({ h, k, fmt, ...o });
+const T_ = () => config.smartTracker;
+const n1 = (v) => (Math.round(v * 10) / 10).toString();
 const bucket = (rows, size, since, val = () => 1) => {
   const m = new Map();
   for (let t = Math.floor(since / size) * size; t <= Date.now(); t += size) m.set(t, 0);
@@ -56,7 +60,7 @@ function paperDrill(focus) {
   };
 }
 
-export function makeDrill({ engine, grads }) {
+export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = () => null }) {
   const H_ = {
     launches() {
       const since = Date.now() - 3 * H;
@@ -189,7 +193,7 @@ export function makeDrill({ engine, grads }) {
         tables: [{ title: 'Results by market state at entry', cols: [C('State', 'state'), C('Trades', 'n', 'num'), C('Avg', 'avg', 'spct'), C('Win', 'win', 'pct'), C('P&L $', 'pnl', 'susd')], rows: g }] };
     },
     // ---- health ----
-    h_cov: () => H_.rep_cov(),
+    h_cov: () => ({ ...H_.rep_cov(), title: 'Coverage (hours recorded)' }),
     h_gaps() {
       const rows = all(`SELECT * FROM gaps ORDER BY start DESC LIMIT 200`);
       return { title: 'Data gaps', explain: 'A gap opens when the trade feed is silent longer than the calibrated threshold, or when the process was down. Paper trades open during a gap and outcome labels overlapping one are excluded from stats.',
@@ -234,14 +238,53 @@ export function makeDrill({ engine, grads }) {
       return { title: 'Settings fingerprints', explain: 'A hash of every strategy setting plus the scoring and paper-engine code. A change starts a new test so old and new rules are never mixed in one verdict.',
         tables: [{ title: 'History', cols: [C('Fingerprint', 'cfg'), C('First seen', 'since', 'time'), C('Paper rows', 'n', 'num'), C('Closed', 'c', 'num'), C('Current', 'cur', 'yes')], rows: hist.map((h) => ({ ...h, n: counts[h.cfg]?.n || 0, c: counts[h.cfg]?.c || 0, cur: h.cfg === CFG ? 1 : 0 })) }] };
     },
-    h_labels() { return H_.alerts(); },
+    h_labels() {
+      const cut = Date.now() - H - 5 * 60000;
+      const over = all(`SELECT a.ts, a.mint, t.symbol, a.score FROM alerts a LEFT JOIN tokens t ON t.mint = a.mint WHERE a.finalized = 0 AND COALESCE(a.gap,0) = 0 AND a.ts < ? ORDER BY a.ts`, cut);
+      const pend = one(`SELECT COUNT(*) n FROM alerts WHERE finalized = 0 AND ts >= ?`, cut).n;
+      const tokPend = one(`SELECT COUNT(*) n FROM tokens WHERE finalized = 0 AND created_at > ?`, Date.now() - H).n;
+      const done = all(`SELECT (ts / ${H}) * ${H} t, COUNT(*) n FROM alerts WHERE finalized = 1 AND ts > ? GROUP BY 1 ORDER BY 1`, Date.now() - D);
+      return { title: 'Outcome labeling', explain: 'Every alert and token is labeled one hour after it appears (peak, graduated, rugged). An overdue alert means the labeler fell behind or the token left memory before its hour was up.',
+        stats: [['Overdue alerts', over.length, 'num'], ['Alerts inside their hour', pend, 'num'], ['Tokens inside their hour', tokPend, 'num']],
+        series: { label: 'Alerts labeled per hour, last 24 h', kind: 'bar', fmt: 'num', points: done.map((r) => [r.t, r.n]) },
+        tables: [{ title: 'Overdue alerts', cols: [C('Alerted', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num1')], rows: over }] };
+    },
+    launches24() {
+      const since = Date.now() - D;
+      const rows = all(`SELECT created_at t, graduated g FROM tokens WHERE created_at > ?`, since);
+      const hourly = bucket(rows, H, since);
+      const gh = bucket(rows.filter((r) => r.g), H, since);
+      return { title: 'Launches, last 24 h', explain: 'Every Pump.fun launch this machine saw, per hour. Hours with low counts usually line up with feed gaps on the Health tab.',
+        stats: [['Launches', rows.length, 'num'], ['Graduated', rows.filter((r) => r.g).length, 'num'], ['Grad rate', rows.length ? (rows.filter((r) => r.g).length / rows.length) * 100 : null, 'pct2'], ['Busiest hour', Math.max(0, ...hourly.map((p) => p[1])), 'num']],
+        series: { label: 'Launches per hour', kind: 'bar', fmt: 'num', points: hourly },
+        tables: [{ title: 'Per hour, newest first', cols: [C('Hour', 't', 'time'), C('Launches', 'n', 'num'), C('Graduated', 'g', 'num')], rows: hourly.map(([t, n], i) => ({ t, n, g: gh[i]?.[1] || 0 })).reverse() }] };
+    },
+    ds_grads() {
+      const d = H_.ds_launches();
+      return { ...d, title: 'Graduations by day', explain: 'Tokens that completed the bonding curve, by launch day, with the daily graduation rate.',
+        series: { label: 'Graduations per day', kind: 'bar', fmt: 'num', points: d.tables[0].rows.slice().reverse().map((r) => [r.t, r.g || 0]) } };
+    },
     // ---- benchmarks ----
     b_random() {
       const rows = closedCurrent().filter((r) => r.book === 'random').reverse();
       return { title: 'Random control book', explain: `At each Main, Band or Flow signal, a random other token that passed the hard filters, similar in age (±${config.strategies.random.ageTolPct}%) and mcap (±${config.strategies.random.mcapTolPct}%), is bought with the same exits and costs.`,
         tables: [{ title: 'Closed control trades', cols: tradeCols.filter((c) => c.k !== 'book'), rows: rows.map(tradeRow) }] };
     },
-    b_lift() { return H_.alerts(); },
+    b_lift() {
+      const L = benchmarks().lift, since = Date.now() - 7 * D;
+      const days = all(`SELECT (created_at / ${D}) * ${D} t, COUNT(*) n, SUM(graduated) g, SUM(peak_mcap_1h >= 2 * initial_mcap) x2 FROM tokens WHERE finalized = 1 AND created_at > ? AND COALESCE(gap,0) = 0 GROUP BY 1 ORDER BY 1`, since);
+      const ad = all(`SELECT (ts / ${D}) * ${D} t, COUNT(*) n, SUM(graduated) g, SUM(max_multiple >= 2) x2 FROM alerts WHERE finalized = 1 AND ts > ? AND COALESCE(gap,0) = 0 GROUP BY 1`, since);
+      const am = Object.fromEntries(ad.map((r) => [r.t, r]));
+      const rows = days.map((d) => { const a = am[d.t] || { n: 0, g: 0, x2: 0 }; const br = d.n ? (d.g / d.n) * 100 : null, ar = a.n ? (a.g / a.n) * 100 : null;
+        return { t: d.t, base: d.n, baseGrad: br, alerts: a.n, alertGrad: ar, lift: br && ar != null ? ar / br : null, alert2x: a.n ? (a.x2 / a.n) * 100 : null }; }).reverse();
+      const recent = all(`SELECT a.ts, a.mint, t.symbol, a.score, a.max_multiple, a.graduated FROM alerts a LEFT JOIN tokens t ON t.mint = a.mint WHERE a.finalized = 1 AND a.ts > ? AND COALESCE(a.gap,0) = 0 ORDER BY a.ts DESC LIMIT 200`, since);
+      return { title: 'Selection lift', explain: `Do alerts (score ≥ ${L.alertScore}) pick tokens that graduate or double more often than the base rate? Last ${L.window}, gap-flagged labels excluded. Lift is not profit: most alerted tokens fall through the stop before any move.`,
+        stats: [['Graduation: alerts', L.graduation.alert, 'pct'], ['Graduation: all launches', L.graduation.base, 'pct2'], ['Graduation lift', L.graduation.lift, 'mult'], ['Alerts labeled', L.graduation.alertN, 'num'],
+          ['Reached 2x: alerts', L.double.alert, 'pct'], [`Reached 2x: ${L.double.baseLabel}`, L.double.base, 'pct'], ['2x lift', L.double.lift, 'mult'], ['Base sample', L.double.baseN, 'num']],
+        series: { label: 'Graduation lift by day', kind: 'bar', fmt: 'num2', points: [...rows].reverse().filter((r) => r.lift != null).map((r) => [r.t, r.lift]) },
+        tables: [{ title: 'By day', cols: [C('Day', 't', 'day'), C('Launches', 'base', 'num'), C('Grad rate', 'baseGrad', 'pct2'), C('Alerts', 'alerts', 'num'), C('Alert grad rate', 'alertGrad', 'pct'), C('Lift', 'lift', 'mult'), C('Alert 2x', 'alert2x', 'pct')], rows },
+          { title: 'Labeled alerts, newest first', cols: [C('Time', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num1'), C('Peak multiple', 'max_multiple', 'mult'), C('Graduated', 'graduated', 'yes')], rows: recent }] };
+    },
   };
   const bookDrill = (b) => {
     const rows = closedCurrent().filter((r) => (r.book || 'main') === b && !r.gated);
@@ -252,11 +295,187 @@ export function makeDrill({ engine, grads }) {
       series: { label: 'Cumulative P&L (USD)', kind: 'line', fmt: 'susd', points: rows.map((r) => [r.exit_ts, (eq += r.pnl_sol)]) },
       tables: [{ title: 'Closed trades, newest first', cols: tradeCols.filter((c) => c.k !== 'book'), rows: [...rows].reverse().map(tradeRow) }] };
   };
+  // ---- Edge Lab ----
+  const testCols = [C('Hypothesis', 'label'), C('Window', 'window'), C('Tokens', 'n', 'num'), C('Net mean', 'meanPct', 'spct'), C('Lower bound', 'loPct', 'spct'), C('Status', 'status')];
+  const edgeList = (title, explain, filter) => () => {
+    const v = edgeView(); if (!v?.ready) return { title, explain: 'The first Edge Lab run starts about 45 seconds after launch and repeats every 15 minutes.' };
+    const rows = v.tests.filter(filter).sort((a, b) => (b.loPct ?? -1e9) - (a.loPct ?? -1e9));
+    return { title, explain, stats: [['Tests', rows.length, 'num'], ['Pass', rows.filter((t) => t.status === 'PASS').length, 'num'], ['Candidates', rows.filter((t) => t.status === 'CANDIDATE').length, 'num']],
+      tables: [{ title: 'Tests, best lower bound first', cols: testCols, rows: rows.map((t) => ({ ...t, drill: `edge:${t.key}` })) }] };
+  };
+  Object.assign(H_, {
+    edge_all: edgeList('All Edge Lab tests', 'Every hypothesis at every holding window. Tap a row for its full evidence.', (t) => !t.reference),
+    edge_pass: edgeList('Passing tests', 'Tests that clear every part of the pass bar.', (t) => t.status === 'PASS'),
+    edge_candidate: edgeList('Candidates', 'Positive after costs on 300+ tokens but missing at least one check.', (t) => t.status === 'CANDIDATE'),
+    edge_fail: edgeList('Failed tests', 'Average return after costs at or below zero on 300+ tokens.', (t) => t.status === 'FAIL'),
+    edge_collecting: edgeList('Still collecting', 'Fewer than 300 tokens since the hypothesis was registered.', (t) => t.status === 'COLLECTING'),
+    edge_quality() {
+      const v = edgeView(); const Ql = v?.quality || {};
+      return { title: 'Labeling quality', explain: 'How each entry snapshot got its exit price. Snapshot = the token\'s own later snapshot. Graduated = curve closed inside the window (exit at graduation). Final = evicted while idle (no trades, so price unchanged). Pending or gap-flagged entries are excluded.',
+        stats: [['Entries', Ql.entries, 'num'], ['Exit: own snapshot', Ql.exitSnapshot, 'num'], ['Exit: graduation', Ql.exitGraduated, 'num'], ['Exit: idle final', Ql.exitFinal, 'num'], ['Excluded: pending', Ql.pending, 'num'], ['Excluded: gap', Ql.excludedGap, 'num']],
+        tables: [{ title: 'Labeled entries by window', cols: [C('Window', 'w'), C('Labeled tokens', 'n', 'num')], rows: Object.entries(v?.samples || {}).map(([w, n]) => ({ w, n })) }] };
+    },
+    edge_replay() {
+      const v = edgeView(), R = v?.replay;
+      return { title: 'Exit replay on recorded trades', explain: 'Every closed paper trade replayed on the recorded price tape under different exit rules, same costs and exit delay. Shows what the stop setting is doing with live data.',
+        stats: [['Trades', R?.trades, 'num'], ['With tape', R?.withTape, 'num']],
+        tables: [{ title: 'Rules', cols: [C('Rule', 'label'), C('Trades', 'n', 'num'), C('Avg', 'meanPct', 'spct'), C('95% low', 'lo95', 'spct'), C('Win', 'winPct', 'pct'), C('1st half', 'h1', 'spct'), C('2nd half', 'h2', 'spct')],
+          rows: (R?.rules || []).map((r) => ({ ...r, h1: r.halves?.first, h2: r.halves?.second })) }] };
+    },
+    edge_costs() {
+      const v = edgeView(), c = v?.costs || {};
+      return { title: 'Cost basis', explain: 'Round-trip cost subtracted from every forward return. Pass decisions use the higher of the model and the audited real-fill cost once the fill audit has 30+ entries and exits.',
+        stats: [['Model', c.model * 100, 'pct'], ['Audited fills', c.audited == null ? null : c.audited * 100, 'pct'], ['Audit sample', c.auditN, 'num'], ['Used', (c.primary ?? 0) * 100, 'pct'], ['Basis', c.basis, 'text']] };
+    },
+    edge_bar() {
+      const v = edgeView(), B = v?.bar || {};
+      return { title: 'Pass bar', explain: `All six must hold. The lower bound uses z = ${v?.z ? v.z.toFixed(2) : '–'}: a ${B.familyAlpha * 100}% family-wise error rate spread over ${v?.m ?? '–'} tests (Bonferroni), so the chance that any test passes by luck is about 1%.`,
+        tables: [{ title: 'Checks', cols: [C('Check', 'c'), C('Rule', 'r')], rows: [
+          { c: 'Sample', r: `${B.minTokens}+ distinct tokens launched after the hypothesis was registered` },
+          { c: 'Span', r: `Those tokens span at least ${B.minSpanDays} days, so one hot hour cannot carry a pass` },
+          { c: 'Margin', r: `Lower bound of net mean ≥ +${B.marginPts} points after costs` },
+          { c: 'Halves', r: 'Net mean positive in the first and second half by time' },
+          { c: 'Robust', r: `Still positive with the best ${B.dropTopPct}% of tokens removed (at least 3)` },
+          { c: 'Universe', r: 'Beats all unrejected tokens in the same window (95% lower bound of the difference > 0)' }] }] };
+    },
+  });
+  const edgeKey = (key) => {
+    const d = edgeDetail(key); if (!d) return { title: 'Edge Lab test', explain: 'Not computed yet. Results appear after the first run.' };
+    const ck = d.checks || {};
+    const mark = (x) => (x == null ? 'n/a' : x ? 'pass' : 'not yet');
+    return { title: d.label, explain: `${d.thesis} Window: ${d.window}. Registered ${new Date(d.registeredAt).toISOString().slice(0, 16).replace('T', ' ')} UTC (definition ${d.hash}); only tokens after that count.`,
+      stats: [['Status', d.status, 'text'], ['Tokens counted', d.n, 'num'], ['Needed', d.needed, 'num'], ['Net mean', d.meanPct, 'spct'], ['Gross mean', d.grossMeanPct, 'spct'], ['Lower bound', d.loPct, 'spct'],
+        ['Median', d.medianPct, 'spct'], ['Win rate', d.winPct, 'pct'], ['1st / 2nd half', `${d.halves?.first?.toFixed(1) ?? '–'} / ${d.halves?.second?.toFixed(1) ?? '–'}%`, 'text'], ['Best 1% removed', d.robustMeanPct, 'spct'],
+        ['vs universe', d.vsUniverse?.diff, 'spct'], ['ETA to 300', d.eta?.daysLeft == null ? '–' : d.eta.daysLeft === 0 ? 'reached' : `${d.eta.daysLeft.toFixed(1)} days`, 'text'],
+        ['Check: sample', mark(ck.sample), 'text'], ['Check: span', `${mark(ck.span)} (${(d.spanDays ?? 0).toFixed(1)} of ${d.bar.minSpanDays} days)`, 'text'], ['Check: margin', mark(ck.margin), 'text'], ['Check: halves', mark(ck.halves), 'text'], ['Check: robust', mark(ck.robust), 'text'], ['Check: universe', mark(ck.universe), 'text'],
+        ['All history n / mean', `${d.context.n} / ${d.context.meanPct?.toFixed(1) ?? '–'}%`, 'text']],
+      series: d.trajectory.length > 1 ? { label: 'Lower bound over runs (net, %)', kind: 'line', fmt: 'num1', points: d.trajectory.filter((r) => r.lo != null).map((r) => [r.t, r.lo]) }
+        : { label: `Net return distribution (${d.histScope}, tokens)`, kind: 'cat', fmt: 'num', points: d.hist.map((b) => [`${b.lo}${b.hi > 1e8 ? '+' : ''}`, b.n]) },
+      tables: [
+        { title: `Net return distribution (${d.histScope})`, cols: [C('From %', 'lo', 'num'), C('To %', 'hi', 'num'), C('Tokens', 'n', 'num')], rows: d.hist.map((b) => ({ ...b, hi: b.hi > 1e8 ? null : b.hi })) },
+        { title: 'By day (all history)', cols: [C('Day', 't', 'day'), C('Tokens', 'n', 'num'), C('Counted', 'counted', 'num'), C('Net mean', 'meanPct', 'spct')], rows: [...d.byDay].reverse() },
+        { title: 'Tokens, newest first', cols: [C('Entry', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Gross', 'grossPct', 'spct'), C('Net', 'netPct', 'spct'), C('Counted', 'counted', 'yes')], rows: d.rows },
+      ],
+      note: `Costs: ${(d.costs.primary * 100).toFixed(1)}% round trip (${d.costs.basis}). Entry is at the snapshot price with no delay, which is optimistic; the +${d.bar.marginPts} point margin partly covers that.` };
+  };
+  // ---- smart-wallet tracker ----
+  const sw = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
+  const walletCols = [C('#', 'rank', 'num'), C('Wallet', 'short'), C('Basis', 'basis'), C('Positions', 'n', 'num'), C('Hits', 'k', 'num'), C('Hit rate', 'ratePct', 'pct'), C('95% low', 'loPct', 'pct'), C('Avg return', 'avgPct', 'spct'), C('P&L', 'pnlSol', 'susd')];
+  const wRow = (r) => ({ ...r, short: sw(r.wallet), ratePct: r.rate * 100, loPct: r.lo * 100, avgPct: r.avgRet == null ? null : r.avgRet * 100, drill: `wallet:${r.wallet}`, label: `Wallet ${sw(r.wallet)}`, window: '' });
+  const tradeColsW = [C('Time', 'ts', 'time'), C('Wallet', 'short'), C('Rank', 'rank', 'num'), C('Side', 'side'), C('Token', 'symbol', 'token'), C('SOL', 'sol', 'solusd'), C('Mcap', 'mcap', 'mcap')];
+  Object.assign(H_, {
+    tracker() {
+      const v = trackerView(), C_ = v.config;
+      return { title: 'Tracked smart wallets', explain: `Top ${C_.topN} wallets whose positions returned at least +${C_.profitPct}% more than ${C_.minRate * 100}% of the time, ranked by the 95% lower bound of that rate. "Realized" = scored from this machine's own position tracking (SOL out from sells plus tokens still held at the 1 h label price, divided by SOL in), ${C_.minPositions}+ positions. "Proxy" fills empty slots until enough wallets qualify: older record where a win means the token peaked at 3x+ after the wallet's early buy or graduated. Tap a wallet for its positions and trades.`,
+        stats: [['Tracked', v.counts.tracked, 'num'], ['Realized basis', v.counts.realized, 'num'], ['Proxy basis', v.counts.proxy, 'num'], ['Wallets scored', v.scored.wallets, 'num'], ['Positions scored', v.scored.positions, 'num'], [`Eligible (${C_.minPositions}+ positions)`, v.scored.eligible, 'num'], ['Their trades 24 h', v.day.n, 'num'], ['Tokens they touched 24 h', v.day.tokens, 'num']],
+        tables: [{ title: 'Tracked wallets', cols: walletCols, rows: v.wallets.map(wRow) }] };
+    },
+    tr_trades() {
+      const v = trackerView();
+      const rows = all('SELECT * FROM smart_trades WHERE ts > ? ORDER BY ts DESC LIMIT 1000', Date.now() - 7 * D).map((r) => ({ ...r, short: sw(r.wallet), side: r.is_buy ? 'buy' : 'sell' }));
+      return { title: 'Tracked wallet trades', explain: 'Every buy and sell by a tracked wallet on a Pump.fun curve, recorded live as it happened. Last 7 days, newest first. Tap a row for the token.',
+        stats: [['Trades 24 h', v.day.n, 'num'], ['Buys 24 h', v.day.buys, 'num'], ['Tokens 24 h', v.day.tokens, 'num'], ['Shown', rows.length, 'num']],
+        series: { label: 'Tracked wallet trades per hour, last 24 h', kind: 'bar', fmt: 'num', points: bucket(rows.filter((r) => r.ts > Date.now() - D).map((r) => ({ t: r.ts })), H, Date.now() - D) },
+        tables: [{ title: 'Trades', cols: tradeColsW, rows }] };
+    },
+    tr_open() {
+      const v = trackerView();
+      return { title: 'Open positions of tracked wallets', explain: 'Positions on tokens still inside their first hour, marked to the current curve price (no exit costs).',
+        stats: [['Open positions', v.open.length, 'num'], ['Tokens', new Set(v.open.map((r) => r.mint)).size, 'num']],
+        tables: [{ title: 'Open positions', cols: [C('Entered', 'first_at', 'time'), C('Wallet', 'short'), C('Rank', 'rank', 'num'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('Now', 'mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Return', 'ret', 'spct')], rows: v.open.map((r) => ({ ...r, short: sw(r.wallet) })) }] };
+    },
+  });
+  const walletDrill = (w) => {
+    const d = walletDetail(w), r = d.tracked, p = d.perf;
+    const posRows = d.positions.map((x) => ({ ...x, retPct: x.ret * 100 }));
+    let eq = 0;
+    return { title: `Wallet ${sw(w)}`, explain: `${r ? `Rank ${r.rank} of the tracked list (${r.basis} basis).` : 'Not currently in the tracked list.'} Full address: ${w}. Positions are scored at each token's 1 h label: SOL from sells plus tokens still held at the label price, over SOL spent.`,
+      stats: [['Scored positions', p?.positions, 'num'], [`Hit +${T_().profitPct}%`, p ? (p.hits / Math.max(1, p.positions)) * 100 : null, 'pct'], ['Profitable', p ? (p.profitable / Math.max(1, p.positions)) * 100 : null, 'pct'],
+        ['Touched +50% at peak', p ? (p.touched / Math.max(1, p.positions)) * 100 : null, 'pct'], ['Avg return', p ? (p.sum_ret / Math.max(1, p.positions)) * 100 : null, 'spct'], ['SOL in', p?.buy_sol, 'solusd'], ['P&L', p?.pnl_sol, 'susd'],
+        ['Proxy record', d.proxy ? `${d.proxy.wins} wins of ${d.proxy.early_buys} early buys` : '–', 'text'], ['Open now', d.open.length, 'num'], ['Trades recorded', d.trades.length, 'num']],
+      series: posRows.length > 1 ? { label: 'Cumulative P&L of scored positions (USD)', kind: 'line', fmt: 'susd', points: [...posRows].reverse().map((x) => [x.first_at, (eq += (x.sell_sol + x.held_tok * (x.label_mcap / 1e9)) - x.buy_sol)]) } : null,
+      tables: [
+        { title: 'Open positions', cols: [C('Entered', 'first_at', 'time'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('Now', 'mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Return', 'ret', 'spct')], rows: d.open },
+        { title: 'Trades (live record)', cols: [C('Time', 'ts', 'time'), C('Side', 'side'), C('Token', 'symbol', 'token'), C('SOL', 'sol', 'solusd'), C('Mcap', 'mcap', 'mcap')], rows: d.trades.map((x) => ({ ...x, side: x.is_buy ? 'buy' : 'sell' })) },
+        { title: 'Scored positions', cols: [C('Entered', 'first_at', 'time'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Out', 'sell_sol', 'solusd'), C('Return', 'retPct', 'spct'), C('Hit', 'hit', 'yes'), C('Graduated', 'graduated', 'yes')], rows: posRows },
+      ], note: `Solscan: https://solscan.io/account/${w}` };
+  };
+  // ---- uptime tape: everything that happened in a window [a, b) ----
+  const EV_LABEL = { entry: 'Entry', exit: 'Exit', tp1: 'Take profit (partial)', stop: 'Stop triggered', trigger: 'Exit triggered', confirm: 'Confirm check', skip: 'Skipped' };
+  const tapeDrill = (a, b) => {
+    const px = market.solUsd || null, mins = Math.round((b - a) / 60000);
+    const fm = all('SELECT minute, trades, creates, reconnects, gap_sec, up_sec FROM feed_minutes WHERE minute >= ? AND minute < ? ORDER BY minute', Math.floor(a / 60000), Math.ceil(b / 60000));
+    const fmm = new Map(fm.map((r) => [r.minute, r]));
+    const events = [];
+    const pull = (rows, kind) => { for (const r of rows) { let ev = []; try { ev = JSON.parse(r.events || '[]'); } catch { /* ignore */ }
+      if (!ev.some((e) => e.type === 'entry')) ev.unshift({ t: r.entry_ts, type: 'entry', mcap: r.entry_mcap });
+      if (r.exit_ts && !ev.some((e) => e.type === 'exit')) ev.push({ t: r.exit_ts, type: 'exit', reason: r.exit_reason });
+      for (const e of ev) { if (!(e.t >= a && e.t < b)) continue;
+        const usdM = e.mcap == null ? null : kind === 'grad' ? e.mcap : px ? e.mcap * px : null;
+        events.push({ ts: e.t, event: EV_LABEL[e.type] || e.type, type: e.type, book: kind === 'grad' ? 'graduates' : r.book || 'main', symbol: r.symbol, mint: r.mint, kind, mcapUsd: usdM,
+          pnl_pct: e.type === 'exit' ? r.pnl_pct : null, pnl_sol: e.type === 'exit' ? r.pnl_sol : null, reason: e.reason || (e.type === 'exit' ? r.exit_reason : ''), trade: r.id, status: r.status }); } } };
+    // a trade is relevant if it was open at any point in the window
+    pull(all('SELECT * FROM paper_trades WHERE entry_ts < ? AND (exit_ts IS NULL OR exit_ts >= ?)', b, a), 'curve');
+    pull(all('SELECT * FROM grad_paper WHERE entry_ts < ? AND (exit_ts IS NULL OR exit_ts >= ?)', b, a), 'grad');
+    events.sort((x, y) => x.ts - y.ts);
+    const openAt = all(`SELECT p.id, p.book, p.symbol, p.mint, p.entry_ts, p.entry_mcap, p.exit_ts FROM paper_trades p WHERE p.entry_ts < ? AND (p.exit_ts IS NULL OR p.exit_ts >= ?) ORDER BY p.entry_ts`, b, a)
+      .map((r) => ({ ...r, mcapUsd: px ? r.entry_mcap * px : null, state: r.exit_ts && r.exit_ts < b ? 'closed in window' : r.entry_ts >= a ? 'opened in window' : 'held through' }));
+    const alerts = all('SELECT a.ts, a.mint, t.symbol, a.score, a.mcap, a.max_multiple FROM alerts a LEFT JOIN tokens t ON t.mint = a.mint WHERE a.ts >= ? AND a.ts < ? ORDER BY a.ts', a, b);
+    const exits = events.filter((e) => e.type === 'exit');
+    const up = fm.reduce((x, r) => x + Math.min(60, r.up_sec || 0), 0) / 60, gap = fm.reduce((x, r) => x + (r.gap_sec || 0), 0);
+    const fmt = (t) => new Date(t).toISOString().slice(11, 16);
+    const tables = [
+      { title: 'Paper trade events, in time order', cols: [C('Time', 'ts', 'time'), C('Event', 'event'), C('Book', 'book', 'book'), C('Token', 'symbol', 'token'), C('Mcap', 'mcapUsd', 'usd'), C('P&L', 'pnl_pct', 'spct'), C('P&L $', 'pnl_sol', 'susd'), C('Detail', 'reason')], rows: events },
+      { title: 'Positions open during the window', cols: [C('Entered', 'entry_ts', 'time'), C('Book', 'book', 'book'), C('Token', 'symbol', 'token'), C('Entry mcap', 'mcapUsd', 'usd'), C('State', 'state'), C('Closed', 'exit_ts', 'time')], rows: openAt },
+      { title: 'Alerts fired', cols: [C('Time', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num1'), C('Mcap', 'mcap', 'mcap'), C('Peak multiple', 'max_multiple', 'mult')], rows: alerts },
+    ];
+    if (mins > 1) {
+      const per = [];
+      for (let m = Math.floor(a / 60000); m < Math.ceil(b / 60000); m++) { const r = fmm.get(m), t = m * 60000, ev = events.filter((e) => e.ts >= t && e.ts < t + 60000);
+        per.push({ t, trades: r?.trades ?? null, gap: r?.gap_sec || 0, up: r ? Math.min(60, r.up_sec || 0) : 0, entries: ev.filter((e) => e.type === 'entry').length, exits: ev.filter((e) => e.type === 'exit').length,
+          alerts: alerts.filter((x) => x.ts >= t && x.ts < t + 60000).length, drill: `tape:${t}-${t + 60000}`, label: `Minute ${fmt(t)} UTC`, window: '' }); }
+      tables.push({ title: 'Minute by minute (tap a minute)', cols: [C('Minute', 't', 'time'), C('Market trades', 'trades', 'num'), C('Entries', 'entries', 'num'), C('Exits', 'exits', 'num'), C('Alerts', 'alerts', 'num'), C('Gap s', 'gap', 'num'), C('Up s', 'up', 'num')], rows: per.reverse() });
+    }
+    return { title: mins <= 1 ? `Minute ${fmt(a)} UTC` : `${fmt(a)}–${fmt(b)} UTC`, explain: `Everything recorded between ${new Date(a).toISOString().replace('T', ' ').slice(0, 16)} and ${new Date(b).toISOString().slice(11, 16)} UTC: market trade flow from the feed, every paper trade event (entries, partial take-profits, stops, exits) across the curve books and the graduates book, positions held through the window, and alerts. Tap a trade for the token detail.`,
+      stats: [['Window', mins <= 1 ? '1 minute' : mins < 60 ? `${mins} minutes` : `${n1(mins / 60)} h`, 'text'], ['Feed up', `${n1(up)} of ${mins} min`, 'text'], ['Gap seconds', gap, 'num'], ['Market trades', fm.reduce((x, r) => x + (r.trades || 0), 0), 'num'],
+        ['Launches', fm.reduce((x, r) => x + (r.creates || 0), 0), 'num'], ['Paper entries', events.filter((e) => e.type === 'entry').length, 'num'], ['Paper exits', exits.length, 'num'],
+        ['Exit P&L $', exits.reduce((x, e) => x + (e.pnl_sol || 0), 0), 'susd'], ['Open during window', openAt.length, 'num'], ['Alerts', alerts.length, 'num']],
+      series: mins > 1 ? { label: 'Market trades per minute', kind: 'bar', fmt: 'num', points: fm.map((r) => [r.minute * 60000, r.trades || 0]) } : null,
+      tables };
+  };
+  // ---- one token: everything recorded about it ----
+  const tokDrill = (mint) => {
+    const T = one('SELECT * FROM tokens WHERE mint = ?', mint) || {};
+    const live = engine.getToken?.(mint);
+    const snaps = all('SELECT checkpoint, ts, mcap, score, reject, max_mcap_after, graduated_after, gap FROM snapshots WHERE mint = ? ORDER BY checkpoint', mint);
+    const trades = all('SELECT ts, is_buy, sol, wallet, vsol, vtok FROM trades WHERE mint = ? ORDER BY ts DESC LIMIT 300', mint);
+    const papers = all('SELECT id, book, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason, status FROM paper_trades WHERE mint = ? ORDER BY entry_ts DESC', mint);
+    const alerts = all('SELECT ts, score, mcap, max_multiple, graduated FROM alerts WHERE mint = ? ORDER BY ts DESC', mint);
+    const buys = trades.filter((t) => t.is_buy), sells = trades.filter((t) => !t.is_buy);
+    const sum = (a) => a.reduce((x, t) => x + (t.sol || 0), 0);
+    return { title: `${T.symbol || live?.symbol || mint.slice(0, 6)}: full record`, explain: 'Everything this machine stored about the token: checkpoint snapshots, recorded trades (kept only for tokens that alerted or were paper traded), paper trades and alerts.',
+      stats: [['Created', T.created_at, 'time'], ['Graduated', T.graduated ? 'yes' : 'no', 'text'], ['Peak mcap 1 h', T.peak_mcap_1h, 'mcap'], ['Mcap at 1 h', T.mcap_1h, 'mcap'],
+        ['Snapshots', snaps.length, 'num'], ['Trades recorded', trades.length, 'num'], ['Buy volume', sum(buys), 'solusd'], ['Sell volume', sum(sells), 'solusd'], ['Paper trades', papers.length, 'num'], ['Alerts', alerts.length, 'num']],
+      series: snaps.length > 1 ? { label: 'Market cap at each checkpoint (USD)', kind: 'cat', fmt: 'mcap', points: snaps.map((r) => [`${r.checkpoint}s`, r.mcap]) } : null,
+      tables: [
+        { title: 'Checkpoint snapshots', cols: [C('Age', 'checkpoint', 'age'), C('Time', 'ts', 'time'), C('Mcap', 'mcap', 'mcap'), C('Score', 'score', 'num1'), C('Rejected', 'reject'), C('Max after', 'max_mcap_after', 'mcap'), C('Graduated after', 'graduated_after', 'yes')], rows: snaps },
+        { title: 'Paper trades', cols: [C('Entered', 'entry_ts', 'time'), C('Book', 'book', 'book'), C('Status', 'status'), C('P&L', 'pnl_pct', 'spct'), C('P&L $', 'pnl_sol', 'susd'), C('Exit', 'exit_reason')], rows: papers },
+        { title: 'Alerts', cols: [C('Time', 'ts', 'time'), C('Score', 'score', 'num1'), C('Mcap', 'mcap', 'mcap'), C('Peak multiple', 'max_multiple', 'mult'), C('Graduated', 'graduated', 'yes')], rows: alerts },
+        { title: 'Recorded trades, newest first', cols: [C('Time', 'ts', 'time'), C('Side', 'side'), C('SOL', 'sol', 'solusd'), C('Wallet', 'wallet', 'short')], rows: trades.map((t) => ({ ...t, side: t.is_buy ? 'buy' : 'sell' })) },
+      ] };
+  };
   return (key) => {
-    const fn = key.startsWith('book_') ? () => bookDrill(key.slice(5)) : H_[key];
+    const fn = key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };
   };
 }
 export { STRATEGIES };
+
+/** Paper trade entry/exit times for the uptime tape markers. */
+export function tapeMarks(sinceMs) {
+  const c = db.prepare('SELECT entry_ts e, exit_ts x, pnl_pct p FROM paper_trades WHERE entry_ts >= ? OR exit_ts >= ?').all(sinceMs, sinceMs);
+  const g = db.prepare('SELECT entry_ts e, exit_ts x, pnl_pct p FROM grad_paper WHERE entry_ts >= ? OR exit_ts >= ?').all(sinceMs, sinceMs);
+  return [...c, ...g].map((r) => [r.e, r.x, r.p]);
+}

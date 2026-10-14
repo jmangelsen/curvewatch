@@ -28,6 +28,7 @@ export class Token {
     this.firstBuyMcap = new Map(); // wallet -> mcap at their first buy
     this.firstBuyAt = new Map(); // wallet -> ms of first buy
     this.walletTrades = new Map(); // wallet -> trade count
+    this.pos = new Map(); // wallet -> { b, bt, s, st, at, m } position for wallet scoring; survives toLite until finalize
     this.buyers = new Set();
     this.sellers = new Set();
     this.creatorMaxHeld = 0;
@@ -69,6 +70,12 @@ export class Token {
       if (m > s.maxAfter) { s.maxAfter = m; s.minBeforeMax = s.runMin; }
       if (m < s.runMin) s.runMin = m;
       if (m < s.minAfter) s.minAfter = m;
+    }
+    // per-wallet position (kept through the lite phase so sells after the active window still count)
+    if (t.wallet && t.wallet !== this.creator && t.sol > 0 && !this.finalized) {
+      let p = this.pos.get(t.wallet);
+      if (!p && t.isBuy && this.pos.size < 4000) { p = { b: 0, bt: 0, s: 0, st: 0, at, m }; this.pos.set(t.wallet, p); }
+      if (p) { if (t.isBuy) { p.b += t.sol; p.bt += t.tok; } else { p.s += t.sol; p.st += t.tok; } }
     }
     if (this.lite) return true;
 
