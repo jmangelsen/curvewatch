@@ -11,6 +11,7 @@ import { solToUsd } from '../market.js';
 import { notify, sendTelegram, esc } from './telegram.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
+import { onTradeEvent, onCreateEvent, flagFinalized, flagAlert } from '../health.js';
 
 const log = logger('engine');
 const L = config.lifecycle;
@@ -40,6 +41,7 @@ export class Engine extends EventEmitter {
   }
 
   onCreate(ev) {
+    onCreateEvent(ev);
     this.counters[`seen_${ev.src}`] = (this.counters[`seen_${ev.src}`] || 0) + 1;
     let t = this.tokens.get(ev.mint);
     if (t) { // second source for the same launch: merge useful fields
@@ -67,8 +69,10 @@ export class Engine extends EventEmitter {
   onTrade(ev) {
     // Use exactly one trade source to avoid double counting
     if (ev.src !== config.tradeSource) { this.counters.ignoredTrades++; return; }
+    onTradeEvent();
     const t = this.tokens.get(ev.mint);
     if (!t) {
+      if (paper.ghostTrade(ev)) return; // restored paper position on a token from before the restart
       // Trade raced ahead of its create event (or token predates this process): buffer briefly
       if (this.pending.size < 50000) {
         const arr = this.pending.get(ev.mint) || [];
@@ -84,12 +88,13 @@ export class Engine extends EventEmitter {
     }
     if (t.recording) this.tradeWriteQueue.push([t.mint, ev.recvAt, ev.slot, ev.sig, ev.wallet, ev.isBuy ? 1 : 0, ev.sol, ev.tok, ev.vsol, ev.vtok]);
     if (t.graduated && !t._gradRecorded) this.markGrad(t);
+    if (paper.hasOpen(ev.mint)) paper.onTrade(ev.mint); // stops/targets react to each trade, not a timer
   }
 
   onGraduate(ev) {
     const t = this.tokens.get(ev.mint);
-    if (t) { t.graduated = true; t.graduatedAt = t.graduatedAt || Date.now(); this.markGrad(t); }
-    else q.markGraduated.run(Date.now(), ev.mint); // launched before we started; still record
+    if (t) { t.graduated = true; t.graduatedAt = t.graduatedAt || Date.now(); this.markGrad(t); paper.onTrade(ev.mint); }
+    else { q.markGraduated.run(Date.now(), ev.mint); paper.ghostGraduate(ev.mint); } // launched before we started; still record
   }
 
   markGrad(t) {
@@ -145,7 +150,6 @@ export class Engine extends EventEmitter {
     for (const [m, arr] of this.pending) { if (arr[0].exp < nowMs) this.pending.delete(m); }
     // Flush alerted-token trades
     if (this.tradeWriteQueue.length) { const rows = this.tradeWriteQueue.splice(0); tx(() => { for (const r of rows) q.insertTrade.run(...r); })(); }
-    paper.tick(this.getToken);
     flushWallets();
     const cut = nowMs - 3600000;
     while (this.recentCreates.length && this.recentCreates[0] < cut) this.recentCreates.shift();
@@ -167,6 +171,7 @@ export class Engine extends EventEmitter {
     this.startRecording(t);
     paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score, features: f });
     this.maybeConfirm(t, s, f);
+    this.maybeRandom(t);
     this.counters.bandEntries = (this.counters.bandEntries || 0) + 1;
   }
 
@@ -178,6 +183,30 @@ export class Engine extends EventEmitter {
     t.flowAt = Date.now();
     this.startRecording(t);
     paper.scheduleEntry(t, t.alertId || null, { book: 'flow', score: s.score, features: f });
+    this.maybeRandom(t);
+  }
+
+  /**
+   * Random control book: at each signal, buy a random OTHER token from the same moment that passed the hard filters,
+   * matched on age and mcap. Same exits and costs as Main. The question it answers: does the score beat chance?
+   */
+  maybeRandom(sig) {
+    const R = config.strategies.random;
+    if (!R.enabled) return;
+    const now = Date.now(), age = (now - sig.createdAt) / 1000, aTol = R.ageTolPct / 100, mTol = R.mcapTolPct / 100;
+    const pool = [];
+    for (const t of this.tokens.values()) {
+      if (t === sig || t.lite || t.graduated || t.randomAt || !t.lastScore || t.lastScore.reject || paper.isOpen(t.mint)) continue;
+      const a = (now - t.createdAt) / 1000;
+      if (Math.abs(a - age) > age * aTol || Math.abs(t.mcap - sig.mcap) > sig.mcap * mTol) continue;
+      pool.push(t);
+    }
+    this.counters.randomPool = pool.length;
+    if (!pool.length) { this.counters.randomNoMatch = (this.counters.randomNoMatch || 0) + 1; return; }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    pick.randomAt = now;
+    this.startRecording(pick);
+    paper.scheduleEntry(pick, null, { book: 'random', score: pick.lastScore.score, features: pick.lastFeatures });
   }
 
   /** Confirm book: one per token, on its first main or band signal; the entry itself checks price after the wait. */
@@ -198,6 +227,7 @@ export class Engine extends EventEmitter {
     this.counters.alerts++; this.hour().alerts++;
     paper.scheduleEntry(t, id, { book: 'main', score: s.score, features: f });
     this.maybeConfirm(t, s, f);
+    this.maybeRandom(t);
     const alert = { id, mint: t.mint, symbol: t.symbol, name: t.name, ts: t.alertedAt, score: s.score, mcap: t.mcap, ageSec: f.ageSec, progressPct: f.progressPct, reasons: s.reasons, flags: s.flags };
     this.emit('alert', alert);
     log.info(`ALERT #${id} ${t.symbol} score ${s.score} mcap ${round(t.mcap, 1)} SOL age ${round(f.ageSec, 0)}s`);
@@ -216,6 +246,7 @@ export class Engine extends EventEmitter {
 
   finalizeToken(t) {
     t.finalized = true;
+    try { if (flagFinalized(t)) this.counters.gapLabels = (this.counters.gapLabels || 0) + 1; } catch { /* health optional */ }
     const peak = t.peakMcap, m = t.mcap;
     const rugged = !t.graduated && peak > t.initialMcap * 1.3 && m < peak * 0.25;
     tx(() => {
@@ -233,6 +264,7 @@ export class Engine extends EventEmitter {
 
   finalizeAlert(t) {
     t.alertFinal = true;
+    try { flagAlert(t.alertId, t.alertedAt); } catch { /* health optional */ }
     const s = t.alertSnap;
     q.finalizeAlert.run({ id: t.alertId, maxAfter: s.maxAfter, minBeforeMax: s.minBeforeMax, mcapH: t.mcap, grad: t.graduated ? 1 : 0, maxMult: s.maxAfter / s.mcap });
   }

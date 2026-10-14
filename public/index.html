@@ -24,11 +24,12 @@
     <div class="brand-text"><span class="brand-name">Curvewatch</span><span class="brand-sub">Pump.fun runner screener</span></div>
   </div>
   <nav class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="live">Live</button>
-    <button role="tab" aria-selected="false" data-tab="grads">Graduates</button>
-    <button role="tab" aria-selected="false" data-tab="perf">Performance</button>
-    <button role="tab" aria-selected="false" data-tab="report">Report</button>
-    <button role="tab" aria-selected="false" data-tab="intel">Intel</button>
+    <button role="tab" aria-selected="true" data-tab="live" data-short="Live">Live</button>
+    <button role="tab" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
+    <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
+    <button role="tab" aria-selected="false" data-tab="report" data-short="Report">Report</button>
+    <button role="tab" aria-selected="false" data-tab="intel" data-short="Intel">Intel</button>
+    <button role="tab" aria-selected="false" data-tab="health" data-short="Health">Health<span class="hdot" id="hDot"></span></button>
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
@@ -178,10 +179,35 @@
         <div class="card-head"><h2>Positions</h2><span class="hint" id="posHint"></span></div>
         <div class="table-wrap"><table class="board responsive" id="positions"><thead><tr><th>Token</th><th>Book</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
       </article>
+      <article class="card bench-card">
+        <div class="card-head"><h2>Benchmarks</h2><span class="hint">does each strategy beat something other than zero</span></div>
+        <div id="benchBody"><div class="empty">Loading benchmarks…</div></div>
+      </article>
     </div>
   </section>
 
   <!-- INTEL -->
+  <section id="tab-health" class="tab-panel" hidden>
+    <div class="grid-health">
+      <article class="card h-hero" id="hHero"><div class="empty">Loading data health…</div></article>
+      <article class="card h-strip">
+        <div class="card-head"><h2>Uptime tape</h2><span class="hint">each column is one minute of trade data · red = gap or down</span>
+          <div class="seg" id="hRange"><button data-r="24h" aria-selected="true">24h</button><button data-r="6h" aria-selected="false">6h</button><button data-r="1h" aria-selected="false">1h</button></div></div>
+        <div class="strip-wrap"><canvas id="hStrip" height="120"></canvas><div class="strip-tip" id="hTip" hidden></div></div>
+        <div id="hCov" class="mini-kpis"></div>
+      </article>
+      <article class="card h-fills">
+        <div class="card-head"><h2>Fill realism</h2><span class="hint">paper fills vs real wallets on the same token in the same seconds</span>
+          <div class="seg" id="hScope"><button data-s="test" aria-selected="true">Current test</button><button data-s="all" aria-selected="false">14 days</button></div></div>
+        <div id="hFills"></div>
+      </article>
+      <article class="card"><div class="card-head"><h2>Feeds</h2><span class="hint">live connections</span></div><div id="hFeeds"></div></article>
+      <article class="card"><div class="card-head"><h2>Gaps</h2><span class="hint">trades and labels inside a gap are excluded</span></div><div id="hGaps"></div></article>
+      <article class="card"><div class="card-head"><h2>Labeling pipeline</h2><span class="hint">how outcomes get recorded</span></div><div id="hLabels"></div></article>
+      <article class="card"><div class="card-head"><h2>System</h2><span class="hint">process, storage, backups</span></div><div id="hSys"></div></article>
+    </div>
+  </section>
+
   <section id="tab-report" class="tab-panel" hidden>
     <div class="grid-report">
       <article class="card rep-head">
@@ -232,6 +258,15 @@
   </section>
 </main>
 
+<div id="drill" class="drill" hidden>
+  <div class="drill-scrim" data-close></div>
+  <section class="drill-panel" role="dialog" aria-modal="true" aria-labelledby="drillTitle">
+    <div class="drill-grab" data-close aria-hidden="true"></div>
+    <header class="drill-head"><div><div class="drill-crumb" id="drillCrumb"></div><h2 id="drillTitle">Detail</h2></div>
+      <button class="icon-btn" data-close aria-label="Close detail"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <div class="drill-body" id="drillBody"></div>
+  </section>
+</div>
 <aside id="drawer" class="drawer" aria-hidden="true">
   <div class="drawer-inner">
     <button class="icon-btn drawer-close" id="drawerClose" aria-label="Close token detail">

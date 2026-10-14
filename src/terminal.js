@@ -4,16 +4,17 @@ import { config } from './config.js';
 import { db } from './db.js';
 import { STRATEGIES, BOOKS, COST } from './engine/paper.js';
 import { market } from './market.js';
+import { CFG } from './version.js';
 
 const Q = {
   list: db.prepare(`SELECT id, book, rules, status, mint, symbol, score, signal_ts, signal_mcap, entry_ts, entry_mcap, exit_ts, exit_reason, pnl_pct, pnl_sol, peak_value, trough_value, size_sol,
-    max_drop_pct, cause, cause_detail, entry_slip_pct, skip_reason, market, gated FROM paper_trades WHERE rules = @rules AND (@book = '' OR book = @book) AND id < @before ORDER BY id DESC LIMIT @limit`),
+    max_drop_pct, cause, cause_detail, entry_slip_pct, skip_reason, market, gated, cfg, gap, restored, fill_real_pct, exit_real_pct FROM paper_trades WHERE (@book = '' OR book = @book) AND id < @before ORDER BY id DESC LIMIT @limit`),
   one: db.prepare(`SELECT p.*, t.name, t.creator, t.created_at FROM paper_trades p LEFT JOIN tokens t ON t.mint = p.mint WHERE p.id = ?`),
-  bySymbol: db.prepare(`SELECT id FROM paper_trades WHERE rules = ? AND status IN ('closed','open') AND lower(symbol) = lower(?) ORDER BY id DESC LIMIT 1`),
+  bySymbol: db.prepare(`SELECT id FROM paper_trades WHERE ? IS NOT NULL AND status IN ('closed','open') AND lower(symbol) = lower(?) ORDER BY id DESC LIMIT 1`),
   path: db.prepare(`SELECT ts, vsol / vtok * 1e9 AS mc, is_buy b, sol FROM trades WHERE mint = ? AND ts BETWEEN ? AND ? ORDER BY ts, slot`),
   closed: db.prepare(`SELECT id, book, symbol, mint, score, entry_ts, exit_ts, pnl_pct, pnl_sol, peak_value, trough_value, size_sol, max_drop_pct, cause, entry_slip_pct, features, market, exit_reason
-    FROM paper_trades WHERE status = 'closed' AND rules = ? AND exit_ts >= ? ORDER BY exit_ts`),
-  skipped: db.prepare(`SELECT book, skip_reason FROM paper_trades WHERE status = 'skipped' AND rules = ? AND entry_ts >= ?`),
+    FROM paper_trades WHERE status = 'closed' AND cfg = ? AND COALESCE(gap,0) = 0 AND exit_ts >= ? ORDER BY exit_ts`),
+  skipped: db.prepare(`SELECT book, skip_reason FROM paper_trades WHERE status = 'skipped' AND cfg = ? AND entry_ts >= ?`),
 };
 
 const median = (a) => { const v = a.filter((x) => Number.isFinite(x)).sort((x, y) => x - y); return v.length ? v[Math.floor(v.length / 2)] : null; };
@@ -29,7 +30,7 @@ const FEATURE_LABEL = {
 };
 
 export function tradeList({ book = '', limit = 50, before = 1e15 } = {}) {
-  return Q.list.all({ rules: config.paper.rules, book, limit: Math.min(200, limit), before }).map((r) => ({
+  return Q.list.all({ book, limit: Math.min(200, limit), before }).map((r) => ({
     ...r, market: parse(r.market), peakPct: r.size_sol ? (r.peak_value / r.size_sol - 1) * 100 : null, troughPct: r.size_sol && r.trough_value ? (r.trough_value / r.size_sol - 1) * 100 : null,
   }));
 }
@@ -46,7 +47,7 @@ export function tradeDetail(idOrSymbol) {
   if (path.length > 400) { const step = path.length / 400; path = Array.from({ length: 400 }, (_, i) => path[Math.floor(i * step)]).concat(path[path.length - 1]); }
   const features = parse(r.features) || {};
   // compare against the same book's winners and losers (last 14 days)
-  const peers = Q.closed.all(config.paper.rules, Date.now() - 14 * 86400000).filter((x) => x.book === r.book && x.id !== r.id);
+  const peers = Q.closed.all(CFG, Date.now() - 14 * 86400000).filter((x) => x.book === r.book && x.id !== r.id);
   const W = peers.filter((x) => x.pnl_pct > 0).map((x) => parse(x.features) || {}), L = peers.filter((x) => x.pnl_pct <= 0).map((x) => parse(x.features) || {});
   const cmp = Object.keys(FEATURE_LABEL).filter((k) => features[k] != null).map((k) => ({
     key: k, label: FEATURE_LABEL[k][0], unit: FEATURE_LABEL[k][1], value: features[k], winnersMedian: median(W.map((f) => f[k])), losersMedian: median(L.map((f) => f[k])),
@@ -70,8 +71,8 @@ export function tradeDetail(idOrSymbol) {
 /** Per-strategy report: what worked, what didn't, and why. */
 export function strategyReport({ days = 14 } = {}) {
   const since = Date.now() - days * 86400000;
-  const rows = Q.closed.all(config.paper.rules, since);
-  const skipped = Q.skipped.all(config.paper.rules, since);
+  const rows = Q.closed.all(CFG, since);
+  const skipped = Q.skipped.all(CFG, since);
   const out = [];
   for (const b of BOOKS) {
     const S = STRATEGIES[b];
@@ -124,11 +125,11 @@ export function strategyReport({ days = 14 } = {}) {
     });
   }
   out.sort((a, b) => (b.avgPct ?? -1e9) - (a.avgPct ?? -1e9));
-  return { days, generatedAt: Date.now(), strategies: out, costPct: (1 - COST) * 100, solUsd: market.solUsd };
+  return { days, cfg: CFG, generatedAt: Date.now(), strategies: out, costPct: (1 - COST) * 100, solUsd: market.solUsd };
 }
 
 export function timeline({ days = 14 } = {}) {
-  const rows = Q.closed.all(config.paper.rules, Date.now() - days * 86400000);
+  const rows = Q.closed.all(CFG, Date.now() - days * 86400000);
   return { solUsd: market.solUsd, books: BOOKS.map((b) => ({ id: b, label: STRATEGIES[b].label })),
     trades: rows.map((r) => ({ id: r.id, book: r.book, symbol: r.symbol, t: r.exit_ts, entry: r.entry_ts, pnlPct: r.pnl_pct, pnlSol: r.pnl_sol, cause: r.cause, reason: r.exit_reason })) };
 }

@@ -22,7 +22,7 @@ export function datasetStats() {
 /** Score-bucket calibration at a checkpoint: does a higher score actually mean better outcomes? */
 export function calibration(checkpoint = 120) {
   const rows = db.prepare(`SELECT score, reject, mcap, max_mcap_after, min_before_max, graduated_after FROM snapshots
-    WHERE checkpoint=? AND max_mcap_after IS NOT NULL AND mcap>0`).all(checkpoint);
+    WHERE checkpoint=? AND max_mcap_after IS NOT NULL AND mcap>0 AND COALESCE(gap,0)=0`).all(checkpoint);
   const buckets = [];
   for (let lo = 0; lo < 100; lo += 10) {
     const b = rows.filter((r) => !r.reject && r.score >= lo && r.score < lo + 10);

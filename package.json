@@ -11,7 +11,8 @@
     "start": "node src/index.js",
     "backtest": "node scripts/backtest.js",
     "selftest": "node scripts/selftest.js",
-    "tg-setup": "node scripts/telegram-setup.js"
+    "tg-setup": "node scripts/telegram-setup.js",
+    "test": "node scripts/test-paper.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

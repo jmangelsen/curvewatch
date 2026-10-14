@@ -38,7 +38,7 @@ const grossStop = (kind) => (1 - C.stopPct / 100) / costFactor(kind);
 const Q = {
   // One observation per token (its first snapshot inside the score band), so a single runner can't be counted 10 times.
   curveHist: db.prepare(`SELECT COUNT(*) n, SUM(CASE WHEN s.max_mcap_after >= s.mcap * @gt AND s.min_before_max > s.mcap * @gs THEN 1 ELSE 0 END) hits
-    FROM snapshots s JOIN (SELECT mint, MIN(checkpoint) cp FROM snapshots WHERE reject IS NULL AND max_mcap_after IS NOT NULL AND checkpoint >= 60
+    FROM snapshots s JOIN (SELECT mint, MIN(checkpoint) cp FROM snapshots WHERE reject IS NULL AND max_mcap_after IS NOT NULL AND COALESCE(gap,0) = 0 AND checkpoint >= 60
       AND score BETWEEN @lo AND @hi AND ts > @since GROUP BY mint) f ON f.mint = s.mint AND f.cp = s.checkpoint`),
   gradHist: db.prepare(`SELECT COUNT(*) n, SUM(CASE WHEN s.max_6h >= s.price * @gt AND s.mbm_6h > s.price * @gs THEN 1 ELSE 0 END) hits
     FROM grad_snapshots s JOIN (SELECT mint, MIN(ts) t0 FROM grad_snapshots WHERE reject IS NULL AND labeled = 1 AND mbm_6h IS NOT NULL

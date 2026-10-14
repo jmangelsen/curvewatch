@@ -9,13 +9,14 @@
 // pause would have skipped trades that did better (45% win) than the ones it kept (35%). Flip to ENFORCE
 // only after the shadow comparison on the Performance tab shows gated trades actually doing worse.
 import { config } from '../config.js';
+import { CFG } from '../version.js';
 import { db } from '../db.js';
 import { market } from '../market.js';
 import { logger } from '../log.js';
 
 const log = logger('market');
 const G = config.marketGate;
-const recentQ = db.prepare(`SELECT pnl_pct, exit_ts FROM paper_trades WHERE status='closed' AND rules=@rules AND exit_ts > @since ORDER BY exit_ts DESC LIMIT @n`);
+const recentQ = db.prepare(`SELECT pnl_pct, exit_ts FROM paper_trades WHERE status='closed' AND cfg=@cfg AND COALESCE(gap,0)=0 AND book != 'random' AND exit_ts > @since ORDER BY exit_ts DESC LIMIT @n`);
 
 const solHist = []; // [ts, px]
 export const gate = {
@@ -35,7 +36,7 @@ export function updateGate(getCtx) {
     launchesPerMin: ctx.launchesPerMin ?? null, grads1h: ctx.grads1h ?? null,
     solUsd: market.solUsd, sol1hPct: old && market.solUsd ? (market.solUsd / old[1] - 1) * 100 : null,
   };
-  const rows = recentQ.all({ rules: config.paper.rules, since: now - G.lookbackHours * 3600e3, n: G.window });
+  const rows = recentQ.all({ cfg: CFG, since: now - G.lookbackHours * 3600e3, n: G.window });
   gate.n = rows.length;
   gate.winRatePct = rows.length ? (rows.filter((r) => r.pnl_pct > 0).length / rows.length) * 100 : null;
   let next = gate.state;

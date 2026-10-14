@@ -12,6 +12,7 @@
 import { config } from './config.js';
 import { db } from './db.js';
 import { killStatsFrom, BOOKS, STRATEGIES } from './engine/paper.js';
+import { CFG, CFG_SINCE } from './version.js';
 import { market } from './market.js';
 
 const DAY = 86400000, HOUR = 3600000;
@@ -22,7 +23,7 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_exit ON paper_trades(exit_ts
 
 const Q = {
   curve: db.prepare(`SELECT id, book, rules, gated, score, market, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM paper_trades
-    WHERE status='closed' AND exit_ts >= ? AND rules = ? ORDER BY exit_ts`),
+    WHERE status='closed' AND exit_ts >= ? AND cfg = ? AND COALESCE(gap,0) = 0 ORDER BY exit_ts`),
   grad: db.prepare(`SELECT id, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM grad_paper WHERE status='closed' AND exit_ts >= ? ORDER BY exit_ts`),
   hours: db.prepare(`SELECT DISTINCT CAST(created_at / ${HOUR} AS INTEGER) h FROM tokens WHERE created_at >= ?`),
   launches: db.prepare(`SELECT created_at t FROM tokens WHERE created_at >= ?`),
@@ -72,7 +73,7 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
   const since = firstDay * DAY - off;
   const half = since + (now - since) / 2; // week 1 / week 2 split (by exit time)
 
-  const curve = Q.curve.all(since, config.paper.rules);
+  const curve = Q.curve.all(since, CFG);
   const books = {};
   for (const b of BOOKS) books[b] = curve.filter((r) => (r.book || 'main') === b && !r.gated);
   books.grad = Q.grad.all(since);
@@ -84,7 +85,7 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
       ...summarize(rows),
       week1: summarize(rows.filter((r) => r.exit_ts < half)),
       week2: summarize(rows.filter((r) => r.exit_ts >= half)),
-      kill: (({ status, n, needed }) => ({ status, n, needed }))(killStatsFrom(rows)),
+      kill: (({ status, n, needed, checks }) => ({ status, n, needed, checks }))(killStatsFrom(rows, { control: k === 'random' || k === 'grad' || !books.random ? null : books.random })),
       exits: Object.entries(rows.reduce((m, r) => { const e = (r.exit_reason || '?').replace(/[-+]?\d+(\.\d+)?%?/g, '').replace(/\s+/g, ' ').trim(); m[e] = (m[e] || 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]),
     };
   }
@@ -164,8 +165,17 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
     else if (d.hi < 0) v.push({ q, verdict: 'NO', tone: 'bad', detail: `COLD entries did better than WARM by ${fmtPts(-d.diff)}. The pause would cut good trades; leave it in shadow or remove it.` });
     else v.push({ q, verdict: 'NOT PROVEN', tone: 'wait', detail: `WARM − COLD gap ${fmtPts(d.diff)} per trade, 95% range ${fmtPts(d.lo)} to ${fmtPts(d.hi)} includes zero. Keep shadow mode.` });
   }
-  for (const b of BOOKS.filter((x) => !['main', 'band'].includes(x))) v.push(bookVerdict(b, `${STRATEGIES[b].label} book (${STRATEGIES[b].entry})`));
+  for (const b of BOOKS.filter((x) => !['main', 'band', 'random'].includes(x))) v.push(bookVerdict(b, `${STRATEGIES[b].label} book (${STRATEGIES[b].entry})`));
   v.push(bookVerdict('grad', 'graduates book'));
+  {
+    const q = 'Does any strategy beat random picks from the same moments?';
+    const r = books.random || [], nr = r.length;
+    const res = BOOKS.filter((b) => b !== 'random').map((b) => ({ b, d: diffCI(books[b].map((x) => x.pnl_pct), r.map((x) => x.pnl_pct)), n: books[b].length }));
+    const ok = res.filter((x) => x.n >= minCmp && nr >= minCmp);
+    if (!ok.length) v.push({ q, verdict: 'NOT ENOUGH DATA', tone: 'wait', detail: `Needs ${minCmp}+ trades in a book and in the Random control (Random has ${nr}).` });
+    else { const win = ok.filter((x) => x.d.lo > 0); v.push(win.length ? { q, verdict: 'YES', tone: 'good', detail: win.map((x) => `${STRATEGIES[x.b].label} beats random by ${fmtPts(x.d.diff)} (95% ${fmtPts(x.d.lo)} to ${fmtPts(x.d.hi)})`).join('; ') + '.' }
+      : { q, verdict: 'NO', tone: 'bad', detail: `No book's 95% range against Random is above zero (${ok.map((x) => `${STRATEGIES[x.b].label} ${fmtPts(x.d.diff)}`).join(', ')}). The score is not yet shown to beat chance.` }); }
+  }
   {
     const q = 'Are strong signals hitting +25% before −20% often enough?';
     if (strong.labeled < 30) v.push({ q, verdict: 'NOT ENOUGH DATA', tone: 'wait', detail: `${strong.labeled} of 30 strong signals graded.${strong.hitRatePct != null ? ` ${fmt0(strong.hitRatePct)} hit so far.` : ''} Breakeven is ${BREAKEVEN_PCT}%.` });
@@ -175,14 +185,14 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
   }
   {
     const q = 'Is anything ready for real money?';
-    const ready = Object.keys(books).filter((k) => { const b = bookOut[k]; return b.n >= K.minTrades && b.ciLowPct > 0 && b.week1.n >= 10 && b.week2.n >= 10 && b.week1.avgPct > 0 && b.week2.avgPct > 0; });
+    const ready = Object.keys(books).filter((k) => k !== 'random' && bookOut[k].kill.status === 'PASS');
     if (coverage.pct < 80) v.push({ q, verdict: 'NO', tone: 'bad', detail: `Only ${fmt0(coverage.pct)} of hours were recorded. The report needs ~80%+ coverage, which means running 24/7 on a VPS.${ready.length ? ` (${ready.join(', ')} look promising.)` : ''}` });
     else if (ready.length) v.push({ q, verdict: 'CANDIDATE', tone: 'good', detail: `${ready.join(', ')}: profitable overall with a positive 95% low bound, and positive in both weeks separately. Next step is tiny live size with hard limits, not full size.` });
     else v.push({ q, verdict: 'NO', tone: 'bad', detail: 'No book is profitable overall with confidence AND positive in both weeks separately.' });
   }
 
   const data = {
-    generatedAt: now, days, since, until: now, splitAt: half, tzOffsetMin, rules: config.paper.rules, breakevenPct: BREAKEVEN_PCT,
+    generatedAt: now, days, since, until: now, splitAt: half, tzOffsetMin, rules: config.paper.rules, cfg: CFG, cfgSince: CFG_SINCE, breakevenPct: BREAKEVEN_PCT,
     band: config.band, alertScore: config.scoring.alertScore, gateMode: config.marketGate.mode, solUsd: market.solUsd,
     bookOrder: [...BOOKS, 'grad'], bookLabels: { ...Object.fromEntries(BOOKS.map((b) => [b, STRATEGIES[b].label])), grad: 'Graduates' }, bookEntry: { ...Object.fromEntries(BOOKS.map((b) => [b, STRATEGIES[b].entry])), grad: 'post-graduation re-ignition score ≥ 70' },
     coverage, books: bookOut, marketCmp, bandVsMain, strong, daily, equity, verdicts: v,

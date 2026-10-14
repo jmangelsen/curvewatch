@@ -291,6 +291,60 @@ TARGET, GRADUATED, SMALL WIN, NO FOLLOW-THROUGH (selection), GAVE BACK (exit), L
 4. Add `TELEGRAM_BOT_TOKEN=` and `TELEGRAM_CHAT_ID=` to `.env` (optional: `TELEGRAM_MODE=strong|all`, `TELEGRAM_STRONG_CHAT_ID=`), then restart (`docker compose up -d` or `systemctl restart curvewatch`).
 5. On the Performance tab, press "Send test message".
 
+## 5e. Data health, fill realism, benchmarks, drill-downs (October 14, 2026)
+
+Before trusting a two-week verdict, the system now proves the data under it is complete and the paper fills are realistic.
+
+### Health tab
+One status (HEALTHY / WATCH / DEGRADED / DOWN) built from these checks. Every check, tile and number opens a drill-down.
+
+| Check | Pass | Warn | Why |
+|---|---|---|---|
+| Coverage, last 24 h | ≥ 95% | ≥ 80% | minutes with live trade data |
+| Coverage, current test | ≥ 80% | ≥ 60% | the two-week verdict needs 80% |
+| Trade rate vs baseline | ≥ alarm | ≥ half alarm | alarm = 40% of the slowest 5% of clean minutes |
+| Gaps, last 24 h | ≤ 2 and < 10 min | ≤ 8 and < 60 min | silence longer than the gap threshold |
+| Reconnects, last hour | ≤ 6 | ≤ 30 | above 30: put a paid RPC first in `RPC_WS_URLS` |
+| Launch capture | ≥ 97% | ≥ 90% | PumpPortal launches the RPC feed also saw |
+| Event-loop lag p99 | < 50 ms | < 200 ms | late reactions to stops and entries |
+| Memory (RSS) | < 600 MB | < 900 MB | |
+| Disk free | > 5 GB and > 30 days | > 1 GB | days at the measured growth rate |
+| Labeling backlog | 0 | ≤ 5 | alerts past their 1 h horizon without a label |
+| Entry fills vs real buyers | median ≥ −0.5% | ≥ −2% | negative = paper model too optimistic |
+| Stop overshoot | ≤ 5 pts | ≤ 10 pts | points past −20% where stops actually fill |
+| Last backup | < 26 h | < 72 h | |
+| SOL/USD price age | < 10 min | < 60 min | |
+
+Calibration of the gap threshold: with trade rate λ per second in the slowest 5% of clean minutes, a natural silence of s seconds has probability e^(−λs). The threshold is the s where that falls below one in a million, clamped to 10–60 s (`HEALTH_GAP_SEC_OVERRIDE` pins it). On first run, coverage history is backfilled from the launch record: in 428 recorded minutes the slowest 1% still had 10 launches, so a zero-launch minute means the scanner was not running.
+
+### Gap rules
+- A gap opens on trade silence beyond the threshold, or on process downtime (from a 5 s heartbeat).
+- Open paper trades during a gap are flagged `gap=1`; they finish normally and appear in the terminal but are excluded from every stat.
+- Outcome labels (tokens, snapshots, alerts) whose window overlaps a gap are flagged and excluded from calibration.
+- On restart, alerts and tokens still inside their window cannot be labeled (state was in memory). They are marked lost, not counted as backlog.
+
+### Restart behavior
+Open positions are restored, not voided. If the token is gone from memory, its curve is rebuilt from the last recorded trade and kept current from the live stream. Downtime above `HEALTH_RESTORE_MAX_DOWN_SEC` (or unknown) flags the position.
+
+### Settings fingerprint
+`src/version.js` hashes every strategy, scoring, lifecycle and kill-rule setting plus the code of the score, token, paper and engine modules. Every paper trade stores it. Stats, the report, the market gate and the terminal summary only use the current fingerprint, so changing a rule starts a new test from zero instead of mixing old and new results.
+
+### Paper realism changes
+- Exits are event-driven (checked on every trade, not every 5 s) and fill `PAPER_EXIT_DELAY_SEC` (2 s) after the trigger at whatever the curve then pays. This is why stops land below −20%.
+- Fill audit (every 30 s): each paper entry and exit is compared with real wallets on the same token within ±5 s at 0.25–4× the size, fee included. The Health tab shows medians, histograms, per-book numbers and what the slippage setting should be.
+
+### Benchmarks (Performance tab)
+- Random control book: at each Main/Band/Flow signal, a random other eligible token of similar age (±50%) and mcap (±40%), same exits and costs. A strategy has to beat this, not just zero.
+- Same-token pairs: each book minus Main on tokens both traded, isolating timing and exits from selection.
+- Selection lift: alert graduation and 2x rates vs the base rate.
+- Graduates vs [Belphor migration outcomes](https://www.belphor.com/data/migration-outcomes) (n = 11,303).
+
+### Stricter kill rule
+PASS needs all of: 50+ trades, the 99% low bound of average P&L per trade above zero (six books are tested at once; a 95% bar would let about one in four pass by luck), both halves of the test positive, and beating the Random control (95% low bound of the difference above zero, control with 30+ trades).
+
+### Tests
+`npm test` runs the paper-engine tests (entry delay, target and stop with exit delay, idle exit, confirm skip, gap flags, kill rule, restart restore) against a throwaway database with a fake clock. `npm run selftest` checks decoding, curve math and scoring.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

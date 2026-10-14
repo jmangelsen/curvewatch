@@ -66,6 +66,15 @@ for (const col of ["book TEXT DEFAULT 'main'", "rules TEXT DEFAULT 'v1'", 'gated
   try { db.exec(`ALTER TABLE paper_trades ADD COLUMN ${col}`); } catch { /* exists */ }
 }
 
+// Column migrations used across modules (idempotent). Must run before any module prepares statements on them.
+for (const col of ['book TEXT', 'rules TEXT', 'gated INTEGER', 'score REAL', 'market TEXT', 'signal_mcap REAL', 'signal_ts INTEGER', 'features TEXT', 'trough_value REAL', 'peak_ts INTEGER',
+  'max_drop_pct REAL', 'cause TEXT', 'cause_detail TEXT', 'tp_mult REAL', 'stop_pct REAL', 'entry_slip_pct REAL', 'skip_reason TEXT', 'cfg TEXT', 'gap INTEGER', 'restored INTEGER',
+  'fill_n INTEGER', 'fill_real_pct REAL', 'exit_fill_n INTEGER', 'exit_real_pct REAL', 'trigger_pct REAL']) {
+  try { db.exec(`ALTER TABLE paper_trades ADD COLUMN ${col}`); } catch { /* exists */ }
+}
+for (const [t, c] of [['snapshots', 'gap INTEGER'], ['tokens', 'gap INTEGER'], ['alerts', 'gap INTEGER']]) { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ } }
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_cfg ON paper_trades(cfg, status, exit_ts)'); } catch { /* ignore */ }
+
 export const q = {
   insertToken: db.prepare(`INSERT OR IGNORE INTO tokens (mint,name,symbol,uri,creator,created_at,create_slot,initial_buy_sol,initial_mcap,mayhem,pool)
     VALUES (@mint,@name,@symbol,@uri,@creator,@created_at,@create_slot,@initial_buy_sol,@initial_mcap,@mayhem,@pool)`),

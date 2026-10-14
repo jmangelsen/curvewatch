@@ -6,8 +6,10 @@ services:
     env_file: .env
     environment:
       - DATA_DIR=/data
+      - BACKUP_DIR=/backups
     volumes:
       - ./data:/data
+      - ./backups:/backups:ro      # lets the Health tab report backup age
     ports:
       - "127.0.0.1:8080:8080"   # only reachable through Caddy (HTTPS) or an SSH tunnel
     logging:

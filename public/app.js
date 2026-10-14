@@ -43,7 +43,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar);
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -111,7 +111,7 @@ function renderAlerts() {
       <div class="alert-top"><span class="score-badge">${n(x.score, 0)}</span><span class="sym">${esc(x.symbol || '?')}</span><span class="name">${esc(x.name || '')}</span><span class="when">${ago(x.ts)} ago</span></div>
       <div class="alert-meta"><span>alert ${sUsd(x.mcap)}</span><span>age ${age(x.age_sec)}</span><span>curve ${pct(x.progress, 0)}</span>
         <span>peak <b class="mult ${peak >= 2 ? 'up' : ''}">${peak ? n(peak, 2) + '×' : '–'}</b></span>
-        <span>${x.finalized ? '1h' : 'now'} <b class="mult ${cls((nowM ?? 1) - 1)}">${nowM ? n(nowM, 2) + '×' : '–'}</b></span>
+        <span>${x.finalized === 1 ? '1h' : x.finalized === -1 ? 'lost' : 'now'} <b class="mult ${cls((nowM ?? 1) - 1)}">${nowM ? n(nowM, 2) + '×' : '–'}</b></span>
         ${x.graduated || x.graduatedLive ? '<span class="up">graduated</span>' : ''}</div>
       <div class="chips">${(x.reasons || []).slice(0, 3).map((r) => `<span class="chip">${esc(r)}</span>`).join('')}${(x.flags || []).slice(0, 2).map((r) => `<span class="chip warn">${esc(r)}</span>`).join('')}</div>
     </div>`;
@@ -256,7 +256,7 @@ gcv.addEventListener('mousemove', (e) => { gHover = gHit(e); gcv.style.cursor = 
 gcv.addEventListener('mouseleave', () => { gHover = null; drawGradRadar(); });
 gcv.addEventListener('click', (e) => { const p = gHit(e); if (p) openGradDrawer(p.t.mint); });
 addEventListener('resize', drawGradRadar);
-function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); drawGradRadar(); drawTerm(); requestAnimationFrame(radarLoop); }
+function radarLoop() { sweep = (sweep + 0.012) % (Math.PI * 2); drawRadar(); drawGradRadar(); drawTerm(); drawStrip(); requestAnimationFrame(radarLoop); }
 if (!matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(radarLoop);
 const hit = (e) => { const b = cv.getBoundingClientRect(); const x = e.clientX - b.left, y = e.clientY - b.top; let best = null, bd = 1e9; for (const p of radarPts) { const d = Math.hypot(p.x - x, p.y - y); if (d < p.s + 4 && d < bd) { bd = d; best = p; } } return best; };
 cv.addEventListener('mousemove', (e) => { hover = hit(e); cv.style.cursor = hover ? 'pointer' : 'crosshair'; drawRadar(); });
@@ -666,7 +666,7 @@ async function boot() {
   connectSse();
   setInterval(poll, 3000);
   setInterval(refreshAlerts, 15000);
-  setInterval(() => { if (S.tab === 'perf') { loadPerf(); loadTerm(true); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); }, 20000);
+  setInterval(() => { if (S.tab === 'perf') { loadPerf(); loadTerm(true); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'perf') loadBench(); }, 20000);
   setInterval(() => { if (S.tab === 'grads' && !document.hidden) loadGrads(); }, 15000);
   if (location.hash === '#grads') document.querySelector('.tabs [data-tab=grads]')?.click();
 }
@@ -675,7 +675,7 @@ async function boot() {
 // =====================================================================
 const T = { book: '', days: 14, tl: null, sr: null, hover: null, pts: [], hist: [], hi: -1, tail: true, scan: 0, lastLoad: 0, live: false };
 const BOOK_COL = (b) => css(`--b-${b}`) || css('--accent');
-const BOOK_LABEL = (b) => ({ main: 'Main', band: 'Band', flow: 'Flow', confirm: 'Confirm' }[b] || b);
+const BOOK_LABEL = (b) => ({ main: 'Main', band: 'Band', flow: 'Flow', confirm: 'Confirm', random: 'Random', grad: 'Graduates' }[b] || b);
 const tcv = $('#termCanvas'), tctx = tcv.getContext('2d');
 const tout = $('#termOut');
 const out = (html, c = '') => { const d = document.createElement('div'); d.className = `ln ${c}`; d.innerHTML = html; tout.appendChild(d); while (tout.childElementCount > 600) tout.firstChild.remove(); tout.scrollTop = tout.scrollHeight; return d; };
@@ -1051,3 +1051,365 @@ $('#repCsv').onclick = () => {
 addEventListener('resize', () => { if (S.tab === 'report' && R.data) renderRepEquity(R.data, R.data.solUsd || solPx()); });
 
 boot();
+
+
+// ================= Data health =================
+const HX = { data: null, range: 24 * 60, scope: 'test', hover: null, open: new Set() };
+async function loadHealth() {
+  try { HX.data = await get(`/api/health?scope=${HX.scope}`); renderHealth(); } catch (e) { console.warn('health', e); }
+}
+async function pollHealthDot() {
+  try { const d = HX.data && S.tab === 'health' ? HX.data : await get('/api/health'); if (S.tab !== 'health') HX.data = d; setHDot(d); } catch {}
+}
+function setHDot(d) { const el = $('#hDot'); if (!el || !d) return; el.className = 'hdot ' + (d.overall === 'HEALTHY' ? 'pass' : d.overall === 'WATCH' ? 'warn' : 'fail'); el.title = d.overall; }
+const fmtCheck = (c) => {
+  const v = c.value; if (v == null) return '–';
+  switch (c.id) {
+    case 'cov24': case 'covTest': case 'capture': return pct(v, 1);
+    case 'rate': return `${n(v, 0)}/min`;
+    case 'loop': return `${n(v, 0)} ms`;
+    case 'mem': return `${n(v, 0)} MB`;
+    case 'disk': return `${n(v, 1)} GB`;
+    case 'fills': return `${v >= 0 ? '+' : ''}${n(v, 1)}%`;
+    case 'stops': return `${n(v, 1)} pts`;
+    case 'backup': return `${n(v, 1)} h ago`;
+    case 'sol': return `${n(v, 1)} min`;
+    default: return n(v, 0);
+  }
+};
+const HSUB = { HEALTHY: 'Data is complete and the process is responsive. Results from this window can be trusted.', WATCH: 'Usable, but several checks are borderline. Read the amber items before trusting new results.',
+  DEGRADED: 'At least one check failed. Results that overlap the problem are excluded automatically; fix the red items.', DOWN: 'No live trade data right now. A gap is open; open positions are flagged and excluded from stats.' };
+const tsShort = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+const bytes = (b) => (b == null ? '–' : b > 1e9 ? `${n(b / 1e9, 2)} GB` : b > 1e6 ? `${n(b / 1e6, 1)} MB` : `${n(b / 1e3, 0)} kB`);
+function renderHealth() {
+  const d = HX.data; if (!d) return; setHDot(d);
+  const L = d.labels, cal = d.calibration;
+  $('#hHero').innerHTML = `
+    <div class="h-top">
+      <div class="h-state"><div class="h-orb ${d.overall}"></div><div><div class="h-word">${d.overall}</div><div class="h-sub">${HSUB[d.overall]}${d.openGap ? ` Gap open for ${age(d.openGap.sec)}.` : ''}</div></div></div>
+      <div class="h-meta">
+        <div>Settings fingerprint<b>${esc(L.cfg)}</b></div>
+        <div>Current test since<b>${tsShort(L.cfgSince)}</b></div>
+        <div>Test coverage<b>${pct(d.coverage.test.pct, 1)}</b></div>
+        <div>Gap threshold<b>${cal.gapSec}s</b></div>
+      </div>
+    </div>
+    <div class="checks">${d.checks.map((c) => `<button class="chk ${c.state}" data-id="${c.id}" aria-expanded="${HX.open.has(c.id)}">
+      <div class="cl"><span>${esc(c.label)}</span><span class="st ${c.state}">${c.state}</span></div><div class="cv">${fmtCheck(c)}</div><div class="cd">${esc(c.detail)}</div></button>`).join('')}</div>
+    <p class="small-note">Calibration: ${esc(cal.note)}. Tap a check for its threshold. Changing any strategy setting or engine code creates a new fingerprint, and the test restarts from zero so old and new rules are never mixed.</p>`;
+  const cv = d.coverage;
+  $('#hCov').innerHTML = [['Last 24 h', cv.h24], ['Last 7 days', cv.d7], ['Last 14 days', cv.d14], ['Current test', cv.test]].map(([l, c]) =>
+    `<div><div class="label">${l}</div><div class="value">${pct(c.pct, 1)}</div><div class="hint">${n(c.goodMin / 60, 1)} of ${n(Math.min(c.possibleMin, 20160) / 60, 1)} h</div></div>`).join('')
+    + `<div><div class="label">Gaps (14 d)</div><div class="value">${d.gaps.length}</div><div class="hint">${n(d.gaps.reduce((s, g) => s + g.sec, 0) / 60, 0)} min lost</div></div>`
+    + `<div><div class="label">Launch capture</div><div class="value">${pct(d.capture.pct, 1)}</div><div class="hint">${d.capture.both}/${d.capture.pp} last hour</div></div>`;
+  // feeds
+  $('#hFeeds').innerHTML = `<div class="table-wrap"><table class="btable"><thead><tr><th>Feed</th><th class="num">Events/s</th><th class="num">Reconnects</th><th class="num">Last msg</th><th>Last error</th></tr></thead><tbody>${d.feeds.map((f) =>
+    `<tr><td><span class="dotc ${f.healthy ? 'on' : 'off'}"></span>${esc(f.name)}</td><td class="num">${n(f.evPerSec, 1)}</td><td class="num">${f.reconnects ?? 0}</td><td class="num">${f.secSinceMessage == null ? '–' : age(f.secSinceMessage)}</td><td class="hint" style="white-space:normal">${esc((f.lastError || '').slice(0, 70)) || '–'}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small-note">Launch capture compares launches seen by PumpPortal with launches the on-chain RPC feed also saw in the last hour: PumpPortal ${d.capture.pp}, RPC ${d.capture.rpc}, both ${d.capture.both}.</p>`;
+  $('#hGaps').innerHTML = d.gaps.length ? `<ul class="gap-list">${d.gaps.slice(0, 40).map((g) => `<li><span class="t">${tsShort(g.start)}</span><span class="d">${g.open ? 'open ' : ''}${age(g.sec)}</span><span>${esc(g.reason || '')}${g.open_trades ? ` · ${g.open_trades} trades flagged` : ''}${g.tokens_flagged ? ` · ${g.tokens_flagged} labels flagged` : ''}</span></li>`).join('')}</ul>`
+    : `<div class="empty"><strong>No gaps recorded</strong>Silence longer than ${cal.gapSec}s or any process downtime will appear here.</div>`;
+  $('#hLabels').innerHTML = `<dl class="kv">
+    <dt>Alerts past horizon, unlabeled</dt><dd>${L.overdueAlerts}</dd>
+    <dt>Tokens inside their 1 h window</dt><dd>${n(L.pendingTokens, 0)}</dd>
+    <dt>Labeled tokens (7 d)</dt><dd>${n(L.labeled7d, 0)}</dd>
+    <dt>Token labels lost to gaps or restarts (7 d)</dt><dd>${n(L.gapLabels, 0)}</dd>
+    <dt>Alerts lost to restarts (7 d)</dt><dd>${n(L.lostAlerts, 0)}</dd>
+    <dt>Random control pool, last signal</dt><dd>${L.random.pool ?? '–'} tokens</dd>
+    <dt>Signals with no random match</dt><dd>${L.random.noMatch}</dd>
+    </dl><p class="small-note">Settings history: ${L.cfgHistory.map((h) => `${esc(h.cfg)} from ${tsShort(h.since)}`).join(' · ')}</p>`;
+  const y = d.system;
+  $('#hSys').innerHTML = `<dl class="kv">
+    <dt>Memory (RSS / heap)</dt><dd>${n(y.rssMb, 0)} / ${n(y.heapMb, 0)} MB</dd>
+    <dt>Event-loop lag p50 / p99</dt><dd>${y.loopP99 == null ? 'after 1 min' : `${n(y.loopP50, 1)} / ${n(y.loopP99, 1)} ms`}</dd>
+    <dt>CPU</dt><dd>${y.cpuPct == null ? '–' : pct(y.cpuPct, 0)}</dd>
+    <dt>Uptime</dt><dd>${age(y.uptimeSec)}${y.restoredDowntimeSec != null ? ` · last down ${age(y.restoredDowntimeSec)}` : ''}</dd>
+    <dt>Database + WAL</dt><dd>${bytes(y.dbBytes)} + ${bytes(y.walBytes)}</dd>
+    <dt>Growth</dt><dd>${y.growthPerDay == null ? 'needs 2 days' : `${bytes(y.growthPerDay)}/day`}</dd>
+    <dt>Disk free</dt><dd>${y.disk ? `${bytes(y.disk.freeBytes)} of ${bytes(y.disk.totalBytes)}` : '–'}</dd>
+    <dt>Last backup</dt><dd>${y.backup ? `${esc(y.backup.file)} · ${ago(y.backup.at)}` : 'none found'}</dd>
+    <dt>Rows</dt><dd>${Object.entries(y.tables).map(([k, v]) => `${k} ${v == null ? '–' : n(v, 0)}`).join(' · ')}</dd>
+    </dl>`;
+  renderFills(d.fills);
+}
+function histSvg(h, { unit = '%', bad = (lo) => lo < 0 } = {}) {
+  if (!h || !h.length) return '';
+  const W = 320, H = 130, pad = 18, max = Math.max(1, ...h.map((b) => b.n)), bw = (W - 8) / h.length;
+  return `<svg viewBox="0 0 ${W} ${H}">${h.map((b, i) => { const bh = ((H - pad - 14) * b.n) / max, x = 4 + i * bw;
+    return `<rect x="${x + 2}" y="${H - pad - bh}" width="${bw - 4}" height="${Math.max(bh, b.n ? 1 : 0)}" rx="2" fill="${bad(b.lo) ? 'var(--down)' : 'var(--up)'}" opacity=".8"/>
+      <text x="${x + bw / 2}" y="${H - pad - bh - 3}" text-anchor="middle" font-size="10" fill="var(--text-muted)" font-family="var(--font-mono)">${b.n || ''}</text>
+      <text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="9.5" fill="var(--text-faint)" font-family="var(--font-mono)">${b.lo}${i === 0 ? unit : ''}</text>`; }).join('')}</svg>`;
+}
+function renderFills(f) {
+  if (!f) return;
+  const sg = (x, d = 1) => (x == null ? '–' : `${x >= 0 ? '+' : ''}${n(x, d)}%`);
+  const tiles = [
+    ['Entry vs real buyers', sg(f.entry.medianPct), `median · ${f.entry.n} of ${f.audited} matched`],
+    ['Exit vs real sellers', sg(f.exit.medianPct), `median · ${f.exit.n} matched`],
+    ['Stop overshoot', f.stops.medianPts == null ? '–' : `${n(f.stops.medianPts, 1)} pts`, `worst 10%: ${f.stops.p90Pts == null ? '–' : n(f.stops.p90Pts, 1) + ' pts'} · n ${f.stops.n}`],
+    ['Trigger to fill', f.stops.triggerToFillPts == null ? '–' : `${n(f.stops.triggerToFillPts, 1)} pts`, `lost in the ${f.model.exitDelaySec}s exit delay`],
+    ['Entry delay / slip', f.entryDelay.medianSec == null ? '–' : `${n(f.entryDelay.medianSec, 1)}s`, `signal→fill · slip ${sg(f.entryDelay.slipMedianPct)} (p90 ${sg(f.entryDelay.slipP90Pct)})`],
+  ];
+  const bk = Object.entries(f.byBook);
+  $('#hFills').innerHTML = `<div class="fk">${tiles.map(([l, v, s2]) => `<div><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s2}</div></div>`).join('')}</div>
+    <div class="fgrid">
+      <div class="hist"><h3>Entry price vs real buyers (paper ÷ real − 1)</h3>${f.entry.n ? histSvg(f.entry.hist, { bad: (lo) => lo < 0 }) : '<div class="empty">No matched entries yet</div>'}<p class="small-note">Left of zero: paper bought cheaper than real wallets did, so the model is too optimistic.</p></div>
+      <div class="hist"><h3>Stop exits: points past the −${S.paper?.config?.stopPct ?? 20}% stop</h3>${f.stops.n ? histSvg(f.stops.hist, { unit: '', bad: (lo) => lo >= 5 }) : '<div class="empty">No stop exits yet</div>'}<p class="small-note">A stop is a trigger, not a price. Thin curves dump through it before the sell lands.</p></div>
+      <div><h3>By book</h3><div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Stop over</th></tr></thead><tbody>${bk.length ? bk.map(([b, v]) =>
+        `<tr><td><span class="dotc" style="background:${BOOK_COL(b)}"></span>${BOOK_LABEL(b)}</td><td class="num">${sg(v.entryMedianPct)} <span class="hint">${v.entryN}</span></td><td class="num">${sg(v.exitMedianPct)} <span class="hint">${v.exitN}</span></td><td class="num">${v.stopOverMedianPts == null ? '–' : n(v.stopOverMedianPts, 1)} <span class="hint">${v.stopN}</span></td></tr>`).join('') : '<tr><td colspan="4" class="hint">No trades in this scope</td></tr>'}</tbody></table></div>
+        <dl class="kv" style="margin-top:var(--space-3)"><dt>Gap-flagged (excluded)</dt><dd>${f.integrity.gap}</dd><dt>Restored after restart</dt><dd>${f.integrity.restored}</dd><dt>Voided (14 d)</dt><dd>${f.integrity.voided}</dd></dl></div>
+    </div>
+    <div class="advice">${esc(f.advice)}</div>
+    <p class="small-note">Method: for each paper fill, real buys (or sells) on the same token within ±${f.model.windowSec}s, sized ${f.model.sizeBand[0]}–${f.model.sizeBand[1]}× the paper size, are taken from the recorded tape and priced with the ${f.model.feePct}% curve fee. Model in use: ${f.model.extraSlippagePct}% extra slippage, ${f.model.entryDelaySec}s entry delay, ${f.model.exitDelaySec}s exit delay.</p>`;
+}
+document.addEventListener('click', (e) => {
+  const r = e.target.closest('#hRange button'); if (r) { HX.range = { '24h': 1440, '6h': 360, '1h': 60 }[r.dataset.r]; $('#hRange').querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b === r)); return; }
+  const sc = e.target.closest('#hScope button'); if (sc) { HX.scope = sc.dataset.s; $('#hScope').querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b === sc)); loadHealth(); }
+});
+let stripScan = 0;
+function drawStrip() {
+  if (S.tab !== 'health' || !HX.data) return;
+  const cv = $('#hStrip'); if (!cv) return;
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (!W) return;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const N = HX.range, nowMin = Math.floor(Date.now() / 60000), start = nowMin - N;
+  const map = new Map(HX.data.minutes.map((m) => [m[0], m]));
+  const tr = HX.data.minutes.filter((m) => m[1] != null).map((m) => m[1]).sort((a, b) => a - b);
+  const top = tr.length ? tr[Math.floor(tr.length * 0.97)] || 1 : 1;
+  const bw = W / N, base = H - 16;
+  const up = css('--up') || '#3fbf86', dn = css('--down') || '#ef5a5f', ac = css('--accent') || '#f2b23e';
+  g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, (base * i) / 4); g.lineTo(W, (base * i) / 4); g.stroke(); }
+  for (let i = 0; i < N; i++) {
+    const m = map.get(start + i), x = i * bw;
+    if (!m || m[3] < 1) { if (start + i < Math.floor(HX.data.minutes[0]?.[0] ?? nowMin)) continue; g.fillStyle = dn; g.globalAlpha = .55; g.fillRect(x, 0, Math.max(bw, 1), base); continue; }
+    if (m[1] == null) { g.fillStyle = up; g.globalAlpha = .18; g.fillRect(x, base * .55, Math.max(bw - (bw > 3 ? 1 : 0), 1), base * .45); continue; }
+    const h = Math.max(2, Math.min(1, m[1] / top) * (base - 6));
+    g.globalAlpha = .85; g.fillStyle = up; g.fillRect(x, base - h, Math.max(bw - (bw > 3 ? 1 : 0), 1), h);
+    if (m[2] > 0) { g.fillStyle = dn; g.globalAlpha = .7; g.fillRect(x, 0, Math.max(bw, 1), base * Math.min(1, m[2] / 60)); }
+    if (m[4] > 0) { g.fillStyle = ac; g.globalAlpha = .9; g.fillRect(x, base + 3, Math.max(bw, 1.5), 3); }
+  }
+  g.globalAlpha = 1;
+  stripScan = (stripScan + W / 600) % W;
+  const grd = g.createLinearGradient(stripScan - 60, 0, stripScan, 0); grd.addColorStop(0, 'rgba(242,178,62,0)'); grd.addColorStop(1, 'rgba(242,178,62,.18)');
+  g.fillStyle = grd; g.fillRect(stripScan - 60, 0, 60, base); g.fillStyle = ac; g.fillRect(stripScan, 0, 1, base);
+  g.fillStyle = 'rgba(228,231,234,.55)'; g.font = '10px ' + (css('--font-mono') || 'monospace');
+  const lbl = N >= 1440 ? 6 : N >= 360 ? 6 : 6;
+  for (let k = 0; k <= lbl; k++) { const t = (start + (N * k) / lbl) * 60000, x = (W * k) / lbl; g.textAlign = k === 0 ? 'left' : k === lbl ? 'right' : 'center';
+    g.fillText(new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }), x, H - 3); }
+  if (HX.hover != null) { const i = Math.floor(HX.hover / bw), m = map.get(start + i), tip = $('#hTip');
+    g.fillStyle = 'rgba(255,255,255,.5)'; g.fillRect(i * bw, 0, Math.max(bw, 1), base);
+    tip.hidden = false; const t = (start + i) * 60000;
+    tip.textContent = `${new Date(t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} · ${!m || m[3] < 1 ? 'not running' : m[1] == null ? 'up (backfilled)' : `${n(m[1], 0)} trades${m[2] ? ` · gap ${n(m[2], 0)}s` : ''}${m[4] ? ` · ${m[4]} reconnects` : ''}`}`;
+    tip.style.left = `${Math.min(Math.max(HX.hover - tip.offsetWidth / 2, 4), W - tip.offsetWidth - 4)}px`; }
+}
+{
+  const cv = $('#hStrip');
+  const pos = (e) => { const r = cv.getBoundingClientRect(); HX.hover = (e.touches ? e.touches[0].clientX : e.clientX) - r.left; };
+  cv.addEventListener('pointermove', pos); cv.addEventListener('pointerdown', pos);
+  cv.addEventListener('pointerleave', () => { HX.hover = null; $('#hTip').hidden = true; });
+}
+setInterval(() => { if (document.hidden) return; if (S.tab === 'health') loadHealth(); else pollHealthDot(); }, 15000);
+setTimeout(pollHealthDot, 2500);
+
+// ================= Benchmarks =================
+let BX = null;
+async function loadBench() { try { BX = await get('/api/benchmarks'); renderBench(); } catch (e) { console.warn('bench', e); } }
+function ciBar(lo, hi, m, span) {
+  if (lo == null || hi == null) return '<span class="hint">needs data</span>';
+  const p = (v) => Math.max(0, Math.min(100, 50 + (v / span) * 50));
+  return `<div class="ci ${lo > 0 ? 'good' : hi < 0 ? 'bad' : ''}"><span class="z"></span><span class="r" style="left:${p(lo)}%;width:${Math.max(1, p(hi) - p(lo))}%"></span><span class="m" style="left:${p(m)}%"></span></div>`;
+}
+function renderBench() {
+  const b = BX, el = $('#benchBody'); if (!b || !el) return;
+  const sg = (x, d = 1) => (x == null ? '–' : `${x >= 0 ? '+' : ''}${n(x, d)}`);
+  const span = Math.max(20, ...b.vsRandom.flatMap((r) => [Math.abs(r.lo ?? 0), Math.abs(r.hi ?? 0)]), ...b.pairs.flatMap((r) => [Math.abs(r.lo ?? 0), Math.abs(r.hi ?? 0)]));
+  const vcls = (v) => (v === 'BEATS RANDOM' ? 'good' : v === 'WORSE THAN RANDOM' ? 'bad' : '');
+  const L = b.lift, G = b.grads, liftTile = (t, title, baseLbl) => `<div><h3>${title}</h3><div class="big">${t.lift == null ? '–' : n(t.lift, 2) + '×'}</div>
+    <div class="sub">Alerts ${pct(t.alert, 1)} (n ${t.alertN}, 95% ${pct(t.alertCI[0], 1)}–${pct(t.alertCI[1], 1)}) vs ${baseLbl} ${pct(t.base, 1)} (n ${n(t.baseN, 0)})</div></div>`;
+  const bar = (label, v, max, col) => `<div class="cmpbar"><span>${label}</span><span class="bar"><i style="width:${v == null ? 0 : Math.min(100, (v / max) * 100)}%;background:${col}"></i></span><span class="v">${pct(v, 1)}</span></div>`;
+  el.innerHTML = `<div class="bench">
+    <div>
+      <h3>Each strategy vs the Random control (avg P&amp;L per trade, current test)</h3>
+      <div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Trades</th><th class="num">Avg</th><th class="num">Win</th><th class="num">vs Random</th><th>95% range (pts)</th><th>Verdict</th></tr></thead><tbody>
+      ${b.vsRandom.map((r) => `<tr data-drill="book_${r.book}" data-label="${esc(r.label)} book" data-value="${r.avgPct == null ? '' : sg(r.avgPct) + '% / trade'}" data-sub="${r.n} trades · ${esc(r.verdict)}"><td><span class="dotc" style="background:${BOOK_COL(r.book)}"></span>${esc(r.label)}</td><td class="num">${r.n}</td><td class="num ${cls(r.avgPct)}">${r.avgPct == null ? '–' : sg(r.avgPct) + '%'}</td><td class="num">${pct(r.winRatePct, 0)}</td><td class="num">${r.diff == null ? '–' : sg(r.diff) + ' pts'}</td><td>${ciBar(r.lo, r.hi, r.diff, span)}</td><td><span class="verd ${vcls(r.verdict)}">${r.verdict}</span></td></tr>`).join('')}
+      <tr class="legacy" data-drill="b_random" data-label="Random control"><td><span class="dotc" style="background:${BOOK_COL('random')}"></span>Random (control)</td><td class="num">${b.random.n}</td><td class="num">${b.random.avgPct == null ? '–' : sg(b.random.avgPct) + '%'}</td><td class="num">${pct(b.random.winRatePct, 0)}</td><td colspan="3" class="hint">baseline · verdicts need ${b.random.needed}+ trades in both</td></tr>
+      </tbody></table></div>
+      <h3 style="margin-top:var(--space-4)">Same tokens, different rules (each book minus Main on tokens both traded)</h3>
+      <div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Shared tokens</th><th class="num">Diff</th><th>95% range (pts)</th></tr></thead><tbody>
+      ${b.pairs.map((r) => `<tr data-drill="book_${r.book}" data-label="${esc(r.label)} book"><td><span class="dotc" style="background:${BOOK_COL(r.book)}"></span>${esc(r.label)}</td><td class="num">${r.shared}</td><td class="num ${cls(r.diffPts)}">${r.diffPts == null ? '–' : sg(r.diffPts) + ' pts'}</td><td>${ciBar(r.lo, r.hi, r.diffPts, span)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="small-note">Random buys a different eligible token at the same moment as each signal (similar age and mcap, same exits and costs). Beating zero is not enough: a book has to beat this to show the score adds anything. The same-token table isolates entry timing and exit rules from token selection.</p>
+    </div>
+    <div>
+      <h3>Selection lift (${esc(L.window)})</h3>
+      <div class="lift">${liftTile(L.graduation, 'Graduation rate', 'all launches')}${liftTile(L.double, 'Reached 2x', esc(L.double.baseLabel))}</div>
+      <div class="tile-drill" data-drill="g_watch" data-label="Graduates after migration"><h3>Graduates after migration: this machine vs <a href="${G.belphor.url}" target="_blank" rel="noopener">Belphor</a> (n ${n(G.belphor.n, 0)})</h3>
+      ${bar('Ours: +50%', G.ours.reached50Pct, 100, 'var(--accent)')}${bar('Belphor: +50%', G.belphor.reached50Pct, 100, 'var(--text-faint)')}
+      ${bar('Ours: +200%', G.ours.reached200Pct, 100, 'var(--accent)')}${bar('Belphor: +200%', G.belphor.reached200Pct, 100, 'var(--text-faint)')}
+      ${bar('Ours: fell ≤20%', G.ours.fellTo20Pct, 100, 'var(--down)')}${bar('Belphor: fell ≤20%', G.belphor.fellTo20Pct, 100, 'var(--text-faint)')}
+      <p class="small-note">Ours: ${G.ours.n} graduates tracked ${G.ours.minHours} h or more (of ${G.ours.allWatched} watched); "fell" uses the last observed price, so it undercounts versus Belphor's longer horizon.</p></div><p class="small-note">Lift says whether alerts find movers; the tables on the left say whether trading them pays after costs. Both have to be true.</p>
+    </div></div>`;
+}
+
+
+// ================= Drill-downs: every tile opens its detail =================
+const CHECK_KEY = { cov24: 'h_cov', covTest: 'h_cov', rate: 'h_rate', gaps: 'h_gaps', reconnects: 'h_rate', capture: 'h_capture', loop: 'h_sys', mem: 'h_sys', disk: 'h_sys', labels: 'h_labels', fills: 'h_fills', stops: 'h_stops', backup: 'h_sys', sol: 'sol' };
+const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim();
+function tileKey(label, el) {
+  const L = norm(label), tab = S.tab, inGrad = tab === 'grads' || el.closest('#gKill');
+  const isPaper = { 'paper p&l': 'pnl', 'expectancy': 'exp', 'expectancy / trade': 'exp', 'win rate': 'win', 'profit factor': 'pf', 'total p&l': 'pnl', 'best / worst': 'best', 'trades in window': 'n' }[L];
+  if (isPaper) return inGrad ? 'g_paper' : `paper_${isPaper}`;
+  const M = {
+    'launches / min': 'launches', 'tracking now': 'tracking', 'graduations 1h': 'grads', 'alerts': 'alerts', 'sol 1h': 'sol',
+    'watching': 'g_watch', 're-ignition alerts': 'g_alerts', 'min liquidity': 'g_liq',
+    'launches recorded': 'ds_launches', 'graduations': 'ds_launches', 'launches 24h': 'launches', 'grad rate 24h': 'grads', 'rugs 24h': 'ds_rugs',
+    'telegram': 'strong', 'strong signals 24h': 'strong', 'labeled hit rate': 'strong', 'calibrated share': 'strong', 'strong signals graded': 'strong',
+    'hours recorded': 'rep_cov', 'closed paper trades': 'rep_trades', 'market pause': 'rep_gate',
+    'last 24 h': 'h_cov', 'last 7 days': 'h_cov', 'last 14 days': 'h_cov', 'current test': 'h_cov', 'gaps (14 d)': 'h_gaps', 'launch capture': 'h_capture',
+    'entry vs real buyers': 'h_fills', 'exit vs real sellers': 'h_fills', 'entry delay / slip': 'h_fills', 'stop overshoot': 'h_stops', 'trigger to fill': 'h_stops',
+    'settings fingerprint': 'h_cfg', 'current test since': 'h_cfg', 'test coverage': 'h_cov', 'gap threshold': 'h_rate',
+    'graduation rate': 'b_lift', 'reached 2x': 'b_lift',
+  };
+  if (L === 'labeled snapshots') return tab === 'grads' ? 'g_labeled' : 'ds_snaps';
+  if (M[L]) return M[L];
+  for (const [k, v] of Object.entries(M)) if (L.startsWith(k)) return v;
+  return { live: 'launches', grads: 'g_watch', perf: 'paper_exp', report: 'rep_trades', intel: 'ds_launches', health: 'h_cov' }[tab] || null;
+}
+const TAB_NAME = { live: 'Live', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health' };
+function tileFrom(el) {
+  if (el.dataset.drill) return { key: el.dataset.drill, label: el.dataset.label || el.querySelector('h3, .label, td')?.textContent?.trim(), value: el.dataset.value || '', sub: el.dataset.sub || '' };
+  if (el.matches('.verdict')) { const q = el.querySelector('.vq')?.textContent || '', Q = q.toLowerCase();
+    const bk = /confirm book/.test(Q) ? 'confirm' : /flow book/.test(Q) ? 'flow' : /band (book|better)|65–72 band/.test(Q) ? 'band' : /main book/.test(Q) ? 'main' : null;
+    return { key: /random/.test(Q) ? 'b_random' : /market|pause|cold|warm/.test(Q) ? 'rep_gate' : /graduat/.test(Q) ? 'g_paper' : /^are strong|strong signals/.test(Q) ? 'strong' : /ready for real money/.test(Q) ? 'rep_trades' : bk ? `book_${bk}` : 'rep_trades', label: q, value: el.querySelector('.vchip')?.textContent, sub: el.querySelector('.vd')?.textContent }; }
+  if (el.matches('.mstate')) return { key: 'rep_gate', label: 'Market state', value: el.querySelector('.big')?.textContent, sub: el.querySelector('.faint')?.textContent };
+  if (el.matches('.chk')) return { key: CHECK_KEY[el.dataset.id], label: el.querySelector('.cl span')?.textContent, value: el.querySelector('.cv')?.textContent, sub: el.querySelector('.cd')?.textContent };
+  if (el.id === 'solPill') return { key: 'sol', label: 'SOL / USD', value: el.textContent.replace('SOL', '').trim() };
+  if (el.id === 'killBadge') return { key: 'paper_exp', label: 'Kill rule', value: el.textContent.replace('KILL RULE · ', '') };
+  if (el.matches('.lift > div')) return { key: 'b_lift', label: el.querySelector('h3')?.textContent, value: el.querySelector('.big')?.textContent, sub: el.querySelector('.sub')?.textContent };
+  if (el.matches('.h-meta > div')) { const b = el.querySelector('b'); const label = el.firstChild?.textContent; return { key: tileKey(label, el), label, value: b?.textContent }; }
+  const label = el.querySelector(':scope > .label')?.textContent;
+  return { key: tileKey(label, el), label, value: el.querySelector(':scope > .value')?.textContent, sub: el.querySelector(':scope > .sub, :scope > .hint')?.textContent };
+}
+const TILE_SEL = '[data-drill], .chk, #solPill, #killBadge, .lift > div, .h-meta > div, .verdict, .mstate';
+function findTile(t) {
+  const x = t.closest(TILE_SEL); if (x) return x;
+  for (let el = t; el && el !== document.body; el = el.parentElement) { if (el.matches?.('.drill, .drawer, table, button:not(.chk), a, .seg, .term-card')) return null; if (el.querySelector?.(':scope > .label') && el.querySelector(':scope > .value')) return el; }
+  return null;
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.drill')) return;
+  const el = findTile(e.target); if (!el) return;
+  const t = tileFrom(el); if (!t.key) return;
+  e.preventDefault(); openDrill(t);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#drill').hidden) return closeDrill();
+  if ((e.key === 'Enter' || e.key === ' ') && document.activeElement?.dataset?.tile) { e.preventDefault(); document.activeElement.click(); }
+});
+// keyboard / screen-reader affordance for tiles rendered later
+new MutationObserver(() => { clearTimeout(decorate.t); decorate.t = setTimeout(decorate, 120); }).observe(document.body, { childList: true, subtree: true });
+function decorate() {
+  document.querySelectorAll('.kpi, .mini-kpis > div, .mctx > div, .fk > div, .lift > div, .strong-top > div, .kill-grid > div, .cov > div').forEach((el) => {
+    if (el.dataset.tile || !el.querySelector(':scope > .label, :scope > h3')) return; el.dataset.tile = '1'; el.tabIndex = 0; el.setAttribute('role', 'button'); el.setAttribute('aria-label', `${el.querySelector(':scope > .label, :scope > h3').textContent}: open detail`);
+  });
+}
+const DR = { stack: [], data: null, sort: {}, shown: {} };
+function closeDrill() { $('#drill').hidden = true; document.body.style.overflow = ''; DR.stack = []; }
+$('#drill').addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) return closeDrill();
+  const th = e.target.closest('th[data-col]'); if (th) { const ti = +th.dataset.t, c = th.dataset.col, cur = DR.sort[ti]; DR.sort[ti] = { c, dir: cur?.c === c && cur.dir === 'desc' ? 'asc' : 'desc' }; renderDrill(); return; }
+  const more = e.target.closest('.more'); if (more) { DR.shown[more.dataset.t] = (DR.shown[more.dataset.t] || 50) + 100; renderDrill(); return; }
+  const tr = e.target.closest('tr[data-mint]'); if (tr && !e.target.closest('a') && typeof openDrawer === 'function' && tr.dataset.kind !== 'grad') { closeDrill(); openDrawer(tr.dataset.mint); }
+});
+let drillTouchY = null;
+$('#drill').addEventListener('touchstart', (e) => { if (e.target.closest('.drill-grab, .drill-head')) drillTouchY = e.touches[0].clientY; }, { passive: true });
+$('#drill').addEventListener('touchend', (e) => { if (drillTouchY != null && e.changedTouches[0].clientY - drillTouchY > 80) closeDrill(); drillTouchY = null; });
+async function openDrill(t) {
+  DR.tile = t; DR.sort = {}; DR.shown = {}; DR.data = null;
+  $('#drill').hidden = false; document.body.style.overflow = 'hidden';
+  $('#drillCrumb').textContent = `${TAB_NAME[S.tab] || ''} · ${t.label || ''}`.trim();
+  $('#drillTitle').textContent = t.label || 'Detail';
+  $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div><div class="empty">Loading detail…</div>`;
+  try { DR.data = await get(`/api/drill/${t.key}`); renderDrill(); }
+  catch (e) { $('#drillBody').insertAdjacentHTML('beforeend', `<div class="empty"><strong>Detail unavailable</strong>${esc(e.message)}</div>`); $('#drillBody .empty').remove(); }
+}
+const shortM = (m) => (m ? `${m.slice(0, 4)}…${m.slice(-4)}` : '–');
+function dfx(v, f, row) {
+  if (v == null || v === '' || (typeof v === 'number' && !Number.isFinite(v))) return '–';
+  const px = DR.data?.solUsd || solPx();
+  switch (f) {
+    case 'time': return new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    case 'day': return new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    case 'num': return n(v, 0); case 'num0': return n(v, 0); case 'num1': return n(v, 1); case 'num2': return n(v, 2);
+    case 'pct': return pct(v, 1); case 'pct2': return pct(v, 2); case 'spct': return signed(v, 1, '%');
+    case 'mult': return `${n(v, 2)}×`;
+    case 'usd': return usd(v); case 'usd2': return `$${n(v, 2)}`;
+    case 'solusd': return px ? usd(v * px) : `${n(v, 2)} SOL`;
+    case 'susd': return px ? usd(v * px, { sign: true }) : `${signed(v, 3)} SOL`;
+    case 'mcap': return px ? usd(v * px) : `${n(v, 1)} SOL`;
+    case 'age': return age(v);
+    case 'yes': return v ? 'yes' : '–';
+    case 'book': return `<span class="dotc" style="background:${BOOK_COL(v)}"></span>${esc(BOOK_LABEL(v))}`;
+    case 'short': return `<span title="${esc(v)}">${shortM(v)}</span>`;
+    case 'token': { const m = row?.mint; return m ? `<a href="https://pump.fun/coin/${encodeURIComponent(m)}" target="_blank" rel="noopener" title="${esc(m)}">${esc(v || shortM(m))}</a>` : esc(v); }
+    default: return esc(v);
+  }
+}
+const NUMF = new Set(['num', 'num0', 'num1', 'num2', 'pct', 'pct2', 'spct', 'mult', 'usd', 'usd2', 'solusd', 'susd', 'mcap', 'age']);
+const colorOf = (v, f) => (f === 'spct' || f === 'susd' ? cls(v) : '');
+function drillChart(sr) {
+  if (!sr || !sr.points?.length) return '';
+  const P = sr.points, W = Math.max(300, ($('#drillBody')?.clientWidth || 700) - 60), H = innerWidth < 720 ? 150 : 170, l = 44, r = 8, t = 10, b = 22;
+  const cat = sr.kind === 'cat';
+  const ys = P.map((p) => p[1]).filter(Number.isFinite);
+  let lo = Math.min(0, ...ys), hi = Math.max(...ys, lo + 1e-9); if (hi === lo) hi = lo + 1;
+  const fv = (v) => (sr.fmt === 'susd' || sr.fmt === 'usd2' || sr.fmt === 'pct' ? dfx(v, sr.fmt) : n(v, Math.abs(hi) < 10 ? 1 : 0));
+  const X = (i) => l + (cat || sr.kind === 'bar' ? ((i + 0.5) * (W - l - r)) / P.length : P.length === 1 ? (W - l - r) / 2 + l : l + (i * (W - l - r)) / (P.length - 1));
+  const Y = (v) => t + (1 - (v - lo) / (hi - lo)) * (H - t - b);
+  const accent = css('--accent') || '#f2b23e', upc = css('--up') || '#3fbf86', dnc = css('--down') || '#ef5a5f';
+  let g = '';
+  for (let k = 0; k <= 3; k++) { const v = lo + ((hi - lo) * k) / 3, y = Y(v); g += `<line x1="${l}" x2="${W - r}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.07)"/><text x="${l - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#6b737d" font-family="monospace">${fv(v)}</text>`; }
+  if (lo < 0) g += `<line x1="${l}" x2="${W - r}" y1="${Y(0)}" y2="${Y(0)}" stroke="rgba(255,255,255,.25)"/>`;
+  const lbl = (i) => (cat ? P[i][0] : new Date(P[i][0]).toLocaleString('en-US', P[P.length - 1][0] - P[0][0] > 2 * 86400000 ? { month: 'short', day: 'numeric' } : { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const ticks = cat ? P.map((_, i) => i) : [0, Math.floor(P.length / 3), Math.floor((2 * P.length) / 3), P.length - 1];
+  for (const i of [...new Set(ticks)]) g += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6b737d" font-family="monospace">${esc(lbl(i))}</text>`;
+  if (sr.kind === 'line') {
+    const d = P.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
+    const last = P[P.length - 1][1], col = sr.fmt === 'susd' ? (last >= 0 ? upc : dnc) : accent;
+    g += `<path d="${d}L${X(P.length - 1)},${Y(Math.max(lo, 0))}L${X(0)},${Y(Math.max(lo, 0))}Z" fill="${col}" opacity=".1"/><path d="${d}" fill="none" stroke="${col}" stroke-width="1.6"/>`;
+  } else {
+    const bw = Math.max(1, ((W - l - r) / P.length) * 0.78);
+    P.forEach((p, i) => { const y0 = Y(Math.max(0, lo)), y1 = Y(p[1]); g += `<rect x="${X(i) - bw / 2}" y="${Math.min(y0, y1)}" width="${bw}" height="${Math.max(Math.abs(y0 - y1), p[1] ? 1 : 0)}" fill="${p[1] < 0 ? dnc : accent}" opacity=".85" rx="${bw > 6 ? 2 : 0}"/>`; });
+  }
+  DR.chart = { P, X, Y, fv, lbl, W, H };
+  return `<div class="drill-chart"><h3>${esc(sr.label)}</h3><svg viewBox="0 0 ${W} ${H}" id="drillSvg">${g}<line id="drillCross" y1="${t}" y2="${H - b}" stroke="rgba(255,255,255,.35)" visibility="hidden"/></svg><div class="tipx" id="drillTip" hidden></div></div>`;
+}
+function renderDrill() {
+  const d = DR.data, t = DR.tile; if (!d) return;
+  $('#drillTitle').textContent = d.title || t.label;
+  const stats = (d.stats || []).map(([l, v, f]) => `<div><div class="label">${esc(l)}</div><div class="value ${colorOf(v, f)}">${f === 'text' ? esc(v) : dfx(v, f)}</div></div>`).join('');
+  const tables = (d.tables || []).map((tb, ti) => {
+    let rows = [...tb.rows]; const so = DR.sort[ti];
+    if (so) rows.sort((a, b) => { const x = a[so.c], y = b[so.c]; const r = x == null ? 1 : y == null ? -1 : typeof x === 'number' ? x - y : String(x).localeCompare(String(y)); return so.dir === 'asc' ? r : -r; });
+    const lim = DR.shown[ti] || 50;
+    return `<div class="drill-tbl"><h3>${esc(tb.title)} <span class="hint">· ${rows.length} rows${rows.length ? ' · tap a column to sort' : ''}</span></h3>
+      ${rows.length ? `<div class="table-wrap"><table><thead><tr>${tb.cols.map((c) => `<th data-t="${ti}" data-col="${c.k}" class="${NUMF.has(c.fmt) ? 'num' : ''}" ${so?.c === c.k ? `aria-sort="${so.dir === 'asc' ? 'ascending' : 'descending'}"` : ''}>${esc(c.h)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_)/.test(d.key) ? `data-mint="${esc(r.mint)}"` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      ${rows.length > lim ? `<button class="more" data-t="${ti}">Show ${Math.min(100, rows.length - lim)} more</button>` : ''}` : '<div class="empty">No rows yet.</div>'}</div>`;
+  }).join('');
+  $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
+    ${d.explain ? `<p class="drill-explain">${esc(d.explain)}</p>` : ''}
+    ${stats ? `<div class="drill-stats">${stats}</div>` : ''}${drillChart(d.series)}${tables}
+    ${d.note ? `<p class="drill-note">${esc(d.note)}</p>` : ''}<p class="drill-note">Updated ${new Date(d.generatedAt).toLocaleTimeString('en-US', { hour12: false })}. Tap a token to open it on Pump.fun; tap a row for the token detail.</p>`;
+  const svg = $('#drillSvg');
+  if (svg) {
+    const move = (e) => { const C = DR.chart, rc = svg.getBoundingClientRect(), x = (((e.touches ? e.touches[0].clientX : e.clientX) - rc.left) / rc.width) * C.W;
+      let bi = 0, bd = 1e9; C.P.forEach((p, i) => { const dd = Math.abs(C.X(i) - x); if (dd < bd) { bd = dd; bi = i; } });
+      const cr = $('#drillCross'), tip = $('#drillTip'); cr.setAttribute('x1', C.X(bi)); cr.setAttribute('x2', C.X(bi)); cr.setAttribute('visibility', 'visible');
+      tip.hidden = false; tip.textContent = `${C.lbl(bi)} · ${C.fv(C.P[bi][1])}`; tip.style.left = `${(C.X(bi) / C.W) * rc.width + 12}px`; tip.style.top = `${(C.Y(C.P[bi][1]) / C.H) * rc.height + 34}px`; };
+    svg.addEventListener('pointermove', move); svg.addEventListener('pointerdown', move);
+    svg.addEventListener('pointerleave', () => { $('#drillCross').setAttribute('visibility', 'hidden'); $('#drillTip').hidden = true; });
+  }
+}

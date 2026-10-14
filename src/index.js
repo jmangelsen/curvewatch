@@ -19,6 +19,11 @@ import { datasetStats, alertStats } from './stats.js';
 import { round } from './util.js';
 import { logger } from './log.js';
 import { db } from './db.js';
+import { initHealth, healthView, health } from './health.js';
+import { auditFills, fillsView, startFillAudit } from './fills.js';
+import { benchmarks } from './benchmarks.js';
+import { makeDrill } from './drill.js';
+import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 
 const log = logger('main');
 const startedAt = Date.now();
@@ -66,7 +71,8 @@ function status() {
     gradKill: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }))(grads.kill()),
     alertScore: config.scoring.alertScore,
     band: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct, lo: config.band.lo, hi: config.band.hi }))(paper.killRule('band')),
-    paperRules: config.paper.rules,
+    paperRules: config.paper.rules, cfg: CFG, cfgSince: CFG_SINCE,
+    health: { gapSec: health.gapSec, openGap: !!health.openGapId },
     market: { state: gate.state, mode: gate.mode, enforcing: gate.enforcing, winRatePct: gate.winRatePct, n: gate.n },
   };
 }
@@ -146,14 +152,35 @@ if (cfg.grads.enabled) {
   grads.seed().then(() => grads.poll());
 }
 refreshSmartWallets();
-paper.restoreOpen(engine.getToken);
+initHealth({ feeds, paper, engine });
+// Tokens and alerts that were mid-window when the process stopped can never be labeled (in-memory state is gone).
+// Mark them lost (finalized = -1, gap = 1) so they are neither counted as backlog nor used in calibration.
+{
+  const la = db.prepare(`UPDATE alerts SET finalized = -1, gap = 1 WHERE finalized = 0`).run().changes;
+  const lt = db.prepare(`UPDATE tokens SET gap = 1 WHERE finalized = 0 AND COALESCE(gap,0) = 0`).run().changes;
+  if (la || lt) log.info(`restart: ${la} alerts and ${lt} tokens were mid-window and cannot be labeled (marked lost)`);
+  q.setKv.run('lost_on_restart', String(Number(q.getKv.get('lost_on_restart')?.v || 0) + la));
+}
+paper.restoreOpen(engine.getToken, { downSec: health.restoredDowntimeSec });
+setInterval(() => { try { paper.tick(engine.getToken); } catch (e) { log.error('paper tick failed', e.stack); } }, 1000);
+startFillAudit();
+const healthData = (scope) => {
+  const t = Date.now();
+  const overdueAlerts = db.prepare(`SELECT COUNT(*) n FROM alerts WHERE finalized = 0 AND ts < ?`).get(t - (config.lifecycle.outcomeHorizonSec + 600) * 1000).n;
+  let pendingTokens = 0; for (const x of engine.tokens.values()) if (!x.finalized) pendingTokens++;
+  const gapLabels = db.prepare(`SELECT COUNT(*) n FROM tokens WHERE gap = 1 AND created_at > ?`).get(t - 7 * 86400000).n;
+  const lostAlerts = db.prepare(`SELECT COUNT(*) n FROM alerts WHERE finalized = -1 AND ts > ?`).get(t - 7 * 86400000).n;
+  const labeled7d = db.prepare(`SELECT COUNT(*) n FROM tokens WHERE finalized = 1 AND created_at > ?`).get(t - 7 * 86400000).n;
+  return healthView({ status: status(), fills: fillsView({ scope }), labels: { overdueAlerts, pendingTokens, gapLabels, lostAlerts, labeled7d, cfg: CFG, cfgSince: CFG_SINCE, cfgHistory: cfgHistory(),
+    random: { pool: engine.counters.randomPool ?? null, noMatch: engine.counters.randomNoMatch || 0 } } });
+};
 try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
-startServer({ engine, status, grads, strong, gateView });
+startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads }) });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 
-const shutdown = (sig) => { log.info(`${sig}: shutting down`); feeds.forEach((f) => f.stop()); try { db.close(); } catch {} process.exit(0); };
+const shutdown = (sig) => { log.info(`${sig}: shutting down`); feeds.forEach((f) => f.stop()); try { q.setKv.run('health_hb', String(Date.now())); } catch {} try { db.close(); } catch {} process.exit(0); };
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('uncaughtException', (e) => log.error('uncaught', e.stack));

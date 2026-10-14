@@ -15,7 +15,7 @@ import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js'
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -76,6 +76,13 @@ export function startServer({ engine, status, grads, strong, gateView }) {
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
 
   app.get('/api/market', (req, res) => res.json(gateView()));
+  // Data health, fill realism, benchmarks
+  app.get('/api/health', (req, res) => { try { res.json(healthData(req.query.scope === 'all' ? 'all' : 'test')); } catch (e) { log.warn('health view', e.stack); res.status(500).json({ error: e.message }); } });
+  app.get('/api/fills', (req, res) => { try { res.json(fillsView({ scope: req.query.scope === 'all' ? 'all' : 'test' })); } catch (e) { res.status(500).json({ error: e.message }); } });
+  app.get('/api/benchmarks', (req, res) => { try { res.json(benchmarks()); } catch (e) { log.warn('benchmarks', e.stack); res.status(500).json({ error: e.message }); } });
+
+  app.get('/api/drill/:key', (req, res) => { try { const d = drill(req.params.key); if (!d) return res.status(404).json({ error: 'unknown tile' }); res.json(d); } catch (e) { log.warn('drill', req.params.key, e.stack); res.status(500).json({ error: e.message }); } });
+
   // Trade terminal
   const safe = (fn) => (req, res) => { try { const r = fn(req); if (r == null) return res.status(404).json({ error: 'not found' }); res.json(r); } catch (e) { log.warn('terminal', e.message); res.status(500).json({ error: e.message }); } };
   app.get('/api/terminal/trades', safe((req) => tradeList({ book: String(req.query.book || ''), limit: Number(req.query.limit) || 50, before: Number(req.query.before) || 1e15 })));

@@ -97,6 +97,9 @@ export const config = {
     stopPct: num('PAPER_STOP_PCT', 20),
     maxHoldMin: num('PAPER_MAX_HOLD_MIN', 60),
     idleExitMin: num('PAPER_IDLE_EXIT_MIN', 10),
+    // Exits are checked on every trade of an open token; once a target/stop triggers, the sell fills at the curve
+    // price this many seconds later (bot reaction + confirmation). 0 = fill at the triggering trade.
+    exitDelaySec: num('PAPER_EXIT_DELAY_SEC', 2),
   },
   // Parallel paper book: enters when a token's score first lands in [BAND_LO, BAND_HI) instead of >= alertScore.
   // Labeled snapshots: 65-72 hit +25% net before -20% net 39% of the time (31 tokens, CI 24-56%) vs 19% for 72+.
@@ -112,6 +115,9 @@ export const config = {
     // score>=50 & flow60>=12.6 & medBuy>=0.387 hit +25% net before -20% net 40% in each half (30 tokens) - still under the 44% breakeven.
     flow: { enabled: bool('FLOW_ENABLED', true), minScore: num('FLOW_MIN_SCORE', 50), minFlow60Sol: num('FLOW_MIN_FLOW60_SOL', 12.6), minMedianBuySol: num('FLOW_MIN_MEDIAN_BUY_SOL', 0.387) },
     // Replay of 143 v2 paper trades: wait 60s, enter only if price >= signal, TP +20% gross: 38% win, -8.1%/trade in both halves (live v2: -19.5%).
+    // Control group: at each Main/Band/Flow signal, buy a random OTHER eligible token matched on age and mcap.
+    // Every strategy must beat this, not just zero; otherwise the score adds nothing over picking at random.
+    random: { enabled: bool('RANDOM_ENABLED', true), ageTolPct: num('RANDOM_AGE_TOL_PCT', 50), mcapTolPct: num('RANDOM_MCAP_TOL_PCT', 40) },
     confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 20) },
   },
 
@@ -128,6 +134,9 @@ export const config = {
   },
 
   killRule: {
+    // PASS needs all of: n >= minTrades, 99% low bound of avg P&L/trade > 0, both halves positive, and beating the
+    // random control book (95% low bound of the difference > 0). Six books at a 95% bar would pass one by luck ~26% of the time.
+    confidence: num('KILL_CONFIDENCE', 0.99),
     minTrades: num('KILL_MIN_TRADES', 50),
     windowTrades: num('KILL_WINDOW_TRADES', 200),
   },
@@ -188,6 +197,9 @@ export const config = {
   },
   dashboardPassword: str('DASHBOARD_PASSWORD', ''),
   healthcheckUrl: str('HEALTHCHECK_URL', ''), // e.g. https://hc-ping.com/<uuid>
+  // Data health (Health tab). gapSec is the starting threshold; it self-calibrates from this machine's baseline.
+  health: { gapSec: num('HEALTH_GAP_SEC', 15), gapSecOverride: num('HEALTH_GAP_SEC_OVERRIDE', 0), restoreMaxDownSec: num('HEALTH_RESTORE_MAX_DOWN_SEC', 30) },
+
   retention: {
     tradesDays: num('RETAIN_TRADES_DAYS', 14),
     snapshotsDays: num('RETAIN_SNAPSHOTS_DAYS', 30),
