@@ -60,6 +60,11 @@ CREATE TABLE IF NOT EXISTS wallets (
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
 `);
 
+// Paper-book migrations: book (main | band), exit-rule version, market-gate tag, entry score, market context JSON.
+for (const col of ["book TEXT DEFAULT 'main'", "rules TEXT DEFAULT 'v1'", 'gated INTEGER DEFAULT 0', 'score REAL', 'market TEXT']) {
+  try { db.exec(`ALTER TABLE paper_trades ADD COLUMN ${col}`); } catch { /* exists */ }
+}
+
 export const q = {
   insertToken: db.prepare(`INSERT OR IGNORE INTO tokens (mint,name,symbol,uri,creator,created_at,create_slot,initial_buy_sol,initial_mcap,mayhem,pool)
     VALUES (@mint,@name,@symbol,@uri,@creator,@created_at,@create_slot,@initial_buy_sol,@initial_mcap,@mayhem,@pool)`),
@@ -83,8 +88,8 @@ export const q = {
 
   insertTrade: db.prepare(`INSERT INTO trades (mint,ts,slot,sig,wallet,is_buy,sol,tok,vsol,vtok) VALUES (?,?,?,?,?,?,?,?,?,?)`),
 
-  insertPaper: db.prepare(`INSERT INTO paper_trades (alert_id,mint,symbol,status,entry_ts,entry_mcap,size_sol,tokens,tokens_left,peak_value,events)
-    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryMcap,@sizeSol,@tokens,@tokens,@sizeSol,@events)`),
+  insertPaper: db.prepare(`INSERT INTO paper_trades (alert_id,mint,symbol,status,entry_ts,entry_mcap,size_sol,tokens,tokens_left,peak_value,events,book,rules,gated,score,market)
+    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryMcap,@sizeSol,@tokens,@tokens,@sizeSol,@events,@book,@rules,@gated,@score,@market)`),
   updatePaper: db.prepare(`UPDATE paper_trades SET status=@status, tokens_left=@tokensLeft, realized_sol=@realized, peak_value=@peakValue,
     exit_ts=@exitTs, exit_reason=@exitReason, pnl_sol=@pnlSol, pnl_pct=@pnlPct, events=@events WHERE id=@id`),
   voidPaper: db.prepare(`UPDATE paper_trades SET status='void', exit_ts=?, exit_reason='voided (state lost)' WHERE id=?`),

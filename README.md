@@ -213,6 +213,24 @@ The social and dev-buy weights are anchored to published survival analysis (Tele
 
 ---
 
+## 5c. Paper books v2 and market conditions (October 13, 2026)
+
+Diagnosis from replaying every recorded trade on 60 alerted tokens (the replay reproduced the live result: 8% win, −30% per trade):
+
+| Change | Win rate | Avg / trade |
+|---|---|---|
+| v1 exits (TP 2× half, 35% trail, −40% stop) | 8% | −29.9% |
+| v2 exits (all out at +25% net, −20% net stop) | 37% | −7.4% |
+| v2, entering at 0 s instead of 15 s | 33% | −8.3% |
+
+Breakeven for +25% / −20% net is a 44% win rate. Labeled snapshots scoring 65–72 reached it first 39% of the time (31 tokens, 95% CI 24–56%), and 72+ only 19% (21 tokens). So the alert threshold fires late.
+
+- **v2 exits** are now the default (`PAPER_RULES=v2`). The kill rule counts v2 trades only. v1 trades stay visible as history.
+- **Band book**: a parallel paper book that enters the first time a token's live score lands in 65–72. It has the same exits and costs and its own kill rule.
+- **Market conditions**: the rolling win rate of the last 20 closed paper trades, with COLD below 30% and back to WARM at 35%. Launch rate, graduations and the SOL 1h move are stored on every entry. The default is shadow mode, because in the replay the pause would have skipped trades that did better (45% win) than the ones it kept (35%). Set `MARKET_GATE_MODE=enforce` only after the WARM vs COLD table on the Performance tab shows COLD entries clearly doing worse over 2+ weeks.
+
+---
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

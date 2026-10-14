@@ -12,6 +12,7 @@ import { notify, esc } from './telegram.js';
 import { market, fmtUsd } from '../market.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
+import { gate } from './marketgate.js';
 
 const log = logger('strong');
 const C = config.strong;
@@ -80,6 +81,7 @@ export class Strong {
     const fallback = kind === 'curve' ? C.fallbackCurveScore : C.fallbackGradScore;
     const pass = calibrated ? h.rate >= C.minHitPct : a.score >= fallback;
     if (!pass) { this.counters.belowBar++; return null; }
+    if (gate.enforcing) { this.counters.marketPaused = (this.counters.marketPaused || 0) + 1; log.info(`strong signal for ${a.symbol} held: market COLD`); return null; }
     if (Q.lastHour.get(Date.now() - HOUR).c >= C.maxPerHour) { this.counters.suppressedRate++; log.warn(`strong signal for ${a.symbol} suppressed (hourly cap ${C.maxPerHour})`); return null; }
 
     const gt = grossTarget(kind), gs = grossStop(kind);

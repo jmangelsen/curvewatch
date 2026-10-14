@@ -301,6 +301,47 @@ function barsChart(el, cats, series, { h = 240, yMax = null, yFmt = (v) => `${n(
 }
 
 // ---------- kill rule card (shared by both paper books) ----------
+function renderBooks() {
+  const P = S.paper; if (!P?.books) return;
+  const { books: B, legacyV1: L } = P.books, band = P.band;
+  $('#booksHint').textContent = `same exits (${P.config.rules}), same costs · kill rule needs ${B.main.kill.needed} trades each`;
+  const statusCls = (st) => ({ PASS: 'up', FAIL: 'down' }[st] || 'acc');
+  const row = (name, sub, k, open, extra = '') => `<tr class="${extra}"><td><span class="book-name">${name}</span><span class="book-sub">${sub}</span></td>
+    <td><span class="${extra ? '' : statusCls(k.status)}">${k.status === 'COLLECTING' ? `${k.n}/${k.needed}` : k.status}</span></td>
+    <td class="num">${k.n ? pct(k.winRatePct, 0) : '–'}</td>
+    <td class="num ${extra ? '' : cls(k.expectancyPct)}">${k.n ? signed(k.expectancyPct, 1, '%') : '–'}</td>
+    <td class="num">${k.n > 1 ? `${signed(k.ciLowPct, 0, '%')} to ${signed(k.ciHighPct, 0, '%')}` : '–'}</td>
+    <td class="num ${extra ? '' : cls(k.totalPnlSol)}">${k.n ? sUsdSigned(k.totalPnlSol) : '–'}</td>
+    <td class="num">${open ?? '–'}</td></tr>`;
+  $('#books').innerHTML = `<div class="btable-wrap"><table class="btable wide">
+    <thead><tr><th>Book</th><th>Kill rule</th><th class="num">Win</th><th class="num">Avg / trade</th><th class="num">95% range</th><th class="num">P&amp;L</th><th class="num">Open</th></tr></thead>
+    <tbody>${row('Main', `score ≥ ${S.status?.alertScore ?? 72}`, B.main.kill, B.main.open)}${row('Band', `score ${band.lo}–${band.hi} (first entry)`, B.band.kill, B.band.open)}${L.n ? row('Old exits (v1)', 'main book before the change', L, null, 'legacy') : ''}</tbody></table></div>
+    <p class="small-note">Breakeven for +25% / −20% net exits is a 44% win rate. The replay of 60 past alerts put the new exits at 37% win and −7% per trade; the band's labeled-snapshot hit rate was 39% (31 tokens). Both are below breakeven until live data says otherwise.</p>`;
+}
+function renderMarket() {
+  const m = S.paper?.market; if (!m) return;
+  const c = m.config, wr = m.winRatePct;
+  const col = m.state === 'COLD' ? 'down' : m.state === 'WARM' ? 'up' : 'faint';
+  $('#marketHint').textContent = `last ${c.window} closed paper trades, ${c.lookbackHours}h window`;
+  const B = S.paper.books?.books || {};
+  const cmp = (b) => { const w = B[b]?.byMarket; if (!w) return ''; return `<tr><td>${b === 'main' ? 'Main' : 'Band'}</td>${['WARM', 'COLD'].map((st) => `<td class="num">${w[st].n ? `${pct(w[st].winRatePct, 0)} · ${signed(w[st].expectancyPct, 1, '%')}` : '–'}</td><td class="num faint">${w[st].n}</td>`).join('')}</tr>`; };
+  const ctx = m.context || {};
+  $('#market').innerHTML = `
+    <div class="mstate"><span class="big ${col}">${m.state}</span><span class="tag">${m.mode === 'enforce' ? 'enforcing' : 'shadow: measuring only'}</span>
+      <span class="faint">${m.n < c.minTrades ? `${m.n} of ${c.minTrades} trades needed${wr != null ? ` (${pct(wr, 0)} win so far)` : ''}` : `${pct(wr, 0)} win over ${m.n} trades`} · since ${ago(m.since)} ago</span></div>
+    <div class="gauge"><i style="width:${Math.max(0, Math.min(100, wr ?? 0))}%;background:${css(m.state === 'COLD' ? '--down' : '--accent')}"></i>
+      <b style="left:${c.pauseBelowPct}%"></b><b style="left:${c.resumeAtPct}%;opacity:.5"></b><b style="left:44%;background:${css('--up')}"></b></div>
+    <div class="small-note gauge-key">ticks: pause below ${c.pauseBelowPct}% · resume at ${c.resumeAtPct}% · <span class="up">breakeven 44%</span></div>
+    <div class="mctx">
+      <div><div class="label">Launches / min</div><div class="value">${n(ctx.launchesPerMin, 1)}</div></div>
+      <div><div class="label">Graduations 1h</div><div class="value">${n(ctx.grads1h, 0)}</div></div>
+      <div><div class="label">SOL 1h</div><div class="value ${cls(ctx.sol1hPct)}">${ctx.sol1hPct == null ? '–' : signed(ctx.sol1hPct, 2, '%')}</div></div>
+    </div>
+    <div class="btable-wrap"><table class="btable"><thead><tr><th>Entered while</th><th class="num">WARM win · avg</th><th class="num">n</th><th class="num">COLD win · avg</th><th class="num">n</th></tr></thead><tbody>${cmp('main')}${cmp('band')}</tbody></table></div>
+    <p class="small-note">${m.mode === 'enforce'
+      ? 'Enforcing: while COLD, new paper entries are tagged paused and left out of the kill rule, and Telegram strong signals are held back.'
+      : 'Shadow mode: every entry is tagged with the market state, nothing is blocked. In the replay of 60 alerts, a pause would have skipped trades that did better (45% win) than the ones kept (35%). Switch to enforce (MARKET_GATE_MODE=enforce) only if COLD entries here keep doing clearly worse than WARM ones.'}</p>`;
+}
 function killHtml(k, model) {
   const color = { PASS: 'up', FAIL: 'down', MARGINAL: 'acc', COLLECTING: 'acc' }[k.status];
   const verdict = {
@@ -374,7 +415,9 @@ $('#cpSel').onchange = loadPerf;
 function renderPerf() {
   if (!S.paper) return;
   const k = S.paper.kill, cfg = S.paper.config;
-  $('#kill').innerHTML = killHtml(k, `Model: ${sUsd(cfg.sizeSol)} (${cfg.sizeSol} SOL) per alert, entry ${cfg.entryDelaySec}s after the alert at the live curve price, ${cfg.feePct}% fee each side, +${cfg.extraSlippagePct}% slippage; sell ${cfg.tp1Fraction * 100}% at ${cfg.tp1Multiple}×, ${cfg.trailPct}% trailing stop, −${cfg.stopPct}% hard stop, ${cfg.maxHoldMin} min max hold.`);
+  const exitTxt = cfg.tp1Fraction >= 1 ? `sell everything at +${Math.round((cfg.tp1Multiple - 1) * 100)}% net, −${cfg.stopPct}% net stop` : `sell ${cfg.tp1Fraction * 100}% at ${cfg.tp1Multiple}×, ${cfg.trailPct}% trailing stop, −${cfg.stopPct}% hard stop`;
+  $('#kill').innerHTML = killHtml(k, `Model (${cfg.rules} exits): ${sUsd(cfg.sizeSol)} (${cfg.sizeSol} SOL) per signal, entry ${cfg.entryDelaySec}s later at the live curve price, ${cfg.feePct}% fee each side, +${cfg.extraSlippagePct}% slippage; ${exitTxt}, ${cfg.maxHoldMin} min max hold. Trades under the old v1 exits are excluded.`);
+  renderBooks(); renderMarket();
   $('#eqHint').textContent = `${k.allTrades} closed · cumulative, USD`;
   const px = solPx() || 1;
   lineChart($('#equity'), k.equity.map((e) => [e.t, e.eq * px]), { yFmt: (v) => (solPx() ? usd(v) : n(v, 2)), color: css(k.totalPnlSol >= 0 ? '--up' : '--down') });
@@ -383,10 +426,11 @@ function renderPerf() {
   $('#posHint').textContent = `${S.paper.open.length} open`;
   $('#positions tbody').innerHTML = all.length ? all.slice(0, 60).map((p) => {
     const pnl = p.status === 'open' ? p.markPct : p.pnl_pct;
-    return `<tr data-mint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : p.status === 'void' ? '<span class="faint">void</span>' : 'closed'}</td>
+    const bk = p.book || 'main', rl = p.rules || (p.status === 'open' ? S.paper.config.rules : 'v1');
+    return `<tr data-mint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Book">${bk === 'band' ? `<span class="acc">${S.paper.band.lo}–${S.paper.band.hi}</span>` : 'main'}${rl === 'v1' ? ' <span class="faint">v1</span>' : ''}${p.gated ? ' <span class="down">paused</span>' : ''}</td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : p.status === 'void' ? '<span class="faint">void</span>' : 'closed'}</td>
       <td class="num" data-label="Entry mcap">${sUsd(p.entryMcap ?? p.entry_mcap)}</td><td class="num" data-label="Mark / exit">${p.status === 'open' ? sUsd(p.mcap) : sUsd((p.events || []).slice(-1)[0]?.mcap)}</td>
       <td class="num ${cls(pnl)}" data-label="P&amp;L">${signed(pnl, 1, '%')}</td><td class="faint" data-label="Exit">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : '–'))}</td><td class="num faint" data-label="Opened">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
-  }).join('') : `<tr><td colspan="7"><div class="empty"><strong>No paper trades yet</strong>Each alert opens a simulated ${sUsd(cfg.sizeSol)} position ${cfg.entryDelaySec}s later.</div></td></tr>`;
+  }).join('') : `<tr><td colspan="8"><div class="empty"><strong>No paper trades yet</strong>Each alert opens a simulated ${sUsd(cfg.sizeSol)} position ${cfg.entryDelaySec}s later.</div></td></tr>`;
 
   const c = S.cal;
   if (c) {
@@ -509,7 +553,7 @@ function renderGrads() {
       return `<tr data-gmint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : 'closed'}</td>
         <td class="num" data-label="Entry mcap">${usd(p.entryMcap ?? p.entry_mcap)}</td><td class="num" data-label="Mark / exit">${usd(p.status === 'open' ? p.mcap : (p.events || []).slice(-1)[0]?.mcap)}</td>
         <td class="num ${cls(pnl)}" data-label="P&amp;L">${signed(pnl, 1, '%')}</td><td class="faint" data-label="Exit">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : '–'))}</td><td class="num faint" data-label="Opened">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
-    }).join('') : `<tr><td colspan="7"><div class="empty"><strong>No paper trades yet</strong>Each re-ignition alert opens a simulated ${sUsd(c.sizeSol)} position at the next price reading.</div></td></tr>`;
+    }).join('') : `<tr><td colspan="8"><div class="empty"><strong>No paper trades yet</strong>Each re-ignition alert opens a simulated ${sUsd(c.sizeSol)} position at the next price reading.</div></td></tr>`;
   }
 
   const C = S.gCal;

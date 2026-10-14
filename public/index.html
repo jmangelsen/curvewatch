@@ -108,7 +108,7 @@
       </article>
       <article class="card gpos-card">
         <div class="card-head"><h2>Positions · graduates</h2><span class="hint" id="gPosHint"></span></div>
-        <div class="table-wrap"><table class="board responsive" id="gPositions"><thead><tr><th>Token</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table class="board responsive" id="gPositions"><thead><tr><th>Token</th><th>Book</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
       </article>
       <article class="card gfilter-card">
         <div class="card-head"><h2>Not scored</h2><span class="hint" id="gFilterHint"></span></div>
@@ -129,8 +129,16 @@
           <button class="btn" id="tgTest" type="button">Send test message</button></div>
         <div id="strong"></div>
       </article>
+      <article class="card books-card">
+        <div class="card-head"><h2>Paper books</h2><span class="hint" id="booksHint"></span></div>
+        <div id="books"></div>
+      </article>
+      <article class="card market-card">
+        <div class="card-head"><h2>Market conditions</h2><span class="hint" id="marketHint"></span></div>
+        <div id="market"></div>
+      </article>
       <article class="card kill-card">
-        <div class="card-head"><h2>Kill rule</h2><span class="hint">paper trades with reaction delay, slippage and fees</span></div>
+        <div class="card-head"><h2>Kill rule · main book</h2><span class="hint">score ≥ alert threshold, current exit rules</span></div>
         <div id="kill"></div>
       </article>
       <article class="card equity-card">
@@ -148,7 +156,7 @@
       </article>
       <article class="card positions-card">
         <div class="card-head"><h2>Positions</h2><span class="hint" id="posHint"></span></div>
-        <div class="table-wrap"><table class="board responsive" id="positions"><thead><tr><th>Token</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table class="board responsive" id="positions"><thead><tr><th>Token</th><th>Book</th><th>Status</th><th class="num">Entry mcap</th><th class="num">Mark / exit</th><th class="num">P&amp;L</th><th>Exit reason</th><th class="num">Opened</th></tr></thead><tbody></tbody></table></div>
       </article>
     </div>
   </section>

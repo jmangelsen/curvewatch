@@ -82,7 +82,7 @@ export class Engine extends EventEmitter {
     if (!t.initialBuySol && ev.wallet === t.creator && ev.isBuy && t.trades.length <= 2) {
       t.initialBuySol = ev.sol; q.updateInitialBuy.run(ev.sol, t.initialMcap, t.mint);
     }
-    if (t.alertId) this.tradeWriteQueue.push([t.mint, ev.recvAt, ev.slot, ev.sig, ev.wallet, ev.isBuy ? 1 : 0, ev.sol, ev.tok, ev.vsol, ev.vtok]);
+    if (t.recording) this.tradeWriteQueue.push([t.mint, ev.recvAt, ev.slot, ev.sig, ev.wallet, ev.isBuy ? 1 : 0, ev.sol, ev.tok, ev.vsol, ev.vtok]);
     if (t.graduated && !t._gradRecorded) this.markGrad(t);
   }
 
@@ -122,9 +122,10 @@ export class Engine extends EventEmitter {
           }
           const S = config.scoring;
           if (!t.alertId && !s.reject && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec) this.fireAlert(t, f, s);
+          this.maybeBandEntry(t, s, age);
         } else {
           t.toLite();
-          if (!t.alertId) this.pp?.unwatchTrades(mint);
+          if (!t.alertId && !paper.isOpen(mint)) this.pp?.unwatchTrades(mint);
         }
       }
       // Outcome labeling at the horizon
@@ -149,17 +150,33 @@ export class Engine extends EventEmitter {
     while (this.recentGrads.length && this.recentGrads[0] < cut) this.recentGrads.shift();
   }
 
+  /** Persist the full trade history (and every later trade) so entries can be replayed and audited. */
+  startRecording(t) {
+    if (t.recording) return;
+    t.recording = true;
+    for (const tr of t.trades) this.tradeWriteQueue.push([t.mint, tr.at, tr.slot, tr.sig, tr.w, tr.b ? 1 : 0, tr.sol, tr.tok, tr.vsol, tr.vtok]);
+  }
+
+  /** Parallel paper book: first time a live, unrejected score lands in [lo, hi) inside the alert age window. */
+  maybeBandEntry(t, s, age) {
+    const B = config.band, S = config.scoring;
+    if (!B.enabled || t.bandAt || s.reject || s.score < B.lo || s.score >= B.hi || age < S.minAgeSec || age > S.maxAgeSec) return;
+    t.bandAt = Date.now(); t.bandScore = s.score;
+    this.startRecording(t);
+    paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score });
+    this.counters.bandEntries = (this.counters.bandEntries || 0) + 1;
+  }
+
   fireAlert(t, f, s) {
     t.alertedAt = Date.now();
-    // flush the full trade history so the alert can be audited later
-    for (const tr of t.trades) this.tradeWriteQueue.push([t.mint, tr.at, tr.slot, tr.sig, tr.w, tr.b ? 1 : 0, tr.sol, tr.tok, tr.vsol, tr.vtok]);
+    this.startRecording(t);
     const id = Number(q.insertAlert.run({ mint: t.mint, ts: t.alertedAt, score: s.score, mcap: t.mcap, age: f.ageSec, progress: f.progressPct,
       reasons: JSON.stringify(s.reasons), flags: JSON.stringify(s.flags), features: JSON.stringify(compact(f)) }).lastInsertRowid);
     t.alertId = id;
     t.alertSnap = { mcap: t.mcap, maxAfter: t.mcap, runMin: t.mcap, minBeforeMax: t.mcap, minAfter: t.mcap };
     t.snapshots.push(t.alertSnap); // reuse the max/min tracking machinery
     this.counters.alerts++; this.hour().alerts++;
-    paper.scheduleEntry(t, id);
+    paper.scheduleEntry(t, id, { book: 'main', score: s.score });
     const alert = { id, mint: t.mint, symbol: t.symbol, name: t.name, ts: t.alertedAt, score: s.score, mcap: t.mcap, ageSec: f.ageSec, progressPct: f.progressPct, reasons: s.reasons, flags: s.flags };
     this.emit('alert', alert);
     log.info(`ALERT #${id} ${t.symbol} score ${s.score} mcap ${round(t.mcap, 1)} SOL age ${round(f.ageSec, 0)}s`);

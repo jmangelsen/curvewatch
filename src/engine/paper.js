@@ -5,10 +5,13 @@ import { config } from '../config.js';
 import { q } from '../db.js';
 import { curveBuy, curveSell, round } from '../util.js';
 import { logger } from '../log.js';
+import { gate, marketTag } from './marketgate.js';
 const log = logger('paper');
 const P = config.paper;
 
-const open = new Map(); // mint -> position
+const open = new Map(); // `${book}:${mint}` -> position
+const key = (book, mint) => `${book}:${mint}`;
+export const BOOKS = ['main', 'band'];
 const pendingEntries = [];
 export const paperEvents = [];
 
@@ -17,21 +20,22 @@ function valueOf(pos, token, tokens = pos.tokensLeft) {
   return curveSell(token.vsol, token.vtok, tokens, P.feePct) * (1 - P.extraSlippagePct / 100);
 }
 
-export function scheduleEntry(token, alertId) {
-  if (!P.enabled || open.has(token.mint)) return;
-  pendingEntries.push({ mint: token.mint, alertId, at: Date.now() + P.entryDelaySec * 1000, token });
+/** book: 'main' (score >= alert threshold) or 'band' (score first lands in the 65-72 band) */
+export function scheduleEntry(token, alertId, { book = 'main', score = null } = {}) {
+  if (!P.enabled || open.has(key(book, token.mint)) || pendingEntries.some((e) => e.book === book && e.mint === token.mint)) return;
+  pendingEntries.push({ mint: token.mint, alertId, book, score, at: Date.now() + P.entryDelaySec * 1000, token });
 }
 
 export function restoreOpen(getToken) {
   // In-memory curve state is lost on restart, so open positions cannot be marked honestly.
   // They are voided (excluded from the kill rule) rather than guessed.
   for (const row of q.openPapers.all()) {
-    if (getToken(row.mint)) { open.set(row.mint, rowToPos(row)); continue; }
+    if (getToken(row.mint)) { open.set(key(row.book || 'main', row.mint), rowToPos(row)); continue; }
     q.voidPaper.run(Date.now(), row.id);
     log.warn(`voided open paper trade ${row.id} (${row.symbol}) after restart`);
   }
 }
-const rowToPos = (r) => ({ id: r.id, alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryMcap: r.entry_mcap, sizeSol: r.size_sol, tokens: r.tokens, tokensLeft: r.tokens_left, realized: r.realized_sol || 0, peakValue: r.peak_value || r.size_sol, tp1Done: (r.realized_sol || 0) > 0, events: JSON.parse(r.events || '[]') });
+const rowToPos = (r) => ({ id: r.id, book: r.book || 'main', alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryMcap: r.entry_mcap, sizeSol: r.size_sol, tokens: r.tokens, tokensLeft: r.tokens_left, realized: r.realized_sol || 0, peakValue: r.peak_value || r.size_sol, tp1Done: (r.realized_sol || 0) > 0, events: JSON.parse(r.events || '[]') });
 
 export function tick(getToken) {
   const t = Date.now();
@@ -43,16 +47,18 @@ export function tick(getToken) {
     const token = getToken(e.mint) || e.token;
     if (token.graduated) continue; // missed it: curve closed
     const tokens = curveBuy(token.vsol, token.vtok, P.sizeSol, P.feePct) * (1 - P.extraSlippagePct / 100);
-    const pos = { alertId: e.alertId, mint: e.mint, symbol: token.symbol, entryTs: t, entryMcap: token.mcap, sizeSol: P.sizeSol, tokens, tokensLeft: tokens, realized: 0, peakValue: P.sizeSol, tp1Done: false, events: [{ t, type: 'entry', mcap: round(token.mcap, 1) }] };
-    pos.id = Number(q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: t, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, tokens, events: JSON.stringify(pos.events) }).lastInsertRowid);
-    open.set(e.mint, pos);
+    const gated = gate.enforcing ? 1 : 0;
+    const pos = { book: e.book, alertId: e.alertId, mint: e.mint, symbol: token.symbol, entryTs: t, entryMcap: token.mcap, sizeSol: P.sizeSol, tokens, tokensLeft: tokens, realized: 0, peakValue: P.sizeSol, tp1Done: false, gated, events: [{ t, type: 'entry', mcap: round(token.mcap, 1) }] };
+    pos.id = Number(q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: t, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, tokens, events: JSON.stringify(pos.events),
+      book: e.book, rules: P.rules, gated, score: e.score, market: JSON.stringify(marketTag()) }).lastInsertRowid);
+    open.set(key(e.book, e.mint), pos);
     paperEvents.push({ type: 'entry', pos: pub(pos, token) });
-    log.info(`ENTRY ${pos.symbol} @ ${round(pos.entryMcap, 1)} SOL mcap`);
+    log.info(`ENTRY [${pos.book}] ${pos.symbol} @ ${round(pos.entryMcap, 1)} SOL mcap`);
   }
   // Exits
-  for (const [mint, pos] of open) {
-    const token = getToken(mint);
-    if (!token) { q.voidPaper.run(t, pos.id); open.delete(mint); continue; }
+  for (const [k, pos] of open) {
+    const token = getToken(pos.mint);
+    if (!token) { q.voidPaper.run(t, pos.id); open.delete(k); continue; }
     const value = valueOf(pos, token);
     const total = pos.realized + value;
     if (total > pos.peakValue) pos.peakValue = total;
@@ -64,6 +70,7 @@ export function tick(getToken) {
       const got = valueOf(pos, token, sellTok);
       pos.tokensLeft -= sellTok; pos.realized += got; pos.tp1Done = true;
       pos.events.push({ t, type: 'tp1', sol: round(got, 4), mcap: round(token.mcap, 1) });
+      if (pos.tokensLeft <= 1e-9) { closePos(pos, null, `take profit +${round((P.tp1Multiple - 1) * 100, 0)}%`); continue; }
       persist(pos);
       continue;
     }
@@ -86,18 +93,18 @@ function closePos(pos, token, reason) {
   const pnl = pos.realized - pos.sizeSol;
   pos.events.push({ t, type: 'exit', reason, sol: round(got, 4), mcap: token ? round(token.mcap, 1) : null });
   persist(pos, { status: 'closed', exitTs: t, exitReason: reason, pnlSol: pnl, pnlPct: (pnl / pos.sizeSol) * 100 });
-  open.delete(pos.mint);
+  open.delete(key(pos.book, pos.mint));
   paperEvents.push({ type: 'exit', pos: { ...pub(pos, token), pnlSol: pnl, pnlPct: (pnl / pos.sizeSol) * 100, reason } });
-  log.info(`EXIT ${pos.symbol} ${reason} pnl ${round(pnl, 4)} SOL (${round((pnl / pos.sizeSol) * 100, 1)}%)`);
+  log.info(`EXIT [${pos.book}] ${pos.symbol} ${reason} pnl ${round(pnl, 4)} SOL (${round((pnl / pos.sizeSol) * 100, 1)}%)`);
 }
 
 function pub(pos, token) {
   const value = token ? valueOf(pos, token) : 0;
-  return { id: pos.id, mint: pos.mint, symbol: pos.symbol, entryTs: pos.entryTs, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, realized: pos.realized,
+  return { id: pos.id, book: pos.book, gated: pos.gated || 0, mint: pos.mint, symbol: pos.symbol, entryTs: pos.entryTs, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, realized: pos.realized,
     markSol: pos.realized + value, markPct: ((pos.realized + value) / pos.sizeSol - 1) * 100, mcap: token?.mcap ?? null, tp1Done: pos.tp1Done };
 }
 export const openPositions = (getToken) => [...open.values()].map((p) => pub(p, getToken(p.mint)));
-export const isOpen = (mint) => open.has(mint) || pendingEntries.some((e) => e.mint === mint);
+export const isOpen = (mint) => BOOKS.some((b) => open.has(key(b, mint))) || pendingEntries.some((e) => e.mint === mint);
 
 /** Kill rule: is average return per trade (after fees, delay, slippage) reliably above zero? */
 export function killStatsFrom(rows) {
@@ -120,4 +127,21 @@ export function killStatsFrom(rows) {
     bestPct: n ? Math.max(...w) * 100 : 0, worstPct: n ? Math.min(...w) * 100 : 0,
   };
 }
-export const killRule = () => killStatsFrom(q.closedPapersAsc.all());
+/** Kill rule for one book under the current exit rules. Gated trades (market pause enforced) are excluded:
+ *  the kill rule judges the strategy as it would actually trade. */
+const closedCurrent = () => q.closedPapersAsc.all().filter((r) => (r.rules || 'v1') === P.rules);
+export const killRule = (book = 'main') => killStatsFrom(closedCurrent().filter((r) => (r.book || 'main') === book && !r.gated));
+const brief = (k) => ({ status: k.status, n: k.n, needed: k.needed, expectancyPct: k.expectancyPct, ciLowPct: k.ciLowPct, ciHighPct: k.ciHighPct, winRatePct: k.winRatePct, profitFactor: k.profitFactor, totalPnlSol: k.totalPnlSol });
+/** Side-by-side comparison for the Performance tab */
+export function books() {
+  const cur = closedCurrent();
+  const byState = (rows, st) => rows.filter((r) => { try { return JSON.parse(r.market || '{}').state === st; } catch { return false; } });
+  const out = {};
+  for (const b of BOOKS) {
+    const rows = cur.filter((r) => (r.book || 'main') === b);
+    out[b] = { kill: killRule(b), open: [...open.values()].filter((p) => p.book === b).length,
+      byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
+  }
+  const v1 = q.closedPapersAsc.all().filter((r) => (r.rules || 'v1') === 'v1');
+  return { rules: P.rules, books: out, legacyV1: brief(killStatsFrom(v1)) };
+}

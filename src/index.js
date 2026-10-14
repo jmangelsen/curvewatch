@@ -13,6 +13,7 @@ import { startServer } from './server.js';
 import { Graduates } from './engine/graduates.js';
 import { market, refreshSolUsd, solToUsd } from './market.js';
 import { Strong } from './engine/strong.js';
+import { updateGate, gateView, gate } from './engine/marketgate.js';
 import { config as cfg } from './config.js';
 import { datasetStats, alertStats } from './stats.js';
 import { round } from './util.js';
@@ -64,6 +65,9 @@ function status() {
     grads: grads.stats(),
     gradKill: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol }))(grads.kill()),
     alertScore: config.scoring.alertScore,
+    band: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct, lo: config.band.lo, hi: config.band.hi }))(paper.killRule('band')),
+    paperRules: config.paper.rules,
+    market: { state: gate.state, mode: gate.mode, enforcing: gate.enforcing, winRatePct: gate.winRatePct, n: gate.n },
   };
 }
 
@@ -112,7 +116,7 @@ setInterval(() => {
     `<b>Curvewatch daily · ${today}</b>`,
     `Launches 24h: ${d.launches24h} · graduated: ${d.grads24h} (${d.gradRate24hPct != null ? round(d.gradRate24hPct, 2) : '–'}%)`,
     `Alerts finalized: ${a.finalized} · hit 2x: ${a.hit2xPct != null ? round(a.hit2xPct, 0) : '–'}% · graduated: ${a.gradPct != null ? round(a.gradPct, 0) : '–'}%`,
-    `Paper: ${k.allTrades} trades · expectancy ${round(k.expectancyPct, 1)}% [${round(k.ciLowPct, 1)}, ${round(k.ciHighPct, 1)}] · total ${round(k.totalPnlSol, 3)} SOL`,
+    `Paper (${config.paper.rules} exits): ${k.allTrades} trades · expectancy ${round(k.expectancyPct, 1)}% [${round(k.ciLowPct, 1)}, ${round(k.ciHighPct, 1)}] · total ${round(k.totalPnlSol, 3)} SOL`,
     `Kill rule: <b>${k.status}</b>${k.status === 'COLLECTING' ? ` (${k.n}/${k.needed})` : ''}`,
   ].join('\n'));
 }, 60000);
@@ -124,6 +128,13 @@ if (cfg.grads.enabled) {
   setInterval(() => { try { grads.label(); } catch (e) { log.warn('grad label failed', e.message); } }, 5 * 60 * 1000);
 }
 setInterval(refreshPx, 60000);
+// Market conditions (rolling paper win rate). Only announces changes on Telegram when enforcing.
+setInterval(() => {
+  try {
+    const ch = updateGate(() => ({ launchesPerMin: engine.rates().launchesPerMin, grads1h: engine.rates().grads1h }));
+    if (ch && config.marketGate.mode === 'enforce') sendTelegram(`<b>Market ${ch.to}</b> · last ${ch.n} paper trades won ${Math.round(ch.winRatePct ?? 0)}%. ${ch.to === 'COLD' ? 'Strong signals paused.' : 'Strong signals resumed.'}`);
+  } catch (e) { log.warn('market gate failed', e.message); }
+}, 15000);
 setInterval(() => { try { strong.label(); } catch (e) { log.warn('strong label failed', e.message); } }, 5 * 60 * 1000);
 
 // ---- boot ----
@@ -136,7 +147,7 @@ if (cfg.grads.enabled) {
 }
 refreshSmartWallets();
 paper.restoreOpen(engine.getToken);
-startServer({ engine, status, grads, strong });
+startServer({ engine, status, grads, strong, gateView });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

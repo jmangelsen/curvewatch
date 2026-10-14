@@ -88,13 +88,36 @@ export const config = {
     entryDelaySec: num('PAPER_ENTRY_DELAY_SEC', 15), // human reaction time: see alert, open app, sign
     extraSlippagePct: num('PAPER_EXTRA_SLIPPAGE_PCT', 3), // competing buyers in the same seconds
     feePct: num('PAPER_FEE_PCT', 1.25), // Pump.fun bonding-curve fee, each side
-    tp1Multiple: num('PAPER_TP1_MULT', 2),
-    tp1Fraction: num('PAPER_TP1_FRACTION', 0.5),
+    // v2 exit (replay of 60 alerts: win rate 8% -> 37%, expectancy -30% -> -7%): sell everything at +25% net,
+    // stop at -20% net. Both are NET multiples (fees and slippage included). v1 was TP 2x half / 35% trail / -40% stop.
+    rules: str('PAPER_RULES', 'v2'),
+    tp1Multiple: num('PAPER_TP1_MULT', 1.25),
+    tp1Fraction: num('PAPER_TP1_FRACTION', 1),
     trailPct: num('PAPER_TRAIL_PCT', 35),
-    stopPct: num('PAPER_STOP_PCT', 40),
+    stopPct: num('PAPER_STOP_PCT', 20),
     maxHoldMin: num('PAPER_MAX_HOLD_MIN', 60),
     idleExitMin: num('PAPER_IDLE_EXIT_MIN', 10),
   },
+  // Parallel paper book: enters when a token's score first lands in [BAND_LO, BAND_HI) instead of >= alertScore.
+  // Labeled snapshots: 65-72 hit +25% net before -20% net 39% of the time (31 tokens, CI 24-56%) vs 19% for 72+.
+  band: {
+    enabled: bool('BAND_ENABLED', true),
+    lo: num('BAND_LO', 65),
+    hi: num('BAND_HI', 72),
+  },
+
+  // Market conditions: rolling win rate of the last N closed paper trades (both books).
+  // shadow = label and measure only (default: the replay showed the pause would have skipped BETTER trades);
+  // enforce = while cold, paper entries are tagged gated and excluded from the kill rule, and strong signals are held back.
+  marketGate: {
+    mode: str('MARKET_GATE_MODE', 'shadow'),
+    window: num('MARKET_GATE_WINDOW', 20),
+    minTrades: num('MARKET_GATE_MIN_TRADES', 10),
+    pauseBelowPct: num('MARKET_GATE_PAUSE_BELOW', 30),
+    resumeAtPct: num('MARKET_GATE_RESUME_AT', 35),
+    lookbackHours: num('MARKET_GATE_LOOKBACK_H', 6),
+  },
+
   killRule: {
     minTrades: num('KILL_MIN_TRADES', 50),
     windowTrades: num('KILL_WINDOW_TRADES', 200),

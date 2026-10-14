@@ -13,7 +13,7 @@ import { notify, tgEnabled } from './engine/telegram.js';
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong }) {
+export function startServer({ engine, status, grads, strong, gateView }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -54,7 +54,7 @@ export function startServer({ engine, status, grads, strong }) {
     res.json(d);
   });
   app.get('/api/paper', (req, res) => {
-    res.json({ open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), config: config.paper });
+    res.json({ open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
   });
   app.get('/api/dataset', (req, res) => res.json(cDataset()));
   app.get('/api/calibration', (req, res) => {
@@ -72,6 +72,8 @@ export function startServer({ engine, status, grads, strong }) {
   app.get('/api/grads/paper', (req, res) => res.json(grads.paper()));
   app.get('/api/grads/calibration', (req, res) => res.json(grads.calibration()));
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
+
+  app.get('/api/market', (req, res) => res.json(gateView()));
 
   // Strong signals + Telegram test
   app.get('/api/strong', (req, res) => res.json(strong.view(Math.min(100, Number(req.query.limit) || 30))));
