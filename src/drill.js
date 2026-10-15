@@ -129,16 +129,35 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       const since = Date.now() - D;
       const rows = all(`SELECT ts t, labeled FROM grad_snapshots WHERE ts > ?`, since);
       const tot = one(`SELECT COUNT(*) n, SUM(labeled) l FROM grad_snapshots`);
-      return { title: 'Labeled graduate snapshots', explain: 'Every poll of a graduate is stored with its features; 6 hours later it is labeled with what happened next. These rows train and check the re-ignition score.',
+      // score band -> what happened in the next 6 h (labeled, non-rejected polls only)
+      const bands = all(`SELECT CASE WHEN score >= 85 THEN '85+' WHEN score >= 70 THEN '70–84' WHEN score >= 50 THEN '50–69' WHEN score >= 30 THEN '30–49' ELSE '< 30' END band,
+          MIN(score) lo, COUNT(*) n, AVG(max_6h >= 1.5 * price) p50, AVG(max_6h >= 2 * price) p100, AVG(price_6h >= price) up, AVG(min_6h <= 0.615 * price) stop
+        FROM grad_snapshots WHERE labeled = 1 AND reject IS NULL AND price > 0 AND max_6h IS NOT NULL GROUP BY band ORDER BY lo DESC`);
+      const recent = all(`SELECT g.mint, g.ts, g.score, g.mcap, g.liq, g.price, g.max_6h, g.min_6h, g.price_6h, g.reject, w.symbol FROM grad_snapshots g LEFT JOIN grad_watch w ON w.mint = g.mint
+        WHERE g.labeled = 1 AND g.price > 0 ORDER BY g.ts DESC LIMIT 150`);
+      return { title: 'Labeled graduate snapshots', explain: 'Every poll of a graduate is stored with its features; 6 hours later it is labeled with what happened next. These rows train and check the re-ignition score. The band table is the calibration: if higher scores do not reach +50% more often, the score has no information.',
         stats: [['Recorded', tot.n, 'num'], ['Labeled', tot.l, 'num'], ['Last 24 h', rows.length, 'num']],
-        series: { label: 'Snapshots per hour, last 24 h', kind: 'bar', fmt: 'num', points: bucket(rows, H, since) } };
+        series: { label: 'Snapshots per hour, last 24 h', kind: 'bar', fmt: 'num', points: bucket(rows, H, since) },
+        tables: [
+          { title: 'Outcome by score band (6 h after the poll)', cols: [C('Score', 'band'), C('Polls', 'n', 'num'), C('Reached +50%', 'p50', 'pct'), C('Reached +100%', 'p100', 'pct'), C('Higher at 6 h', 'up', 'pct'), C('Hit −38.5% first', 'stop', 'pct')],
+            rows: bands.map((b) => ({ ...b, p50: b.p50 * 100, p100: b.p100 * 100, up: b.up * 100, stop: b.stop * 100 })) },
+          { title: 'Newest labeled polls', cols: [C('Time', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num0'), C('Mcap', 'mcap', 'usd'), C('Liquidity', 'liq', 'usd'), C('Best 6 h', 'b6', 'spct'), C('Worst 6 h', 'w6', 'spct'), C('At 6 h', 'a6', 'spct'), C('Status', 'reject')],
+            rows: recent.map((r) => ({ ...r, b6: r.max_6h ? (r.max_6h / r.price - 1) * 100 : null, w6: r.min_6h ? (r.min_6h / r.price - 1) * 100 : null, a6: r.price_6h ? (r.price_6h / r.price - 1) * 100 : null, reject: r.reject || 'scored' })) },
+        ] };
     },
     g_liq() {
-      const rows = all(`SELECT s.liq FROM grad_watch w JOIN grad_snapshots s ON s.mint = w.mint AND s.ts = (SELECT MAX(ts) FROM grad_snapshots x WHERE x.mint = w.mint) WHERE w.active = 1 AND s.liq > 0`);
-      const edges = [0, 5e3, 1e4, 2e4, 4e4, 6e4, 1e5, 2.5e5, 1e12];
-      return { title: 'Liquidity filter', explain: `Graduates below the minimum pool liquidity are watched but never alerted or traded: thin pools make paper fills unrealistic. Belphor's data shows pools above $60k liquidity reached +50% far more often (23% vs 14%).`,
-        stats: [['Minimum', config.grads?.minLiqUsd ?? null, 'usd'], ['Watched with a pool', rows.length, 'num']],
-        series: { label: 'Watched graduates by pool liquidity (USD)', kind: 'cat', fmt: 'num', points: edges.slice(0, -1).map((e, i) => [`${e >= 1e3 ? e / 1e3 + 'k' : e}${i === edges.length - 2 ? '+' : ''}`, rows.filter((r) => r.liq >= e && r.liq < edges[i + 1]).length]) } };
+      const rows = all(`SELECT w.mint, w.symbol, w.added_at, w.mig_price, s.liq, s.mcap, s.price, s.score, s.reject FROM grad_watch w JOIN grad_snapshots s ON s.mint = w.mint AND s.ts = (SELECT MAX(ts) FROM grad_snapshots x WHERE x.mint = w.mint) WHERE w.active = 1 AND s.liq > 0 ORDER BY s.liq DESC`);
+      const edges = [0, 5e3, 1e4, 2e4, 4e4, 6e4, 1e5, 2.5e5, 1e12], min = config.grads?.minLiqUsd ?? 0;
+      const byLiq = all(`SELECT CASE WHEN liq >= 60000 THEN '$60k+' WHEN liq >= 20000 THEN '$20–60k' WHEN liq >= ? THEN 'min–$20k' ELSE 'below min' END band, MIN(liq) lo, COUNT(*) n,
+          AVG(max_6h >= 1.5 * price) p50, AVG(min_6h <= 0.615 * price) stop FROM grad_snapshots WHERE labeled = 1 AND price > 0 AND liq > 0 AND max_6h IS NOT NULL GROUP BY band ORDER BY lo DESC`, min);
+      return { title: 'Liquidity filter', explain: `Graduates below the minimum pool liquidity are watched but never alerted or traded: thin pools make paper fills unrealistic. Belphor's data shows pools above $60k liquidity reached +50% far more often (23% vs 14%). The band table checks that claim on this machine's own labeled polls.`,
+        stats: [['Minimum', min, 'usd'], ['Watched with a pool', rows.length, 'num'], ['Above minimum', rows.filter((r) => r.liq >= min).length, 'num'], ['Below minimum', rows.filter((r) => r.liq < min).length, 'num']],
+        series: { label: 'Watched graduates by pool liquidity (USD)', kind: 'cat', fmt: 'num', points: edges.slice(0, -1).map((e, i) => [`${e >= 1e3 ? e / 1e3 + 'k' : e}${i === edges.length - 2 ? '+' : ''}`, rows.filter((r) => r.liq >= e && r.liq < edges[i + 1]).length]) },
+        tables: [
+          { title: 'Outcome by pool liquidity (labeled polls, 6 h)', cols: [C('Pool', 'band'), C('Polls', 'n', 'num'), C('Reached +50%', 'p50', 'pct'), C('Hit −38.5% first', 'stop', 'pct')], rows: byLiq.map((b) => ({ ...b, p50: b.p50 * 100, stop: b.stop * 100 })) },
+          { title: 'Watched graduates by liquidity', cols: [C('Token', 'symbol', 'token'), C('Since mig', 'age', 'age'), C('Liquidity', 'liq', 'usd'), C('Mcap', 'mcap', 'usd'), C('vs migration', 'vs', 'spct'), C('Score', 'score', 'num0'), C('Status', 'st')],
+            rows: rows.map((r) => ({ ...r, age: (Date.now() - r.added_at) / 1000, vs: r.price && r.mig_price ? (r.price / r.mig_price - 1) * 100 : null, st: r.liq < min ? 'below minimum' : r.reject || 'scored' })) },
+        ] };
     },
     g_paper() {
       const rows = all(`SELECT * FROM grad_paper WHERE status = 'closed' ORDER BY exit_ts DESC LIMIT 200`);

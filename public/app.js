@@ -284,17 +284,23 @@ function lineChart(el, pts, { yFmt = (v) => n(v, 2), color = css('--accent'), ze
     <path d="${d}" fill="none" stroke="${color}" stroke-width="1.8"/></svg>`;
 }
 function barsChart(el, cats, series, { h = 240, yMax = null, yFmt = (v) => `${n(v, 0)}%`, labels = null } = {}) {
-  const w = el.clientWidth || 600, P = { l: 44, r: 8, t: 14, b: 40 };
+  const w = el.clientWidth || el.closest('.card, article')?.clientWidth || 600;
   const all = series.flatMap((s) => s.values.filter((v) => v != null));
   const top = yMax ?? Math.max(1, ...all) * 1.15;
+  const yTicks = [0, top / 2, top];
+  // left gutter sized to the widest y label (6.6 px per character at 11 px mono), so "31,590" never clips
+  const P = { l: Math.max(44, 12 + Math.max(...yTicks.map((t) => String(yFmt(t)).length)) * 6.6), r: 8, t: 14, b: labels ? 40 : 28 };
   const bw = (w - P.l - P.r) / cats.length, inner = bw * 0.72, sw = inner / series.length;
+  // narrow screens: label every k-th bar only (a 24-bar chart on a phone has ~13 px per bar; "13h" alone needs 20 px)
+  const step = Math.max(1, Math.ceil((cats.length * 24) / (w - P.l - P.r)));
   const Y = (v) => P.t + (1 - v / top) * (h - P.t - P.b);
-  let out = `<svg viewBox="0 0 ${w} ${h}" height="${h}"><g class="axis">`;
-  [0, top / 2, top].forEach((t) => (out += `<line class="gridline" x1="${P.l}" x2="${w - P.r}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${P.l - 6}" y="${Y(t) + 4}" text-anchor="end">${yFmt(t)}</text>`));
+  let out = `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="max-width:100%"><g class="axis">`;
+  yTicks.forEach((t) => (out += `<line class="gridline" x1="${P.l}" x2="${w - P.r}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${P.l - 6}" y="${Y(t) + 4}" text-anchor="end">${yFmt(t)}</text>`));
   cats.forEach((c, i) => {
-    const x0 = P.l + i * bw + (bw - inner) / 2;
-    series.forEach((s, j) => { const v = s.values[i]; if (v == null) return; out += `<rect x="${x0 + j * sw}" y="${Y(v)}" width="${Math.max(1, sw - 2)}" height="${Math.max(0, Y(0) - Y(v))}" rx="2" fill="${s.color}"><title>${s.name}: ${yFmt(v)}</title></rect>`; });
-    out += `<text x="${P.l + i * bw + bw / 2}" y="${h - 22}" text-anchor="middle">${c}</text>`;
+    const x0 = P.l + i * bw + (bw - inner) / 2, show = i % step === 0 && (step === 1 || i <= cats.length - step / 2);
+    series.forEach((s, j) => { const v = s.values[i]; if (v == null) return; out += `<rect x="${x0 + j * sw}" y="${Y(v)}" width="${Math.max(1, sw - 2)}" height="${Math.max(0, Y(0) - Y(v))}" rx="2" fill="${s.color}"><title>${c} · ${s.name}: ${yFmt(v)}${labels ? ` · ${labels[i]}` : ''}</title></rect>`; });
+    if (!show) return;
+    out += `<text x="${P.l + i * bw + bw / 2}" y="${h - (labels ? 22 : 8)}" text-anchor="middle">${c}</text>`;
     if (labels) out += `<text x="${P.l + i * bw + bw / 2}" y="${h - 8}" text-anchor="middle" opacity=".7">${labels[i]}</text>`;
   });
   return (el.innerHTML = out + '</g></svg>');
@@ -460,8 +466,8 @@ function renderIntel() {
   if (d.hourly.length) {
     barsChart($('#hourly'), d.hourly.map((x) => new Date(x.t).getHours().toString().padStart(2, '0') + 'h'), [
       { name: 'launches', color: css('--text-faint'), values: d.hourly.map((x) => x.launches) },
-    ], { yFmt: (v) => n(v, 0), labels: d.hourly.map((x) => `${x.grads} grad${x.grads === 1 ? '' : 's'}`) });
-    $('#hourly').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--text-faint')}"></i>launches per hour (local time) · graduations listed under each bar</span></div>`);
+    ], { yFmt: (v) => n(v, 0), labels: d.hourly.map((x) => (innerWidth < 520 ? `${x.grads}g` : `${x.grads} grad${x.grads === 1 ? '' : 's'}`)) });
+    $('#hourly').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--text-faint')}"></i>launches per hour (local time) · graduations under each bar${innerWidth < 520 ? ' (g); tap a bar for its hour' : ''}</span></div>`);
   } else $('#hourly').innerHTML = `<div class="empty"><strong>Collecting</strong>Hourly launch volume appears here.</div>`;
   const I = S.intel; if (!I) return;
   const link = (w) => `<a href="https://solscan.io/account/${w}" target="_blank" rel="noopener" class="mono">${short(w)}</a>`;
@@ -511,7 +517,8 @@ function renderGrads() {
     ['Paper P&L', k ? `<span class="${cls(k.totalPnlSol)}">${sUsdSigned(k.totalPnlSol)}</span>` : '–', k ? `${k.n} closed trades` : ''],
     ['Expectancy', k?.n ? `<span class="${cls(k.expectancyPct)}">${signed(k.expectancyPct, 1, '%')}</span>` : '–', k?.n > 1 ? `95% CI ${signed(k.ciLowPct, 0)} … ${signed(k.ciHighPct, 0)}` : 'per trade, after costs'],
   ];
-  $('#gKpis').innerHTML = kp.map(([l, v, sub]) => `<div class="kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  const gKeys = ['g_watch', 'g_alerts', 'g_labeled', 'g_liq', 'g_paper', 'g_paper'];
+  $('#gKpis').innerHTML = kp.map(([l, v, sub], i) => `<div class="kpi" data-drill="${gKeys[i]}" data-label="${l}" role="button" tabindex="0" aria-label="${l}: open detail"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
   $('#gBoardHint').textContent = `${b.survivors} survivors scored · sorted by score`;
   const thr = st.alertScore;
   $('#gBoard tbody').innerHTML = b.rows.length ? b.rows.slice(0, 40).map((t) => `
@@ -1294,7 +1301,7 @@ function tileKey(label, el) {
 }
 const TAB_NAME = { live: 'Live', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health', edge: 'Edge Lab' };
 function tileFrom(el) {
-  if (el.dataset.drill) return { key: el.dataset.drill, label: el.dataset.label || el.querySelector('h3, .label, td')?.textContent?.trim(), value: el.dataset.value || '', sub: el.dataset.sub || '' };
+  if (el.dataset.drill) return { key: el.dataset.drill, label: el.dataset.label || el.querySelector('h3, .label, td')?.textContent?.trim(), value: el.dataset.value || el.querySelector(':scope > .value')?.textContent?.trim() || '', sub: el.dataset.sub || el.querySelector(':scope > .sub')?.textContent?.trim() || '' };
   if (el.matches('.verdict')) { const q = el.querySelector('.vq')?.textContent || '', Q = q.toLowerCase();
     const bk = /confirm book/.test(Q) ? 'confirm' : /flow book/.test(Q) ? 'flow' : /band (book|better)|65–72 band/.test(Q) ? 'band' : /main book/.test(Q) ? 'main' : null;
     return { key: /random/.test(Q) ? 'b_random' : /market|pause|cold|warm/.test(Q) ? 'rep_gate' : /graduat/.test(Q) ? 'g_paper' : /^are strong|strong signals/.test(Q) ? 'strong' : /ready for real money/.test(Q) ? 'rep_trades' : bk ? `book_${bk}` : 'rep_trades', label: q, value: el.querySelector('.vchip')?.textContent, sub: el.querySelector('.vd')?.textContent }; }
