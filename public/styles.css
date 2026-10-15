@@ -553,7 +553,7 @@ tr[data-drill] { cursor: pointer; } tr[data-drill]:hover td { background: var(--
 
 /* ================= Edge Lab ================= */
 .grid-edge { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); }
-.grid-edge .e-hero, .grid-edge .e-map, .grid-edge .e-board, .grid-edge .e-method { grid-column: 1 / -1; }
+.grid-edge .e-hero, .grid-edge .e-map, .grid-edge .e-board, .grid-edge .e-method, .grid-edge .e-books { grid-column: 1 / -1; }
 .e-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr); gap: var(--space-5); align-items: start;
   background: radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 55%), var(--surface); }
 .e-verdict .eyebrow { font-size: var(--text-xs); letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint); }
@@ -704,3 +704,28 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .rj-more:hover { background: var(--surface-3); }
 .rj-ml { display: none; }
 @media (max-width: 720px) { .rj-dl { display: none; } .rj-ml { display: inline; } }
+
+/* graduate exit books */
+.gbooks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--space-3); margin-bottom: var(--space-3); }
+.gbook { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-3); background: var(--surface-2, rgba(255,255,255,.02)); cursor: pointer; transition: border-color .15s, transform .15s; }
+.gbook:hover, .gbook:focus-visible { border-color: var(--accent); transform: translateY(-1px); outline: none; }
+.gbook-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.gbook-name { font-weight: 600; }
+.gbook-role { color: var(--text-faint); font-size: var(--text-xs); flex: 1; }
+.kill-status.sm { font-size: var(--text-xs); padding: 2px 8px; margin: 0; }
+.gbook-rule { color: var(--text-muted); font-size: var(--text-xs); margin: var(--space-2) 0; line-height: 1.4; }
+.gbook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2) var(--space-3); }
+.gbook-grid .label { font-size: var(--text-xs); color: var(--text-faint); }
+.gbook-grid .value { font-family: var(--font-mono); font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+.gbook-grid .value.sm { font-size: var(--text-sm); }
+.gbook-grid .value .sub { font-size: var(--text-xs); color: var(--text-faint); }
+.gbook-exits { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-muted); }
+.gbook-exits i { font-style: normal; font-family: var(--font-mono); }
+.gbook-pair { border-left: 3px solid var(--accent); padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-3); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--surface-2, rgba(255,255,255,.02)); cursor: pointer; }
+.gbook-pair b { font-family: var(--font-mono); }
+.bookchip { font-family: var(--font-mono); font-size: var(--text-xs); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--text-muted); }
+.bookchip.trail { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 520px) { .gbook-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .gbook-grid .value { font-size: var(--text-base); } }
+.gbook-pair.replay { border-left-color: var(--text-faint); }
+.gbook-pair .eyebrow { display: block; font-size: var(--text-xs); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
+.gbook-pair .gbook-exits { margin-top: var(--space-2); display: flex; }

@@ -50,15 +50,23 @@ export function decodeCreate(buf) {
   const mint = r.pk();
   const bondingCurve = r.pk();
   const user = r.pk();
-  let creator = user, ts = null, vtok = null, vsol = null, rtok = null;
+  let creator = user, ts = null, vtok = null, vsol = null, rtok = null, flags = null, quoteMint = null, quoteIsSol = null, initialVQuote = null;
   try {
     creator = r.pk();
     ts = Number(r.i64());
     vtok = Number(r.u64()) / TOKEN_UNIT;
     vsol = Number(r.u64()) / LAMPORTS;
     rtok = Number(r.u64()) / TOKEN_UNIT;
-  } catch { /* older layout */ }
-  return { kind: 'create', name, symbol, uri, mint, bondingCurve, creator, ts, vsol, vtok, rtok };
+    // Appended by the 2025-26 upgrades: token_total_supply u64, token_program pubkey, two u8 flags, quote_mint pubkey
+    // (Pubkey::default() for every SOL-quoted coin; USDC / custom-pair / pump-coin quotes carry the real mint), then
+    // initial_virtual_quote_reserves u64 (exactly 30 SOL on SOL curves, which is how the offset was verified on live events,
+    // Oct 15 2026). The flag bytes are NOT used as the mayhem flag: the first one is set on ~20% of launches while PumpPortal
+    // reports ~5% in mayhem mode, so it is some other option. Mayhem keeps coming from PumpPortal only.
+    r.u64(); r.pk(); flags = [r.u8(), r.u8()];
+    const q = r.pk(); quoteIsSol = /^1+$/.test(q); quoteMint = quoteIsSol ? null : q;
+    initialVQuote = Number(r.u64());
+  } catch { /* older or shorter layout: quote unknown, decided from the first trade instead */ }
+  return { kind: 'create', name, symbol, uri, mint, bondingCurve, creator, ts, vsol, vtok, rtok, flags, quoteMint, quoteIsSol, initialVQuote };
 }
 
 export function decodeComplete(buf) {

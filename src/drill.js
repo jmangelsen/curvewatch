@@ -160,13 +160,23 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         ] };
     },
     g_paper() {
-      const rows = all(`SELECT * FROM grad_paper WHERE status = 'closed' ORDER BY exit_ts DESC LIMIT 200`);
-      const k = killStatsFrom([...rows].reverse());
-      let eq = 0;
-      return { title: 'Graduates paper book', explain: 'Paper trades on re-ignition alerts, filled at the next poll price plus price impact from pool depth, with fees and extra slippage.',
-        stats: [['Closed', k.n, 'num'], ['Avg / trade', k.expectancyPct, 'spct'], ['Win rate', k.winRatePct, 'pct'], ['Total', k.totalPnlSol, 'susd']],
-        series: { label: 'Cumulative P&L (USD)', kind: 'line', fmt: 'susd', points: [...rows].reverse().map((r) => [r.exit_ts, (eq += r.pnl_sol)]) },
-        tables: [{ title: 'Closed trades', cols: tradeCols.filter((c) => c.k !== 'book'), rows: rows.map(tradeRow) }] };
+      const rows = all(`SELECT * FROM grad_paper WHERE status = 'closed' AND COALESCE(book,'fixed') = 'fixed' ORDER BY exit_ts DESC LIMIT 200`);
+      const trail = all(`SELECT * FROM grad_paper WHERE status = 'closed' AND book = 'trail' ORDER BY exit_ts DESC LIMIT 200`);
+      const k = killStatsFrom([...rows].reverse()), kt = killStatsFrom([...trail].reverse());
+      let eq = 0, eqt = 0;
+      const curve = (rs, acc) => [...rs].reverse().map((r) => [r.exit_ts, (acc.v += r.pnl_sol)]);
+      return { title: 'Graduates paper books', explain: 'Two paper books on the same re-ignition alerts, filled at the same price. The fixed book sells half at the first target and is closed after 6 hours. The trailing book has no partial exit and no clock: a hard stop until it is up 20%, then a trailing stop from the peak. Comparing them shows whether the fixed book\'s clock is what caps the winners.',
+        stats: [['Fixed · closed', k.n, 'num'], ['Fixed · avg / trade', k.expectancyPct, 'spct'], ['Trail · closed', kt.n, 'num'], ['Trail · avg / trade', kt.expectancyPct, 'spct'], ['Fixed total', k.totalPnlSol, 'susd'], ['Trail total', kt.totalPnlSol, 'susd']],
+        series: { label: 'Cumulative P&L, fixed book (USD)', kind: 'line', fmt: 'susd', points: curve(rows, { v: eq }) },
+        tables: [
+          { title: 'Exit reasons · fixed book', cols: [C('Reason', 'exit_reason'), C('Trades', 'n', 'num'), C('Avg P&L', 'avg_pct', 'spct'), C('Avg held', 'held_min', 'min')], rows: all(`SELECT exit_reason, COUNT(*) n, AVG(pnl_pct) avg_pct, AVG((exit_ts-entry_ts)/60000.0) held_min FROM grad_paper WHERE status='closed' AND COALESCE(book,'fixed')='fixed' GROUP BY 1 ORDER BY 2 DESC`) },
+          { title: 'Exit reasons · trailing book', cols: [C('Reason', 'exit_reason'), C('Trades', 'n', 'num'), C('Avg P&L', 'avg_pct', 'spct'), C('Avg held', 'held_min', 'min')], rows: all(`SELECT exit_reason, COUNT(*) n, AVG(pnl_pct) avg_pct, AVG((exit_ts-entry_ts)/60000.0) held_min FROM grad_paper WHERE status='closed' AND book='trail' GROUP BY 1 ORDER BY 2 DESC`) },
+          ...(() => { const R = grads?.replayTrail?.(); return R ? [{ title: `Trailing rule replayed on the fixed book's ${R.n} closed alerts (${R.resolutionMin}-min snapshots · context only)`,
+            cols: [C('Token', 'symbol'), C('Fixed book', 'fixedPct', 'spct'), C('Trailing rule', 'trailPct', 'spct'), C('Difference', 'diff', 'spct'), C('Trail exit', 'reason')],
+            rows: R.rows.map((r) => ({ ...r, diff: r.trailPct - r.fixedPct })).sort((a, b) => b.diff - a.diff) }] : []; })(),
+          { title: 'Closed trades · fixed', cols: tradeCols.filter((c) => c.k !== 'book'), rows: rows.map(tradeRow) },
+          { title: 'Closed trades · trailing', cols: tradeCols.filter((c) => c.k !== 'book'), rows: trail.map(tradeRow) },
+        ] };
     },
     // ---- intel ----
     ds_launches() {
@@ -459,7 +469,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       if (r.exit_ts && !ev.some((e) => e.type === 'exit')) ev.push({ t: r.exit_ts, type: 'exit', reason: r.exit_reason });
       for (const e of ev) { if (!(e.t >= a && e.t < b)) continue;
         const usdM = e.mcap == null ? null : kind === 'grad' ? e.mcap : px ? e.mcap * px : null;
-        events.push({ ts: e.t, event: EV_LABEL[e.type] || e.type, type: e.type, book: kind === 'grad' ? 'graduates' : r.book || 'main', symbol: r.symbol, mint: r.mint, kind, mcapUsd: usdM,
+        events.push({ ts: e.t, event: EV_LABEL[e.type] || e.type, type: e.type, book: kind === 'grad' ? `graduates · ${r.book || 'fixed'}` : r.book || 'main', symbol: r.symbol, mint: r.mint, kind, mcapUsd: usdM,
           pnl_pct: e.type === 'exit' ? r.pnl_pct : null, pnl_sol: e.type === 'exit' ? r.pnl_sol : null, reason: e.reason || (e.type === 'exit' ? r.exit_reason : ''), trade: r.id, status: r.status }); } } };
     // a trade is relevant if it was open at any point in the window
     pull(all('SELECT * FROM paper_trades WHERE entry_ts < ? AND (exit_ts IS NULL OR exit_ts >= ?)', b, a), 'curve');

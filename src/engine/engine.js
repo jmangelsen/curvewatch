@@ -50,6 +50,7 @@ export class Engine extends EventEmitter {
       if (t.createSlot == null && ev.slot != null) t.createSlot = ev.slot;
       if (ev.pool) t.pool = ev.pool;
       if (ev.mayhem) t.mayhem = true;
+      if (ev.quoteIsSol != null && !t.quoteKnown) { t.quoteKnown = true; t.quoteOk = !!ev.quoteIsSol; t.quoteMint = ev.quoteMint || null; }
       if (!t.uri && ev.uri) { t.uri = ev.uri; if (config.scoring.metadataFetch) enqueueMetadata(t); }
       return;
     }

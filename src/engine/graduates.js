@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS grad_paper (
 `);
 
 try { db.exec('ALTER TABLE grad_snapshots ADD COLUMN mbm_6h REAL'); } catch { /* already there */ }
+try { db.exec("ALTER TABLE grad_paper ADD COLUMN book TEXT DEFAULT 'fixed'"); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_watch ADD COLUMN extended INTEGER DEFAULT 0'); } catch { /* already there */ }
 
 const Q = {
   upsertWatch: db.prepare(`INSERT INTO grad_watch (mint,symbol,name,source,added_at,active) VALUES (@mint,@symbol,@name,@source,@addedAt,1)
@@ -66,12 +68,15 @@ const Q = {
   finalizeAlert: db.prepare(`UPDATE grad_alerts SET max_1h=COALESCE(max_1h,@max1), max_6h=@max6, min_before_max_6h=@mbm, price_6h=@p6, finalized=1 WHERE id=@id`),
   openAlerts: db.prepare(`SELECT * FROM grad_alerts WHERE finalized=0`),
   recentAlerts: db.prepare(`SELECT * FROM grad_alerts ORDER BY ts DESC LIMIT ?`),
-  insertPaper: db.prepare(`INSERT INTO grad_paper (alert_id,mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,peak_value,events)
-    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryPrice,@entryMcap,@sizeSol,@units,@units,@sizeSol,@events)`),
+  insertPaper: db.prepare(`INSERT INTO grad_paper (alert_id,mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,peak_value,events,book)
+    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryPrice,@entryMcap,@sizeSol,@units,@units,@sizeSol,@events,@book)`),
+  markExtended: db.prepare(`UPDATE grad_watch SET extended=1 WHERE mint=?`),
   updatePaper: db.prepare(`UPDATE grad_paper SET status=@status, units_left=@unitsLeft, realized_sol=@realized, peak_value=@peak, exit_ts=@exitTs,
     exit_reason=@exitReason, exit_price=@exitPrice, pnl_sol=@pnlSol, pnl_pct=@pnlPct, events=@events WHERE id=@id`),
   openPapers: db.prepare(`SELECT * FROM grad_paper WHERE status='open'`),
-  closedPapersAsc: db.prepare(`SELECT * FROM grad_paper WHERE status='closed' ORDER BY exit_ts ASC`),
+  closedPapersAsc: db.prepare(`SELECT * FROM grad_paper WHERE status='closed' AND COALESCE(book,'fixed')=? ORDER BY exit_ts ASC`),
+  bookCounts: db.prepare(`SELECT COALESCE(book,'fixed') book, COUNT(*) n, SUM(status='open') open, SUM(status='closed') closed, SUM(CASE WHEN status='closed' THEN pnl_sol END) pnl FROM grad_paper GROUP BY book`),
+  exitMix: db.prepare(`SELECT exit_reason reason, COUNT(*) n, AVG(pnl_pct) avg_pct, AVG((exit_ts-entry_ts)/60000.0) held_min FROM grad_paper WHERE status='closed' AND COALESCE(book,'fixed')=? GROUP BY exit_reason ORDER BY n DESC`),
   allPapers: db.prepare(`SELECT * FROM grad_paper ORDER BY id DESC LIMIT ?`),
   calib: db.prepare(`SELECT score, reject, price, max_6h, min_6h, price_6h FROM grad_snapshots WHERE labeled=1 AND max_6h IS NOT NULL AND ts > ?`),
   counts: db.prepare(`SELECT (SELECT COUNT(*) FROM grad_snapshots) snaps, (SELECT COUNT(*) FROM grad_snapshots WHERE labeled=1) labeled,
@@ -95,11 +100,11 @@ export class Graduates extends EventEmitter {
 
   // ---- watchlist ----
   restore() {
-    for (const r of Q.activeWatch.all(Date.now() - G.maxAgeHours * HOUR)) {
-      this.watch.set(r.mint, this.blank(r.mint, { symbol: r.symbol, name: r.name, source: r.source, addedAt: r.added_at, migPrice: r.mig_price, migMcap: r.mig_mcap, peakPrice: r.peak_price, pairCreatedAt: r.pair_created_at }));
+    for (const r of Q.activeWatch.all(Date.now() - G.extMaxAgeHours * HOUR)) {
+      const st = this.blank(r.mint, { symbol: r.symbol, name: r.name, source: r.source, addedAt: r.added_at, migPrice: r.mig_price, migMcap: r.mig_mcap, peakPrice: r.peak_price, pairCreatedAt: r.pair_created_at }); st.extended = !!r.extended; this.watch.set(r.mint, st);
     }
     // Restored paper positions are marked at the next poll (DexScreener prices are stateless, so this is honest).
-    for (const r of Q.openPapers.all()) this.open.set(r.mint, { id: r.id, alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryPrice: r.entry_price, entryMcap: r.entry_mcap, sizeSol: r.size_sol, units: r.units, unitsLeft: r.units_left, realized: r.realized_sol || 0, peak: r.peak_value || r.size_sol, tp1Done: (r.realized_sol || 0) > 0, events: JSON.parse(r.events || '[]') });
+    for (const r of Q.openPapers.all()) this.open.set(`${r.book || 'fixed'}:${r.mint}`, { id: r.id, book: r.book || 'fixed', alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryPrice: r.entry_price, entryMcap: r.entry_mcap, sizeSol: r.size_sol, units: r.units, unitsLeft: r.units_left, realized: r.realized_sol || 0, peak: r.peak_value || r.size_sol, tp1Done: r.units_left < r.units - 1e-12, events: JSON.parse(r.events || '[]') });
     log.info(`restored ${this.watch.size} watched graduates, ${this.open.size} open paper positions`);
   }
   blank(mint, o = {}) {
@@ -212,7 +217,13 @@ export class Graduates extends EventEmitter {
     if (st.series.length === 1 || st.series.length % 10 === 0) Q.updateWatch.run({ mint: st.mint, symbol: st.symbol, name: st.name, pair: st.pair, dex: st.dex, pairCreatedAt: st.pairCreatedAt, migPrice: st.migPrice, migMcap: st.migMcap, peakPrice: st.peakPrice });
 
     const ageMin = st.pairCreatedAt ? (now - st.pairCreatedAt) / MIN : (now - st.addedAt) / MIN;
-    if (ageMin > G.maxAgeHours * 60) return this.drop(st.mint, 'aged out');
+    if (ageMin > G.maxAgeHours * 60) {
+      // Past the base window a graduate is kept only while it is alive: holding its migration price, with a real pool and
+      // real volume, or carrying an open paper position. Everything else ages out as before; a hard ceiling bounds the list.
+      if (ageMin > G.extMaxAgeHours * 60) return this.drop(st.mint, `aged out (${G.extMaxAgeHours / 24}-day ceiling)`);
+      if (!this.alive(st, pt)) return this.drop(st.mint, st.extended ? 'aged out (no longer alive)' : 'aged out');
+      if (!st.extended) { st.extended = true; Q.markExtended.run(st.mint); log.info(`GRAD KEEP ${st.symbol}: alive past ${G.maxAgeHours} h, watching on`); }
+    }
     if (pt.liq < G.deadLiqUsd) { if (++st.deadPolls >= 3) return this.drop(st.mint, `liquidity under $${G.deadLiqUsd}`); } else st.deadPolls = 0;
 
     this.score(st, ageMin);
@@ -221,6 +232,14 @@ export class Graduates extends EventEmitter {
       Q.insertSnap.run({ mint: st.mint, ts: now, price, mcap: pt.mcap, liq: pt.liq, score: st.score, reject: st.reject, features: JSON.stringify(st.features) });
     }
     this.maybeAlert(st, now);
+  }
+
+  /** Alive past the base window: open paper position, or price holding vs migration (or half its peak), with liquidity and volume. */
+  alive(st, pt) {
+    if (this.hasOpen(st.mint)) return true;
+    if (!(pt.liq >= G.minLiqUsd) || !(pt.v24 >= G.aliveVol24Usd)) return false;
+    if (st.migPrice) return pt.price >= st.migPrice * G.aliveVsMig;
+    return st.peakPrice ? pt.price >= st.peakPrice * 0.5 : false;
   }
 
   // ---- features + score ----
@@ -324,7 +343,7 @@ export class Graduates extends EventEmitter {
       `<a href="https://dexscreener.com/solana/${st.mint}">DexScreener</a> · <code>${st.mint}</code>`,
       'Discovery only. Base rate after migration is poor; size accordingly.',
     ].filter(Boolean).join('\n'), 'alert');
-    if (GP.enabled && !this.open.has(st.mint)) this.pending.push({ mint: st.mint, alertId: id, at: now + 1 }); // enter at the NEXT poll's price
+    if (GP.enabled && !this.hasOpen(st.mint)) this.pending.push({ mint: st.mint, alertId: id, at: now + 1 }); // enter at the NEXT poll's price
   }
 
   // ---- paper trading (price from the next poll after the alert; AMM impact from pool depth) ----
@@ -340,6 +359,8 @@ export class Graduates extends EventEmitter {
     const net = gross * (1 - impact) * (1 - GP.feePct / 100) * (1 - GP.extraSlippagePct / 100);
     return net / (this.solUsd || 150);
   }
+  books() { return GP.trailEnabled ? ['fixed', 'trail'] : ['fixed']; }
+  hasOpen(mint) { for (const k of this.open.keys()) if (k.endsWith(':' + mint)) return true; return false; }
   paperTick() {
     const now = Date.now();
     for (let i = this.pending.length - 1; i >= 0; i--) {
@@ -349,29 +370,49 @@ export class Graduates extends EventEmitter {
       if (st.reject || isGradRejected(e.mint)) { countBlocked('grad'); log.info(`GRAD SKIP ${st.symbol}: rejected before entry (${st.reject || 'rejects bucket'})`); continue; }
       const fill = st.last.price * (1 + this.impactPct(st.last.liq) / 100) * (1 + GP.extraSlippagePct / 100) / (1 - GP.feePct / 100);
       const units = (GP.sizeSol * (this.solUsd || 150)) / fill;
-      const pos = { alertId: e.alertId, mint: e.mint, symbol: st.symbol, entryTs: now, entryPrice: fill, entryMcap: st.last.mcap, sizeSol: GP.sizeSol, units, unitsLeft: units, realized: 0, peak: GP.sizeSol, tp1Done: false,
-        events: [{ t: now, type: 'entry', price: fill, mcap: round(st.last.mcap, 0) }] };
-      pos.id = Number(Q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events) }).lastInsertRowid);
-      this.open.set(e.mint, pos); this.paperEvents.push({ type: 'entry', id: pos.id });
-      log.info(`GRAD ENTRY ${pos.symbol} @ $${round(pos.entryMcap / 1000, 1)}k mcap`);
+      // Same fill, same size, one position per book. The books differ only in how they exit, so a comparison between them is clean.
+      for (const book of this.books()) {
+        if (this.open.has(`${book}:${e.mint}`)) continue;
+        const pos = { book, alertId: e.alertId, mint: e.mint, symbol: st.symbol, entryTs: now, entryPrice: fill, entryMcap: st.last.mcap, sizeSol: GP.sizeSol, units, unitsLeft: units, realized: 0, peak: GP.sizeSol, tp1Done: false,
+          events: [{ t: now, type: 'entry', price: fill, mcap: round(st.last.mcap, 0) }] };
+        pos.id = Number(Q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events), book }).lastInsertRowid);
+        this.open.set(`${book}:${e.mint}`, pos); this.paperEvents.push({ type: 'entry', id: pos.id, book });
+      }
+      log.info(`GRAD ENTRY ${st.symbol} @ $${round(st.last.mcap / 1000, 1)}k mcap (${this.books().join(' + ')})`);
     }
-    for (const [mint, pos] of this.open) {
-      const st = this.watch.get(mint);
+    for (const [, pos] of this.open) {
+      const st = this.watch.get(pos.mint);
       if (!st) { this.close(pos, null, 'token dropped from watchlist (liquidity gone)', 0); continue; }
       if (!st.last || st.last.t <= pos.entryTs) continue;
       const value = this.valueSol(pos, st);
       const total = pos.realized + value; if (total > pos.peak) pos.peak = total;
       const mult = total / pos.sizeSol, heldMin = (now - pos.entryTs) / MIN;
-      if (!pos.tp1Done && mult >= GP.tp1Multiple) {
+      const r = this.exitRule(pos, mult, total, heldMin);
+      if (r === 'tp1') {
         const u = pos.unitsLeft * GP.tp1Fraction; const got = this.valueSol(pos, st, u);
         pos.unitsLeft -= u; pos.realized += got; pos.tp1Done = true;
         pos.events.push({ t: now, type: 'tp1', sol: round(got, 4), mcap: round(st.last.mcap, 0) });
         this.persist(pos); continue;
       }
-      if (mult <= 1 - GP.stopPct / 100) { this.close(pos, st, `stop -${GP.stopPct}%`); continue; }
-      if (pos.tp1Done && total <= pos.peak * (1 - GP.trailPct / 100)) { this.close(pos, st, `trailing stop ${GP.trailPct}%`); continue; }
-      if (heldMin >= GP.maxHoldMin) { this.close(pos, st, 'max hold'); continue; }
+      if (r) this.close(pos, st, r);
     }
+  }
+  /** Exit decision for one position. Returns 'tp1', a close reason, or null. Pure, so the tests can drive it directly. */
+  exitRule(pos, mult, total, heldMin) {
+    if (pos.book === 'trail') {
+      // Trailing book: hard stop until the position is up trailArmMultiple, then a trailing stop from the running peak. No clock
+      // besides a long ceiling. The question it answers: do the fixed book's 6 h hold and partial take-profit cut the winners short?
+      const armed = pos.peak >= pos.sizeSol * GP.trailArmMultiple;
+      if (!armed && mult <= 1 - GP.stopPct / 100) return `stop -${GP.stopPct}%`;
+      if (armed && total <= pos.peak * (1 - GP.trailBookPct / 100)) return `trailing stop ${GP.trailBookPct}% (from ${round(pos.peak / pos.sizeSol, 2)}×)`;
+      if (heldMin >= GP.trailMaxHoldMin) return `max hold ${GP.trailMaxHoldMin / 60} h`;
+      return null;
+    }
+    if (!pos.tp1Done && mult >= GP.tp1Multiple) return 'tp1';
+    if (mult <= 1 - GP.stopPct / 100) return `stop -${GP.stopPct}%`;
+    if (pos.tp1Done && total <= pos.peak * (1 - GP.trailPct / 100)) return `trailing stop ${GP.trailPct}%`;
+    if (heldMin >= GP.maxHoldMin) return 'max hold';
+    return null;
   }
   persist(pos, x = {}) {
     Q.updatePaper.run({ id: pos.id, status: x.status || 'open', unitsLeft: pos.unitsLeft, realized: pos.realized, peak: pos.peak, exitTs: x.exitTs ?? null,
@@ -384,10 +425,65 @@ export class Graduates extends EventEmitter {
     const pnl = pos.realized - pos.sizeSol;
     pos.events.push({ t: now, type: 'exit', reason, sol: round(got, 4), mcap: st?.last ? round(st.last.mcap, 0) : null });
     this.persist(pos, { status: 'closed', exitTs: now, exitReason: reason, exitPrice: st?.last?.price ?? null, pnlSol: pnl, pnlPct: (pnl / pos.sizeSol) * 100 });
-    this.open.delete(pos.mint); this.paperEvents.push({ type: 'exit', id: pos.id });
-    log.info(`GRAD EXIT ${pos.symbol} ${reason} pnl ${round((pnl / pos.sizeSol) * 100, 1)}%`);
+    this.open.delete(`${pos.book || 'fixed'}:${pos.mint}`); this.paperEvents.push({ type: 'exit', id: pos.id, book: pos.book });
+    log.info(`GRAD EXIT [${pos.book || 'fixed'}] ${pos.symbol} ${reason} pnl ${round((pnl / pos.sizeSol) * 100, 1)}%`);
   }
-  kill() { return killStatsFrom(Q.closedPapersAsc.all()); }
+  kill(book = 'fixed') { return killStatsFrom(Q.closedPapersAsc.all(book)); }
+  /** Both exit books side by side: the fixed book is the reference, the trailing book is the challenger. */
+  bookView() {
+    const counts = Object.fromEntries(Q.bookCounts.all().map((r) => [r.book, r]));
+    const rules = {
+      fixed: `sell ${GP.tp1Fraction * 100}% at ${GP.tp1Multiple}×, then ${GP.trailPct}% trailing stop · hard stop −${GP.stopPct}% · ${GP.maxHoldMin / 60} h max hold`,
+      trail: `no partial exit · hard stop −${GP.stopPct}% until +${Math.round((GP.trailArmMultiple - 1) * 100)}%, then ${GP.trailBookPct}% trailing stop from the peak · ${GP.trailMaxHoldMin / 60} h ceiling`,
+    };
+    const out = {};
+    for (const b of this.books()) {
+      const k = this.kill(b), c = counts[b] || { n: 0, open: 0, closed: 0, pnl: 0 };
+      out[b] = { book: b, rule: rules[b], kill: k, n: c.n, open: c.open, closed: c.closed, pnlSol: c.pnl || 0, exits: Q.exitMix.all(b) };
+    }
+    // paired comparison on alerts both books have closed
+    let paired = null;
+    if (out.trail) {
+      const rows = db.prepare(`SELECT f.alert_id, f.pnl_pct f_pct, t.pnl_pct t_pct FROM grad_paper f JOIN grad_paper t ON t.alert_id = f.alert_id AND t.book = 'trail' AND t.status = 'closed'
+        WHERE COALESCE(f.book,'fixed') = 'fixed' AND f.status = 'closed'`).all();
+      if (rows.length) {
+        const d = rows.map((r) => r.t_pct - r.f_pct), m = d.reduce((a, b) => a + b, 0) / d.length;
+        const sd = d.length > 1 ? Math.sqrt(d.reduce((a, x) => a + (x - m) ** 2, 0) / (d.length - 1)) : 0, se = d.length > 1 ? sd / Math.sqrt(d.length) : 0;
+        paired = { n: d.length, meanDiffPct: m, loPct: m - 1.96 * se, hiPct: m + 1.96 * se, trailWins: d.filter((x) => x > 0).length, ties: d.filter((x) => Math.abs(x) < 1e-9).length };
+      }
+    }
+    return { books: out, paired, armMultiple: GP.trailArmMultiple, replay: this.replayTrail() };
+  }
+  /**
+   * Replay of the trailing rule over every closed fixed-book trade, using the stored 10-minute snapshots. Same entry fill,
+   * exit fee and slippage applied, price impact ignored. Coarser than the live 60 s polls, so stops and trails fire a little
+   * late; the direction of the comparison is what it is for. Not counted toward any pass: it is context while the live book fills.
+   */
+  replayTrail() {
+    const trades = db.prepare(`SELECT mint, symbol, entry_ts, entry_price, pnl_pct FROM grad_paper WHERE status='closed' AND COALESCE(book,'fixed')='fixed' ORDER BY entry_ts`).all();
+    if (!trades.length) return null;
+    const snaps = db.prepare('SELECT ts, price FROM grad_snapshots WHERE mint=? AND ts>=? ORDER BY ts'), watch = db.prepare('SELECT active, dropped_reason FROM grad_watch WHERE mint=?');
+    const cost = (1 - GP.feePct / 100) * (1 - GP.extraSlippagePct / 100), arm = GP.trailArmMultiple, trail = 1 - GP.trailBookPct / 100, stop = 1 - GP.stopPct / 100;
+    const rows = [], mix = {};
+    for (const t of trades) {
+      const S = snaps.all(t.mint, t.entry_ts); if (S.length < 2) continue;
+      let peak = 1, reason = null, mult = null;
+      for (const sn of S) { const m = (sn.price / t.entry_price) * cost; if (m > peak) peak = m;
+        if (peak < arm && m <= stop) { reason = 'stop'; mult = m; break; }
+        if (peak >= arm && m <= peak * trail) { reason = 'trail'; mult = peak * trail; break; }
+        if ((sn.ts - t.entry_ts) / MIN >= GP.trailMaxHoldMin) { reason = 'ceiling'; mult = m; break; } }
+      if (!reason) { const w = watch.get(t.mint); if (w && !w.active && /liquidity|evicted/.test(w.dropped_reason || '')) { reason = 'liquidity gone'; mult = 0; } else { reason = 'open at end of data'; mult = (S[S.length - 1].price / t.entry_price) * cost; } }
+      const pct = (mult - 1) * 100; rows.push({ symbol: t.symbol, fixedPct: t.pnl_pct, trailPct: pct, reason });
+      (mix[reason] ||= { reason, n: 0, sum: 0 }); mix[reason].n++; mix[reason].sum += pct;
+    }
+    if (!rows.length) return null;
+    const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const d = rows.map((r) => r.trailPct - r.fixedPct), m = avg(d);
+    const sd = d.length > 1 ? Math.sqrt(d.reduce((a, x) => a + (x - m) ** 2, 0) / (d.length - 1)) : 0, se = d.length > 1 ? sd / Math.sqrt(d.length) : 0;
+    return { n: rows.length, fixedAvgPct: avg(rows.map((r) => r.fixedPct)), trailAvgPct: avg(rows.map((r) => r.trailPct)), meanDiffPct: m, loPct: m - 1.96 * se, hiPct: m + 1.96 * se,
+      trailWins: d.filter((x) => x > 0).length, winRatePct: (rows.filter((r) => r.trailPct > 0).length / rows.length) * 100, rows,
+      mix: Object.values(mix).map((x) => ({ reason: x.reason, n: x.n, avgPct: x.sum / x.n })).sort((a, b) => b.n - a.n), resolutionMin: G.snapshotEveryMin };
+  }
 
   // ---- outcome labeling (1h and 6h after each snapshot / alert) ----
   // Labels use our own poll series, so they only exist for tokens still watched; dropped tokens are labeled
@@ -420,7 +516,7 @@ export class Graduates extends EventEmitter {
     const spark = st.series.filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 48)) === 0 || i === a.length - 1).map((p) => round(p.price, 12));
     return { mint: st.mint, symbol: st.symbol, name: st.name, source: st.source, dex: st.dex, quote: st.quote, ageMin: f.ageMin, mcapUsd: f.mcapUsd, liqUsd: f.liqUsd,
       vsMig: f.vsMig, migEstimated: f.migEstimated, volAccel: f.volAccel, buyRatio5: f.buyRatio5, tx5: f.tx5, c5: f.c5, c1h: f.c1h, c24: f.c24,
-      higherLow: f.higherLow, breakout: f.breakout, score: st.score, reject: st.reject, reasons: st.reasons, flags: st.flags, spark, open: this.open.has(st.mint) };
+      higherLow: f.higherLow, breakout: f.breakout, score: st.score, reject: st.reject, reasons: st.reasons, flags: st.flags, spark, open: this.hasOpen(st.mint) };
   }
   board(limit = 80) {
     const all = [...this.watch.values()].filter((s) => s.last);
@@ -444,8 +540,8 @@ export class Graduates extends EventEmitter {
     });
   }
   paper() {
-    const open = [...this.open.values()].map((p) => { const st = this.watch.get(p.mint); const v = p.realized + this.valueSol(p, st); return { id: p.id, mint: p.mint, symbol: p.symbol, entryTs: p.entryTs, entryMcap: p.entryMcap, markPct: (v / p.sizeSol - 1) * 100, mcap: st?.last?.mcap ?? null, tp1Done: p.tp1Done }; });
-    return { open, recent: Q.allPapers.all(80).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: this.kill(), config: GP };
+    const open = [...this.open.values()].map((p) => { const st = this.watch.get(p.mint); const v = p.realized + this.valueSol(p, st); return { id: p.id, book: p.book || 'fixed', mint: p.mint, symbol: p.symbol, entryTs: p.entryTs, entryMcap: p.entryMcap, markPct: (v / p.sizeSol - 1) * 100, mcap: st?.last?.mcap ?? null, tp1Done: p.tp1Done }; });
+    return { open, recent: Q.allPapers.all(120).map((r) => ({ ...r, book: r.book || 'fixed', events: JSON.parse(r.events || '[]') })), kill: this.kill('fixed'), books: this.bookView(), config: GP };
   }
   calibration() {
     const rows = Q.calib.all(Date.now() - 30 * 86400000);

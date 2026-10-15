@@ -18,9 +18,13 @@ export class Token {
     this.mayhem = !!c.mayhem;
     this.vsol = c.vsol || CURVE.INITIAL_VSOL;
     this.vtok = c.vtok || CURVE.INITIAL_VTOKENS;
-    // SOL-quoted curves satisfy vsol * vtok = 30 * 1.073e9 (constant product). USDC-paired launches (since
-    // May 2026) use a different reserve scale and fail this invariant; they are tracked but never scored.
-    this.quoteOk = this.invariantOk(this.vsol, this.vtok);
+    // Quote asset. The create event names the quote mint (zero key = SOL). Pump.fun now also runs SOL curves with
+    // non-standard virtual reserves (launch-speed variants), so the old constant-product test vsol * vtok = 30 * 1.073e9
+    // misclassified about a third of real SOL launches as "non-SOL quote". When the create event was not seen, the first
+    // trade decides: non-SOL curves report zero in the SOL fields of their trade events.
+    this.quoteMint = c.quoteMint || null;
+    this.quoteKnown = c.quoteIsSol != null;
+    this.quoteOk = this.quoteKnown ? !!c.quoteIsSol : true;
     this.social = { twitter: false, telegram: false, website: false, fetched: false };
     this.trades = [];
     this.sigs = new Set();
@@ -60,7 +64,8 @@ export class Token {
     if (this.sigs.has(key)) return false;
     this.sigs.add(key);
     const at = t.recvAt || Date.now();
-    if (t.vsol > 0 && t.vtok > 0) { this.vsol = t.vsol; this.vtok = t.vtok; if (this.trades.length < 3) this.quoteOk = this.invariantOk(t.vsol, t.vtok); }
+    if (t.vsol > 0 && t.vtok > 0) { this.vsol = t.vsol; this.vtok = t.vtok; if (!this.quoteKnown) { this.quoteOk = true; this.quoteKnown = true; } }
+    else if (!this.quoteKnown && t.vtok > 0 && !(t.vsol > 0) && !(t.sol > 0)) { this.quoteOk = false; this.quoteKnown = true; } // quote amounts live elsewhere: not a SOL curve
     const m = this.mcap;
     this.lastTradeAt = at;
     if (m > this.peakMcap) { this.peakMcap = m; this.peakAt = at; }
@@ -182,7 +187,7 @@ export class Token {
       creatorGraduations: creatorRep ? creatorRep.graduations : 0,
       creatorRugs: creatorRep ? creatorRep.rugs : 0,
       mayhem: this.mayhem,
-      quoteOk: this.quoteOk,
+      quoteOk: this.quoteOk, quoteMint: this.quoteMint,
     };
   }
 

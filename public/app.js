@@ -348,6 +348,35 @@ function renderMarket() {
       ? 'Enforcing: while COLD, new paper entries are tagged paused and left out of the kill rule, and Telegram strong signals are held back.'
       : 'Shadow mode: every entry is tagged with the market state, nothing is blocked. In the replay of 60 alerts, a pause would have skipped trades that did better (45% win) than the ones kept (35%). Switch to enforce (MARKET_GATE_MODE=enforce) only if COLD entries here keep doing clearly worse than WARM ones.'}</p>`;
 }
+/** Two graduate exit books side by side. `where` is the drill key for the tiles. */
+function booksHtml(BV, { compact = false } = {}) {
+  if (!BV?.books) return '';
+  const B = BV.books, order = ['fixed', 'trail'].filter((b) => B[b]);
+  const name = { fixed: 'Fixed book', trail: 'Trailing book' }, role = { fixed: 'reference · current rules', trail: 'challenger · lets winners run' };
+  const col = (b) => `
+    <div class="gbook" data-drill="g_paper" data-label="${esc(name[b])}" role="button" tabindex="0">
+      <div class="gbook-head"><span class="gbook-name">${esc(name[b])}</span><span class="gbook-role">${esc(role[b])}</span><span class="kill-status sm ${{ PASS: 'up', FAIL: 'down' }[B[b].kill.status] || 'acc'}">${B[b].kill.status}</span></div>
+      <div class="gbook-rule">${esc(B[b].rule)}</div>
+      <div class="gbook-grid">
+        <div><div class="label">Closed</div><div class="value">${B[b].closed}<span class="sub"> / ${B[b].kill.needed}</span></div></div>
+        <div><div class="label">Avg / trade</div><div class="value ${cls(B[b].kill.expectancyPct)}">${B[b].closed ? signed(B[b].kill.expectancyPct, 1, '%') : '–'}</div></div>
+        <div><div class="label">Win rate</div><div class="value">${B[b].closed ? pct(B[b].kill.winRatePct, 0) : '–'}</div></div>
+        <div><div class="label">Total P&amp;L</div><div class="value ${cls(B[b].pnlSol)}">${B[b].closed ? sUsd(B[b].pnlSol, { sign: true }) : '–'}</div></div>
+        <div><div class="label">Open</div><div class="value">${B[b].open}</div></div>
+        <div><div class="label">95% CI</div><div class="value sm">${B[b].closed > 1 ? `${signed(B[b].kill.ciLowPct, 0, '%')} … ${signed(B[b].kill.ciHighPct, 0, '%')}` : '–'}</div></div>
+      </div>
+      ${!compact && B[b].exits?.length ? `<div class="gbook-exits">${B[b].exits.slice(0, 4).map((x) => `<span><b>${x.n}</b> ${esc((x.reason || '').replace(/ \(from.*\)$/, ''))} <i class="${cls(x.avg_pct)}">${signed(x.avg_pct, 0, '%')}</i></span>`).join('')}</div>` : ''}
+    </div>`;
+  const P = BV.paired;
+  const pairTxt = !P ? `No alert has closed in both books yet. The comparison appears once the same alerts have exited in both.` :
+    `On ${P.n} alert${P.n === 1 ? '' : 's'} closed in both books, the trailing book did <b class="${cls(P.meanDiffPct)}">${signed(P.meanDiffPct, 1, ' pts')}</b> per trade versus the fixed book (95% CI ${signed(P.loPct, 1)} … ${signed(P.hiPct, 1)}) and won ${P.trailWins} of ${P.n}. ${P.loPct > 0 ? 'The clock is costing money.' : P.hiPct < 0 ? 'Letting winners run is losing money here.' : 'Not separable yet.'}`;
+  const R = BV.replay;
+  const replayTxt = !R ? '' : `<div class="gbook-pair replay" data-drill="g_paper" data-label="Trailing rule replay" role="button" tabindex="0"><span class="eyebrow">Replay on past alerts · context, not counted</span>
+    Run over the ${R.n} alerts the fixed book has already closed, using the stored ${R.resolutionMin}-minute snapshots, the trailing rule would have averaged <b class="${cls(R.trailAvgPct)}">${signed(R.trailAvgPct, 1, '%')}</b> per trade against the fixed book's <b class="${cls(R.fixedAvgPct)}">${signed(R.fixedAvgPct, 1, '%')}</b>: a paired difference of <b class="${cls(R.meanDiffPct)}">${signed(R.meanDiffPct, 1, ' pts')}</b> (95% CI ${signed(R.loPct, 1)} … ${signed(R.hiPct, 1)}), better on ${R.trailWins} of ${R.n}.
+    ${R.hiPct < 0 ? 'On this history, letting winners run loses more than it gains: the clock was not what capped the book.' : R.loPct > 0 ? 'On this history the clock was costing money.' : 'Not separable on this history.'}
+    <span class="gbook-exits">${R.mix.map((x) => `<span><b>${x.n}</b> ${esc(x.reason)} <i class="${cls(x.avgPct)}">${signed(x.avgPct, 0, '%')}</i></span>`).join('')}</span></div>`;
+  return `<div class="gbooks">${order.map(col).join('')}</div><div class="gbook-pair" data-drill="g_paper" data-label="Book comparison" role="button" tabindex="0">${pairTxt}</div>${replayTxt}`;
+}
 function killHtml(k, model) {
   const color = { PASS: 'up', FAIL: 'down', MARGINAL: 'acc', COLLECTING: 'acc' }[k.status];
   const verdict = {
@@ -552,15 +581,15 @@ function renderGrads() {
   const P = S.gPaper;
   if (P) {
     const c = P.config;
-    $('#gKill').innerHTML = killHtml(P.kill, `Model: ${sUsd(c.sizeSol)} (${c.sizeSol} SOL) per alert, filled at the next poll's price plus constant-product price impact from pool depth, ${c.feePct}% fee each side, +${c.extraSlippagePct}% slippage; sell ${c.tp1Fraction * 100}% at ${c.tp1Multiple}×, ${c.trailPct}% trailing stop, −${c.stopPct}% hard stop, ${c.maxHoldMin / 60}h max hold.`);
+    $('#gKill').innerHTML = booksHtml(P.books) + killHtml(P.kill, `Model: ${sUsd(c.sizeSol)} (${c.sizeSol} SOL) per alert, filled at the next poll's price plus constant-product price impact from pool depth, ${c.feePct}% fee each side, +${c.extraSlippagePct}% slippage; sell ${c.tp1Fraction * 100}% at ${c.tp1Multiple}×, ${c.trailPct}% trailing stop, −${c.stopPct}% hard stop, ${c.maxHoldMin / 60}h max hold.`);
     const all = [...P.open.map((p) => ({ ...p, status: 'open' })), ...P.recent.filter((r) => r.status !== 'open')];
     $('#gPosHint').textContent = `${P.open.length} open`;
     $('#gPositions tbody').innerHTML = all.length ? all.slice(0, 50).map((p) => {
       const pnl = p.status === 'open' ? p.markPct : p.pnl_pct;
-      return `<tr data-gmint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : 'closed'}</td>
+      return `<tr data-gmint="${p.mint}"><td class="c-tok"><span class="sym">${esc(p.symbol)}</span></td><td data-label="Book"><span class="bookchip ${p.book === 'trail' ? 'trail' : 'fixed'}">${p.book === 'trail' ? 'trail' : 'fixed'}</span></td><td data-label="Status">${p.status === 'open' ? '<span class="acc">open</span>' : 'closed'}</td>
         <td class="num" data-label="Entry mcap">${usd(p.entryMcap ?? p.entry_mcap)}</td><td class="num" data-label="Mark / exit">${usd(p.status === 'open' ? p.mcap : (p.events || []).slice(-1)[0]?.mcap)}</td>
         <td class="num ${cls(pnl)}" data-label="P&amp;L">${signed(pnl, 1, '%')}</td><td class="faint" data-label="Exit">${esc(p.exit_reason || (p.tp1Done ? 'TP1 taken' : '–'))}</td><td class="num faint" data-label="Opened">${ago(p.entryTs ?? p.entry_ts)} ago</td></tr>`;
-    }).join('') : `<tr><td colspan="8"><div class="empty"><strong>No paper trades yet</strong>Each re-ignition alert opens a simulated ${sUsd(c.sizeSol)} position at the next price reading.</div></td></tr>`;
+    }).join('') : `<tr><td colspan="8"><div class="empty"><strong>No paper trades yet</strong>Each re-ignition alert opens a simulated ${sUsd(c.sizeSol)} position in each book at the next price reading.</div></td></tr>`;
   }
 
   const C = S.gCal;
@@ -1398,6 +1427,7 @@ function dfx(v, f, row) {
     case 'susd': return px ? usd(v * px, { sign: true }) : `${signed(v, 3)} SOL`;
     case 'mcap': return px ? usd(v * px) : `${n(v, 1)} SOL`;
     case 'age': return age(v);
+    case 'min': return v >= 90 ? `${n(v / 60, 1)} h` : `${n(v, 0)} min`;
     case 'yes': return v ? 'yes' : '–';
     case 'book': return `<span class="dotc" style="background:${BOOK_COL(v)}"></span>${esc(BOOK_LABEL(v))}`;
     case 'short': return `<span title="${esc(v)}">${shortM(v)}</span>`;
@@ -1405,7 +1435,7 @@ function dfx(v, f, row) {
     default: return esc(v);
   }
 }
-const NUMF = new Set(['num', 'num0', 'num1', 'num2', 'pct', 'pct2', 'spct', 'mult', 'usd', 'usd2', 'solusd', 'susd', 'mcap', 'age']);
+const NUMF = new Set(['num', 'num0', 'num1', 'num2', 'pct', 'pct2', 'spct', 'mult', 'usd', 'usd2', 'solusd', 'susd', 'mcap', 'age', 'min']);
 const colorOf = (v, f) => (f === 'spct' || f === 'susd' ? cls(v) : '');
 function drillChart(sr) {
   if (!sr || !sr.points?.length) return '';
@@ -1470,7 +1500,7 @@ const etaTxt = (e) => { const d = e?.daysLeft; if (d == null) return 'no tokens 
   const why = e.spanLeft >= (e.tokenDays ?? 0) ? 'for the 3-day span' : 'at the current rate'; return d < 1 / 24 ? `under an hour ${why}` : d < 1 ? `about ${Math.ceil(d * 24)} h ${why}` : `about ${n(d, 1)} days ${why}`; };
 const sp = (v, d = 1) => (v == null || !Number.isFinite(v) ? '–' : signed(v, d, '%'));
 async function loadEdge() {
-  try { EX.data = await get('/api/edge'); renderEdge(); } catch (e) { $('#eHero').innerHTML = `<div class="empty"><strong>Edge Lab unavailable</strong>${esc(e.message)}</div>`; }
+  try { const [d, gp] = await Promise.all([get('/api/edge'), get('/api/grads/paper').catch(() => null)]); EX.data = d; EX.books = gp?.books || null; renderEdge(); } catch (e) { $('#eHero').innerHTML = `<div class="empty"><strong>Edge Lab unavailable</strong>${esc(e.message)}</div>`; }
 }
 const eRow = (t) => (EX.scope === 'counted' ? t : { ...t, ...t.context, halves: null, robustMeanPct: null, vsUniverse: null, checks: {} });
 function renderEdge() {
@@ -1512,7 +1542,14 @@ function renderEdge() {
   const fams = ['All', ...new Set(v.hypotheses.map((h) => h.family).filter((f) => f !== 'Reference')), 'Reference'];
   $('#eFam').innerHTML = fams.map((f) => `<button data-f="${esc(f)}" aria-selected="${EX.fam === f}">${esc(f)}</button>`).join('');
   $('#eWin').innerHTML = ['All', ...v.horizons.map((h) => h.id)].map((w) => `<button data-w="${w}" aria-selected="${EX.win === w}">${w === 'All' ? 'All windows' : w.replace('-', '→') + 's'}</button>`).join('');
-  renderEdgeMap(); renderEdgeBoard(); renderEdgeSide();
+  renderEdgeMap(); renderEdgeBoard(); renderEdgeSide(); renderEdgeBooks();
+}
+function renderEdgeBooks() {
+  const el = $('#eBooks'); if (!el) return;
+  const BV = EX.books;
+  el.innerHTML = `<div class="card-head"><h2>Graduate exit books</h2><span class="hint">same alerts, same fills · only the exit differs</span></div>
+    <p class="explain">The fixed book is the graduates book you already had. The trailing book takes every alert too, but never sells half early and has no 6 hour clock. It is the test of the DOPE lesson: did the clock close winners that kept running? Both books face the kill rule; the paired comparison below is the decisive number.</p>
+    ${BV ? booksHtml(BV) : '<div class="empty">Graduates paper data unavailable.</div>'}`;
 }
 function edgeRows() {
   const v = EX.data; const hy = Object.fromEntries(v.hypotheses.map((h) => [h.id, h]));

@@ -157,7 +157,10 @@ export const config = {
     pollSec: num('GRAD_POLL_SEC', 60), // one batched DexScreener pass over the watchlist
     maxWatch: num('GRAD_MAX_WATCH', 900), // 30 tokens per request -> 30 requests per pass
     minAgeMin: num('GRAD_MIN_AGE_MIN', 20), // skip the BOOST buyback window and the migration dump
-    maxAgeHours: num('GRAD_MAX_AGE_H', 72),
+    maxAgeHours: num('GRAD_MAX_AGE_H', 72), // base window; past it a graduate stays watched only while it is "alive" (below)
+    extMaxAgeHours: num('GRAD_EXT_MAX_AGE_H', 336), // hard ceiling for alive graduates (14 days) so the watchlist stays bounded
+    aliveVsMig: num('GRAD_ALIVE_VS_MIG', 1.0), // alive = price >= this multiple of the migration price (or >= 50% of its peak when the migration price is unknown)
+    aliveVol24Usd: num('GRAD_ALIVE_VOL24_USD', 25000), // ... and 24 h volume at least this, and liquidity above the minimum
     minLiqUsd: num('GRAD_MIN_LIQ_USD', 12000),
     deadLiqUsd: num('GRAD_DEAD_LIQ_USD', 4000), // dropped from the watchlist below this
     collapsedFrac: num('GRAD_COLLAPSED_FRAC', 0.2), // rejected at <= 20% of the migration price
@@ -176,6 +179,12 @@ export const config = {
     trailPct: num('GRAD_PAPER_TRAIL_PCT', 25),
     stopPct: num('GRAD_PAPER_STOP_PCT', 38.5),
     maxHoldMin: num('GRAD_PAPER_MAX_HOLD_MIN', 360),
+    // Second, separate book on the same alerts: no partial take-profit and no 6 h clock. Hard stop until the position is up
+    // trailArmMultiple, then a trailing stop from the peak. Exists to test whether the fixed book's max hold is what caps the winners.
+    trailEnabled: bool('GRAD_TRAIL_ENABLED', true),
+    trailBookPct: num('GRAD_TRAIL_BOOK_PCT', 30),
+    trailArmMultiple: num('GRAD_TRAIL_ARM_MULT', 1.2),
+    trailMaxHoldMin: num('GRAD_TRAIL_MAX_HOLD_MIN', 4320), // 72 h ceiling, only so a dead-flat position cannot live forever
   },
 
   // ---- Strong signals: high-conviction tier pushed to Telegram ----
