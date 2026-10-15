@@ -744,3 +744,15 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .bt-card-grid .label { font-size: var(--text-xs); color: var(--text-faint); }
 .bt-card-grid .value { font-family: var(--font-mono); font-size: var(--text-base); font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) { #eBacktest .btable-wrap { display: none; } .bt-cards { display: block; } #eBacktest .seg { display: flex; flex-wrap: wrap; } #eBacktest .seg button { flex: 1 1 auto; } }
+
+/* compliance surfaces */
+.sim-pill { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--accent); cursor: pointer; letter-spacing: .02em; }
+.sim-pill:hover { background: var(--accent-soft); }
+.site-foot { max-width: 1680px; margin: 0 auto; padding: var(--space-4) var(--space-6) var(--space-6); border-top: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.site-foot .foot-main b { color: var(--text); }
+.site-foot .foot-links { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: var(--space-2); color: var(--text-faint); align-items: center; }
+.site-foot .foot-dot { opacity: .6; }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+@media (max-width: 700px) { .sim-pill { display: none; } .site-foot { padding: var(--space-4) var(--space-4) calc(84px + env(safe-area-inset-bottom)); } }
+.drill-sec { margin: var(--space-3) 0; } .drill-sec h3 { font-size: var(--text-sm); margin: 0 0 4px; font-weight: 600; } .drill-sec p { margin: 0; color: var(--text-muted); font-size: var(--text-sm); line-height: 1.55; }
+.rep-disc { cursor: pointer; } .disc-p { font-size: var(--text-xs); color: var(--text-muted); line-height: 1.5; margin: 0 0 6px; } .disc-p b { color: var(--text); }

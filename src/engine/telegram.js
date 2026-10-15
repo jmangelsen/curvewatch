@@ -1,5 +1,6 @@
 // Telegram delivery for alerts, system warnings, daily summaries.
 import { config } from '../config.js';
+import { TELEGRAM_FOOTER } from '../compliance.js';
 import { logger } from '../log.js';
 const log = logger('telegram');
 const q = [];
@@ -13,7 +14,9 @@ export function notify(html, kind = 'system') {
   if (!tgEnabled()) return false;
   if (kind === 'alert' && config.telegram.mode !== 'all') return false;
   const chat = kind === 'strong' && config.telegram.strongChatId ? config.telegram.strongChatId : config.telegram.chatId;
-  q.push({ text: html, chat }); drain(); return true;
+  // Every message carries the same one-line disclosure (summaries quote P&L, so they are not exempt).
+  const text = `${html}\n<i>${TELEGRAM_FOOTER}</i>`;
+  q.push({ text, chat }); drain(); return true;
 }
 export const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 

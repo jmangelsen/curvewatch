@@ -136,13 +136,17 @@ cd /opt/curvewatch && git pull && docker compose up -d --build
 ```
 Open paper positions are voided on restart (honest: in-memory curve state is lost), and voided trades don't count toward the kill rule.
 
-### 3.8 systemd alternative (no Docker)
+### 3.8 Native install with systemd (no Docker)
+One command on a fresh Ubuntu 24.04 / Debian 12 box, with the project unzipped at `/opt/curvewatch`:
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs build-essential
-useradd -r -s /usr/sbin/nologin curvewatch && chown -R curvewatch /opt/curvewatch
-cd /opt/curvewatch && sudo -u curvewatch npm ci --omit=dev
-cp deploy/curvewatch.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now curvewatch
-journalctl -u curvewatch -f
+apt-get update && apt-get install -y unzip && mkdir -p /opt && cd /opt && unzip -o ~/curvewatch.zip && cd curvewatch && bash deploy/install-systemd.sh
+```
+It installs Node 20, creates a locked-down `curvewatch` user, writes `.env` from `deploy/env.production` with a random dashboard password, runs `npm ci` and the tests, installs and starts `deploy/curvewatch.service` (hardened: only `data/` and `backups/` are writable, 1.2 GB memory ceiling, auto-restart), and adds two cron jobs: a verified nightly SQLite backup at 03:15 (`deploy/backup.sh`, 14 kept, optional off-box copy via `BACKUP_RCLONE_REMOTE`) and a weekly `VACUUM` on Sunday 04:30. Re-run the same command to upgrade; it never overwrites `.env` or `data/`.
+
+```bash
+systemctl status curvewatch && journalctl -u curvewatch -f    # status and live log
+systemctl restart curvewatch                                   # after editing /opt/curvewatch/.env
+tail -3 /var/log/curvewatch-backup.log                         # last backups
 ```
 
 ### 3.9 Monitoring and failure recovery

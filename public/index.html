@@ -35,6 +35,7 @@
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
+    <div class="pill sim-pill" data-drill="about_numbers" data-label="Simulated results" role="button" tabindex="0" title="All P&L is simulated. Open the disclosures.">paper · simulated</div>
     <div id="solPill" class="pill sol-pill" title="SOL/USD reference price (deepest USDC pool)">SOL –</div>
     <div id="killBadge" class="kill-badge" title="Kill rule status">—</div>
     <button id="themeBtn" class="icon-btn" aria-label="Toggle color theme">
@@ -230,6 +231,7 @@
       <article class="card rep-equity"><div class="card-head"><h2>Cumulative P&amp;L</h2><span class="hint">paper, USD at today's SOL price</span></div><div id="repEquity" class="chart"></div><div id="repEqLegend" class="radar-legend static"></div></article>
       <article class="card rep-market"><div class="card-head"><h2>Market conditions: WARM vs COLD</h2><span class="hint">both curve books, by state at entry</span></div><div id="repMarket"></div></article>
       <article class="card rep-daily"><div class="card-head"><h2>Daily</h2><span class="hint">by exit day, your local time · hours = hours with recorded data</span></div><div id="repDaily"></div></article>
+      <article class="card rep-daily rep-disc" id="repDisc" data-drill="about_numbers" data-label="Disclosures" role="button" tabindex="0"><div class="card-head"><h2>Disclosures</h2><span class="hint">included in every exported report</span></div><div id="repDiscBody"></div></article>
     </div>
   </section>
 
@@ -304,6 +306,10 @@
     </div>
   </section>
 </main>
+<footer class="site-foot" id="siteFoot">
+  <div class="foot-main"><b>Research tool.</b> Every P&amp;L figure on this site is simulated; no trade is executed, recommended or solicited. Hypothetical results have inherent limitations and do not represent actual trading. Not investment advice. Pump.fun tokens can lose their entire value.</div>
+  <div class="foot-links"><button class="linkish" data-drill="about_numbers" data-label="Disclosures">How the numbers are produced and what they leave out</button><span class="foot-dot">·</span><span>Data: Solana program logs, PumpPortal, DEX Screener · provided as is</span><span class="foot-dot">·</span><span>No compensation from any venue or token · no referral links</span></div>
+</footer>
 
 <div id="drill" class="drill" hidden>
   <div class="drill-scrim" data-close></div>

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { tapeMarks } from './drill.js';
 import { runGradBacktest } from './engine/gradBacktest.js';
+import { API_NOTICE, SHORT, SECTIONS } from './compliance.js';
 import { q } from './db.js';
 import { datasetStats, calibration, alertStats } from './stats.js';
 import * as paper from './engine/paper.js';
@@ -42,7 +43,8 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const cCal = new Map();
   const cAlertStats = cached(alertStats, 15000);
 
-  app.get('/api/status', (req, res) => res.json(status()));
+  app.get('/api/status', (req, res) => res.json({ ...status(), notice: API_NOTICE }));
+  app.get('/api/disclosures', (req, res) => res.json({ short: SHORT, notice: API_NOTICE, sections: SECTIONS }));
   app.get('/api/radar', (req, res) => res.json(engine.radar(Number(req.query.limit) || 80)));
   app.get('/api/alerts', (req, res) => {
     const rows = q.recentAlerts.all(Math.min(500, Number(req.query.limit) || 60)).map((a) => {
@@ -58,7 +60,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     res.json(d);
   });
   app.get('/api/paper', (req, res) => {
-    res.json({ config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
+    res.json({ notice: API_NOTICE, config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
   });
   app.get('/api/dataset', (req, res) => res.json(cDataset()));
   app.get('/api/calibration', (req, res) => {
@@ -73,7 +75,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   // Post-graduation tracker
   app.get('/api/grads', (req, res) => res.json({ ...grads.board(Math.min(200, Number(req.query.limit) || 80)), stats: grads.stats() }));
   app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));
-  app.get('/api/grads/paper', (req, res) => res.json(grads.paper()));
+  app.get('/api/grads/paper', (req, res) => res.json({ ...grads.paper(), notice: API_NOTICE }));
   app.get('/api/grads/calibration', (req, res) => res.json(grads.calibration()));
   app.get('/api/grads/backtest', (req, res) => { try { res.json(runGradBacktest({ solUsd: grads.solUsd || 100, force: req.query.force === '1' })); } catch (e) { log.warn('backtest', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
@@ -99,7 +101,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/terminal/timeline', safe((req) => timeline({ days: Number(req.query.days) || 14 })));
 
   app.get('/api/report', (req, res) => {
-    try { res.json(buildReport({ days: Number(req.query.days) || 14, tzOffsetMin: Number(req.query.tz) || 0 })); }
+    try { res.json({ ...buildReport({ days: Number(req.query.days) || 14, tzOffsetMin: Number(req.query.tz) || 0 }), notice: API_NOTICE, disclosures: SECTIONS }); }
     catch (e) { log.warn('report failed', e.message); res.status(500).json({ error: 'report failed' }); }
   });
 

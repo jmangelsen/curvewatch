@@ -1,20 +1,47 @@
-# systemd alternative to Docker: /etc/systemd/system/curvewatch.service
+# Curvewatch collector as a native systemd service (no Docker).
+# Installed by deploy/install-systemd.sh to /etc/systemd/system/curvewatch.service
 [Unit]
-Description=Curvewatch Pump.fun screener
+Description=Curvewatch Pump.fun screener and data collector
+Documentation=https://github.com/your-org/curvewatch
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=curvewatch
+Group=curvewatch
 WorkingDirectory=/opt/curvewatch
+EnvironmentFile=/opt/curvewatch/.env
+Environment=NODE_ENV=production
 ExecStart=/usr/bin/node --max-old-space-size=768 src/index.js
 Restart=always
 RestartSec=5
-EnvironmentFile=/opt/curvewatch/.env
+TimeoutStopSec=25
+KillSignal=SIGTERM
+# journald keeps the log; `journalctl -u curvewatch -f`
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=curvewatch
+
+# Hardening: the process may write only its data and backups directories.
 NoNewPrivileges=true
-ProtectSystem=full
-ReadWritePaths=/opt/curvewatch/data
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/opt/curvewatch/data /opt/curvewatch/backups
+# Memory ceiling so a leak cannot take the box down; systemd restarts the unit instead.
+MemoryMax=1200M
+# Give the collector a fair share of CPU; nothing else should run on this box anyway.
+Nice=-2
 
 [Install]
 WantedBy=multi-user.target

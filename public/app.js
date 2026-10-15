@@ -1019,6 +1019,7 @@ $('#repDays').addEventListener('click', (e) => { const b = e.target.closest('but
 const dfmt = (t) => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
 const rs = (x, d = 1) => (x == null ? '–' : `${x > 0 ? '+' : ''}${n(x, d)}%`);
 function renderReport() {
+  if (R.data?.disclosures && $('#repDiscBody')) $('#repDiscBody').innerHTML = `<p class="explain"><b>${esc(R.data.notice || '')}</b></p>` + R.data.disclosures.slice(0, 4).map((x) => `<p class="disc-p"><b>${esc(x.h)}.</b> ${esc(x.p)}</p>`).join('') + `<p class="disc-p faint">Tap for the full disclosures, including data sources, conflicts and the simulation parameters in force.</p>`;
   const d = R.data; if (!d) return;
   const px = d.solUsd || solPx();
   const toUsd = (sol) => (px ? usd(sol * px, { sign: true }) : `${n(sol, 2)} SOL`);
@@ -1479,6 +1480,7 @@ function renderDrill() {
   }).join('');
   $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
     ${d.explain ? `<p class="drill-explain">${esc(d.explain)}</p>` : ''}
+    ${(d.sections || []).map((x) => `<section class="drill-sec"><h3>${esc(x.h)}</h3><p>${esc(x.p)}</p></section>`).join('')}
     ${stats ? `<div class="drill-stats">${stats}</div>` : ''}${drillChart(d.series)}${tables}
     ${d.note ? `<p class="drill-note">${esc(d.note)}</p>` : ''}<p class="drill-note">Updated ${new Date(d.generatedAt).toLocaleTimeString('en-US', { hour12: false })}. Tap a token to open it on Pump.fun; tap a row for the token detail.</p>`;
   const svg = $('#drillSvg');
