@@ -12,7 +12,7 @@
     "backtest": "node scripts/backtest.js",
     "selftest": "node scripts/selftest.js",
     "tg-setup": "node scripts/telegram-setup.js",
-    "test": "node scripts/test-paper.js && node scripts/test-edge.js && node scripts/test-tracker.js && node scripts/test-grads.js && node scripts/test-decode.js"
+    "test": "node scripts/test-paper.js && node scripts/test-edge.js && node scripts/test-tracker.js && node scripts/test-grads.js && node scripts/test-decode.js && node scripts/test-compliance.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { tapeMarks } from './drill.js';
 import { runGradBacktest } from './engine/gradBacktest.js';
-import { API_NOTICE, SHORT, SECTIONS } from './compliance.js';
+import { API_NOTICE, SHORT, SECTIONS, simulationParams, markdownBlock } from './compliance.js';
 import { q } from './db.js';
 import { datasetStats, calibration, alertStats } from './stats.js';
 import * as paper from './engine/paper.js';
@@ -44,7 +44,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const cAlertStats = cached(alertStats, 15000);
 
   app.get('/api/status', (req, res) => res.json({ ...status(), notice: API_NOTICE }));
-  app.get('/api/disclosures', (req, res) => res.json({ short: SHORT, notice: API_NOTICE, sections: SECTIONS }));
+  app.get('/api/disclosures', (req, res) => res.json({ short: SHORT, notice: API_NOTICE, sections: SECTIONS, simulation: simulationParams(config), markdown: markdownBlock(config) }));
   app.get('/api/radar', (req, res) => res.json(engine.radar(Number(req.query.limit) || 80)));
   app.get('/api/alerts', (req, res) => {
     const rows = q.recentAlerts.all(Math.min(500, Number(req.query.limit) || 60)).map((a) => {
@@ -101,7 +101,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/terminal/timeline', safe((req) => timeline({ days: Number(req.query.days) || 14 })));
 
   app.get('/api/report', (req, res) => {
-    try { res.json({ ...buildReport({ days: Number(req.query.days) || 14, tzOffsetMin: Number(req.query.tz) || 0 }), notice: API_NOTICE, disclosures: SECTIONS }); }
+    try { res.json({ ...buildReport({ days: Number(req.query.days) || 14, tzOffsetMin: Number(req.query.tz) || 0 }), notice: API_NOTICE, disclosures: SECTIONS, disclosuresMarkdown: markdownBlock(config) }); }
     catch (e) { log.warn('report failed', e.message); res.status(500).json({ error: 'report failed' }); }
   });
 

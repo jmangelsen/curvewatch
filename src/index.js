@@ -7,7 +7,8 @@ import { Engine } from './engine/engine.js';
 import { refreshSmartWallets } from './engine/intel.js';
 import * as paper from './engine/paper.js';
 import { metaStats, metaQueueLen } from './engine/metadata.js';
-import { sendTelegram, tgEnabled, tgStats } from './engine/telegram.js';
+import { sendTelegram, tgEnabled, tgStats, esc as tgEsc } from './engine/telegram.js';
+import { TELEGRAM_DAILY_BLOCK, telegramFullText } from './compliance.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
 import { Graduates } from './engine/graduates.js';
@@ -129,7 +130,10 @@ setInterval(() => {
     `Alerts finalized: ${a.finalized} · hit 2x: ${a.hit2xPct != null ? round(a.hit2xPct, 0) : '–'}% · graduated: ${a.gradPct != null ? round(a.gradPct, 0) : '–'}%`,
     `Paper (${config.paper.rules} exits): ${k.allTrades} trades · expectancy ${round(k.expectancyPct, 1)}% [${round(k.ciLowPct, 1)}, ${round(k.ciHighPct, 1)}] · total ${round(k.totalPnlSol, 3)} SOL`,
     `Kill rule: <b>${k.status}</b>${k.status === 'COLLECTING' ? ` (${k.n}/${k.needed})` : ''}`,
+    '', TELEGRAM_DAILY_BLOCK,
   ].join('\n'));
+  // Mondays: the complete disclosures as their own message, so anyone who only reads Telegram has seen the full text.
+  if (new Date().getUTCDay() === 1 || q.getKv.get('tg_disclosures_sent') == null) { q.setKv.run('tg_disclosures_sent', today); sendTelegram(telegramFullText(tgEsc)); }
 }, 60000);
 
 // ---- post-graduation tracker ----

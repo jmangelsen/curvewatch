@@ -5,7 +5,7 @@
 import { db } from './db.js';
 import { config } from './config.js';
 import { runGradBacktest, gradBacktestTrades } from './engine/gradBacktest.js';
-import { SECTIONS, SHORT } from './compliance.js';
+import { SECTIONS, SHORT, simulationParams } from './compliance.js';
 import { market } from './market.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
@@ -544,17 +544,9 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
   }
   return (key) => {
     if (key === 'about_numbers') {
-      const GP = config.gradPaper, PP = config.paper;
       return { key, generatedAt: Date.now(), title: 'Disclosures: how the numbers are produced', explain: SHORT,
         sections: SECTIONS,
-        tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: [
-          { k: 'Curve paper books', v: `${PP.sizeSol} SOL per signal · entry ${PP.entryDelaySec}s after the signal at the curve price · +${PP.extraSlippagePct}% slippage · exits filled ${PP.exitDelaySec}s after they trigger · stop −${PP.stopPct}%` },
-          { k: 'Graduates paper books', v: `${GP.sizeSol} SOL per alert · entry at the next poll price plus pool price impact · ${GP.feePct}% fee each side · +${GP.extraSlippagePct}% slippage · stop −${GP.stopPct}%` },
-          { k: 'Not modeled', v: 'Failed or dropped transactions, priority fees, MEV and sandwiching, the effect of your own order on other traders, exchange or wallet outages' },
-          { k: 'Edge Lab pass bar', v: 'Pre-registered rule, judged only on tokens that arrive after registration, 300 tokens minimum, lower confidence bound above zero, both halves positive, beats the random control' },
-          { k: 'Backtests and replays', v: 'Marked as context, never as a pass. Selection lift from testing many variants on one history is printed next to them' },
-          { k: 'Data sources', v: 'Solana program logs (RPC websocket), PumpPortal, DEX Screener pairs API; labels are this machine\'s own' },
-        ] }] };
+        tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
     const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;

@@ -23,6 +23,31 @@ export const SECTIONS = [
   { h: 'Compensation and conflicts', p: 'Curvewatch receives no compensation from any trading venue, token, wallet or project shown here, carries no referral links, and its operator does not trade the tokens it flags ahead of publication. If any of that changes it will be disclosed on this page first.' },
 ];
 
+/** Simulation parameters in force, for the disclosures drill, the report API and the Markdown export. */
+export function simulationParams(config) {
+  const GP = config.gradPaper, PP = config.paper;
+  return [
+    { k: 'Curve paper books', v: `${PP.sizeSol} SOL per signal · entry ${PP.entryDelaySec}s after the signal at the curve price · +${PP.extraSlippagePct}% slippage · exits filled ${PP.exitDelaySec}s after they trigger · stop −${PP.stopPct}%` },
+    { k: 'Graduates paper books', v: `${GP.sizeSol} SOL per alert · entry at the next poll price plus pool price impact · ${GP.feePct}% fee each side · +${GP.extraSlippagePct}% slippage · stop −${GP.stopPct}%` },
+    { k: 'Not modeled', v: 'Failed or dropped transactions, priority fees, MEV and sandwiching, the effect of your own order on other traders, exchange or wallet outages' },
+    { k: 'Edge Lab pass bar', v: 'Pre-registered rule, judged only on tokens that arrive after registration, 300 tokens minimum, lower confidence bound above zero, both halves positive, beats the random control' },
+    { k: 'Backtests and replays', v: 'Marked as context, never as a pass. Selection lift from testing many variants on one history is printed next to them' },
+    { k: 'Data sources', v: "Solana program logs (RPC websocket), PumpPortal, DEX Screener pairs API; labels are this machine's own" },
+  ];
+}
+
+/** Markdown block appended to exported reports. */
+export function markdownBlock(config) {
+  return ['## Disclosures', '', `**${API_NOTICE}**`, '', ...SECTIONS.map((s) => `**${s.h}.** ${s.p}`), '', '### Simulation parameters in force', '', '| Setting | Value |', '|---|---|',
+    ...simulationParams(config).map((r) => `| ${r.k} | ${r.v} |`)].join('\n');
+}
+
+/** Telegram: short block for the daily summary, full text for the weekly message (HTML, under the 4096-char limit). */
+export const TELEGRAM_DAILY_BLOCK = `<i>${SHORT} Simulated results have inherent limitations and do not represent actual trading; real fills, latency and failed transactions make them worse. Pump.fun tokens can lose their entire value.</i>`;
+export function telegramFullText(esc) {
+  return [`<b>Curvewatch disclosures</b> (sent weekly; also at /api/disclosures and in the dashboard footer)`, '', ...SECTIONS.map((s) => `<b>${esc(s.h)}.</b> ${esc(s.p)}`)].join('\n');
+}
+
 export function reportText() {
   return [SHORT, '', ...SECTIONS.map((s) => `${s.h}. ${s.p}`)].join('\n');
 }

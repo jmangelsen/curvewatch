@@ -1071,20 +1071,22 @@ function renderRepEquity(d, px) {
 const dl = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
 $('#repMd').onclick = () => {
   const d = R.data; if (!d) return; const px = d.solUsd || solPx();
-  const L = [`# Curvewatch performance report`, ``, `${new Date(d.since).toISOString().slice(0, 10)} to ${new Date(d.until).toISOString().slice(0, 10)} (${d.days} days). Paper trading only. Coverage ${Math.round(d.coverage.pct)}% of hours (${d.coverage.hours}/${d.coverage.possibleHours}).`, ``, `## Decision checklist`, ``];
+  const L = [`# Curvewatch performance report`, ``, `${new Date(d.since).toISOString().slice(0, 10)} to ${new Date(d.until).toISOString().slice(0, 10)} (${d.days} days). Paper trading only; every figure is simulated (see Disclosures at the end). Coverage ${Math.round(d.coverage.pct)}% of hours (${d.coverage.hours}/${d.coverage.possibleHours}).`, ``, `## Decision checklist`, ``];
   for (const v of d.verdicts) L.push(`- **${v.q}** ${v.verdict}. ${v.detail}`);
   L.push('', '## Books', '', '| Book | Entry | Trades | Win | Avg/trade | 95% range | P&L (USD) | 1st half | 2nd half | Kill rule |', '|---|---|---|---|---|---|---|---|---|---|');
   for (const b of d.bookOrder) { const x = d.books[b]; L.push(`| ${d.bookLabels[b]} | ${d.bookEntry[b]} | ${x.n} | ${x.n ? Math.round(x.winRatePct) + '%' : '–'} | ${rs(x.avgPct)} | ${x.ciLowPct == null ? '–' : `${rs(x.ciLowPct, 0)} to ${rs(x.ciHighPct, 0)}`} | ${px ? usd(x.pnlSol * px, { sign: true }) : x.pnlSol.toFixed(3) + ' SOL'} | ${rs(x.week1.avgPct)} (${x.week1.n}) | ${rs(x.week2.avgPct)} (${x.week2.n}) | ${x.kill.status} ${x.kill.n}/${x.kill.needed} |`); }
   L.push('', '## Daily', '', `| Date | Hours | Launches | Alerts | ${d.bookOrder.map((b) => d.bookLabels[b]).join(' | ')} |`, `|---|---|---|---|${d.bookOrder.map(() => '---').join('|')}|`);
   for (const x of d.daily) L.push(`| ${x.date} | ${x.hours} | ${x.launches} | ${x.alerts} | ${d.bookOrder.map((b) => (x.books[b]?.n ? `${rs(x.books[b].avgPct)} (${x.books[b].n})` : '–')).join(' | ')} |`);
   L.push('', 'Avg/trade is after fees, entry delay and slippage. A 95% range that includes zero means the result is not distinguishable from break-even.');
+  L.push('', d.disclosuresMarkdown || `## Disclosures\n\n${d.notice || ''}`);
   dl(`curvewatch-report-${new Date().toISOString().slice(0, 10)}.md`, L.join('\n'), 'text/markdown');
 };
 $('#repCsv').onclick = () => {
   const d = R.data; if (!d) return;
   const head = ['date', 'hours', 'launches', 'alerts', 'grad_alerts', 'strong', ...d.bookOrder.flatMap((b) => [`${b}_n`, `${b}_win_pct`, `${b}_avg_pct`]), 'cold_share_pct'];
   const rows = d.daily.map((x) => [x.date, x.hours, x.launches, x.alerts, x.gradAlerts, x.strong, ...d.bookOrder.flatMap((b) => { const s = x.books[b] || {}; return [s.n || 0, s.winRatePct?.toFixed(1) ?? '', s.avgPct?.toFixed(2) ?? '']; }), x.coldSharePct?.toFixed(1) ?? '']);
-  dl(`curvewatch-daily-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...rows].map((r) => r.join(',')).join('\n'), 'text/csv');
+  const notice = `"# Curvewatch daily export · ${(d.notice || 'Simulated paper results from a research screener. Not investment advice.').replace(/"/g, '""')} · full text: /api/disclosures"`;
+  dl(`curvewatch-daily-${new Date().toISOString().slice(0, 10)}.csv`, [notice, head.join(','), ...rows.map((r) => r.join(','))].join('\n'), 'text/csv');
 };
 addEventListener('resize', () => { if (S.tab === 'report' && R.data) renderRepEquity(R.data, R.data.solUsd || solPx()); });
 
