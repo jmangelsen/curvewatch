@@ -19,6 +19,7 @@ import { datasetStats, alertStats } from './stats.js';
 import { round } from './util.js';
 import { logger } from './log.js';
 import { db } from './db.js';
+import { initRejects, rejectsView } from './engine/rejects.js';
 import { initHealth, healthView, health } from './health.js';
 import { auditFills, fillsView, startFillAudit } from './fills.js';
 import { benchmarks } from './benchmarks.js';
@@ -26,6 +27,8 @@ import { makeDrill } from './drill.js';
 import { startEdgeLab, edgeView, edgeDetail } from './edgelab/index.js';
 import { startTracker, trackerView } from './engine/smartTracker.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
+
+initRejects(); // sticky rejects bucket (backfills once from history)
 
 const log = logger('main');
 const startedAt = Date.now();
@@ -179,7 +182,7 @@ const healthData = (scope) => {
     random: { pool: engine.counters.randomPool ?? null, noMatch: engine.counters.randomNoMatch || 0 } } });
 };
 try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
-startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail }), edgeView, edgeDetail, trackerView });
+startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail }), edgeView, edgeDetail, trackerView, rejectsView });
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

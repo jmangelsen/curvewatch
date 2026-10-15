@@ -1,5 +1,6 @@
 // Orchestrator: token lifecycle, evaluation loop, snapshots, alerts, outcome labeling.
 import { scorePositions, isTracked, onTrackedTrade } from './smartTracker.js';
+import { recordReject, countBlocked } from './rejects.js';
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { q, tx, db } from '../db.js';
@@ -83,7 +84,7 @@ export class Engine extends EventEmitter {
       return;
     }
     if (!t.applyTrade(ev)) return;
-    if (isTracked(ev.wallet)) onTrackedTrade(ev, t);
+    if (isTracked(ev.wallet)) { if (t.rejectedHard || t.lastScore?.reject) countBlocked('tracker'); else onTrackedTrade(ev, t); }
     this.counters.trades++;
     if (!t.initialBuySol && ev.wallet === t.creator && ev.isBuy && t.trades.length <= 2) {
       t.initialBuySol = ev.sol; q.updateInitialBuy.run(ev.sol, t.initialMcap, t.mint);
@@ -120,6 +121,12 @@ export class Engine extends EventEmitter {
           const f = t.features({ smartSet, creatorRep: t.creatorRepAtLaunch });
           const s = score(f);
           t.lastScore = s; t.lastFeatures = f;
+          // sticky rejection: the first hard reject puts the coin in the rejects bucket for good
+          if (s.reject && !t.rejectedHard) {
+            t.rejectedHard = { reason: s.reject, at: nowMs, age };
+            const cp = [...L.snapshotCheckpointsSec].reverse().find((c) => age >= c) ?? null;
+            recordReject({ kind: 'curve', mint, symbol: t.symbol, ts: nowMs, reason: s.reject, age, mcap: t.mcap, checkpoint: cp, raw: s.raw });
+          }
           if (s.score > t.maxScore) t.maxScore = s.score;
           for (const cp of L.snapshotCheckpointsSec) {
             if (age >= cp && !t.snapshots.some((x) => x.checkpoint === cp)) {
@@ -129,7 +136,8 @@ export class Engine extends EventEmitter {
             }
           }
           const S = config.scoring;
-          if (!t.alertId && !s.reject && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec) this.fireAlert(t, f, s);
+          if (t.rejectedHard && !s.reject && !t.alertId && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec && !t._blockedAlert) { t._blockedAlert = true; countBlocked('alert'); }
+          if (!t.alertId && !s.reject && !t.rejectedHard && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec) this.fireAlert(t, f, s);
           this.maybeBandEntry(t, s, age, f);
           this.maybeFlowEntry(t, s, age, f);
         } else {
@@ -168,7 +176,7 @@ export class Engine extends EventEmitter {
   /** Parallel paper book: first time a live, unrejected score lands in [lo, hi) inside the alert age window. */
   maybeBandEntry(t, s, age, f) {
     const B = config.band, S = config.scoring;
-    if (!B.enabled || t.bandAt || s.reject || s.score < B.lo || s.score >= B.hi || age < S.minAgeSec || age > S.maxAgeSec) return;
+    if (!B.enabled || t.bandAt || s.reject || t.rejectedHard || s.score < B.lo || s.score >= B.hi || age < S.minAgeSec || age > S.maxAgeSec) return;
     t.bandAt = Date.now(); t.bandScore = s.score;
     this.startRecording(t);
     paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score, features: f });
@@ -180,7 +188,7 @@ export class Engine extends EventEmitter {
   /** Flow book: real money arriving (60s net inflow and median buy size), first time it qualifies. */
   maybeFlowEntry(t, s, age, f) {
     const F = config.strategies.flow, S = config.scoring;
-    if (!F.enabled || t.flowAt || s.reject || s.score < F.minScore || age < S.minAgeSec || age > S.maxAgeSec) return;
+    if (!F.enabled || t.flowAt || s.reject || t.rejectedHard || s.score < F.minScore || age < S.minAgeSec || age > S.maxAgeSec) return;
     if (!(f.flow60Sol >= F.minFlow60Sol && f.medianBuySol >= F.minMedianBuySol)) return;
     t.flowAt = Date.now();
     this.startRecording(t);
@@ -198,7 +206,7 @@ export class Engine extends EventEmitter {
     const now = Date.now(), age = (now - sig.createdAt) / 1000, aTol = R.ageTolPct / 100, mTol = R.mcapTolPct / 100;
     const pool = [];
     for (const t of this.tokens.values()) {
-      if (t === sig || t.lite || t.graduated || t.randomAt || !t.lastScore || t.lastScore.reject || paper.isOpen(t.mint)) continue;
+      if (t === sig || t.lite || t.graduated || t.randomAt || !t.lastScore || t.lastScore.reject || t.rejectedHard || paper.isOpen(t.mint)) continue;
       const a = (now - t.createdAt) / 1000;
       if (Math.abs(a - age) > age * aTol || Math.abs(t.mcap - sig.mcap) > sig.mcap * mTol) continue;
       pool.push(t);
@@ -213,7 +221,7 @@ export class Engine extends EventEmitter {
 
   /** Confirm book: one per token, on its first main or band signal; the entry itself checks price after the wait. */
   maybeConfirm(t, s, f) {
-    if (!config.strategies.confirm.enabled || t.confirmAt) return;
+    if (!config.strategies.confirm.enabled || t.confirmAt || t.rejectedHard) return;
     t.confirmAt = Date.now();
     paper.scheduleEntry(t, t.alertId || null, { book: 'confirm', score: s.score, features: f });
   }
@@ -260,7 +268,7 @@ export class Engine extends EventEmitter {
       recordCreatorOutcome(t.creator, { graduated: t.graduated, rugged, peak });
     })();
     learnWallets(t);
-    try { scorePositions(t); } catch (e) { /* tracker optional */ }
+    try { if (!t.rejectedHard) scorePositions(t); } catch (e) { /* tracker optional */ }
     t.firstBuyAt = new Map(); t.firstBuyMcap = new Map(); t.pos = new Map();
     this.counters.finalized++;
   }

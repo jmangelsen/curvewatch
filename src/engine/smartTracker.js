@@ -13,15 +13,15 @@ const log = logger('tracker');
 const T = () => config.smartTracker;
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS wallet_perf (
+CREATE TABLE IF NOT EXISTS wallet_perf2 (
   wallet TEXT PRIMARY KEY, positions INTEGER DEFAULT 0, hits INTEGER DEFAULT 0, profitable INTEGER DEFAULT 0, touched INTEGER DEFAULT 0,
   sum_ret REAL DEFAULT 0, buy_sol REAL DEFAULT 0, pnl_sol REAL DEFAULT 0, first_seen INTEGER, last_seen INTEGER
 );
-CREATE TABLE IF NOT EXISTS wallet_positions (
+CREATE TABLE IF NOT EXISTS wallet_positions2 (
   wallet TEXT, mint TEXT, symbol TEXT, first_at INTEGER, entry_mcap REAL, buy_sol REAL, sell_sol REAL, held_tok REAL,
   label_mcap REAL, ret REAL, hit INTEGER, touched INTEGER, graduated INTEGER, scored_at INTEGER, PRIMARY KEY (wallet, mint)
 );
-CREATE INDEX IF NOT EXISTS idx_wpos_wallet ON wallet_positions(wallet, first_at);
+CREATE INDEX IF NOT EXISTS idx_wpos2_wallet ON wallet_positions2(wallet, first_at);
 CREATE TABLE IF NOT EXISTS smart_trades (
   ts INTEGER, wallet TEXT, mint TEXT, symbol TEXT, is_buy INTEGER, sol REAL, tok REAL, mcap REAL, sig TEXT, rank INTEGER, basis TEXT
 );
@@ -29,15 +29,15 @@ CREATE INDEX IF NOT EXISTS idx_strades_ts ON smart_trades(ts);
 CREATE INDEX IF NOT EXISTS idx_strades_wallet ON smart_trades(wallet, ts);
 `);
 const Q = {
-  upPerf: db.prepare(`INSERT INTO wallet_perf (wallet, positions, hits, profitable, touched, sum_ret, buy_sol, pnl_sol, first_seen, last_seen)
+  upPerf: db.prepare(`INSERT INTO wallet_perf2 (wallet, positions, hits, profitable, touched, sum_ret, buy_sol, pnl_sol, first_seen, last_seen)
     VALUES (@w, 1, @hit, @prof, @touch, @ret, @b, @pnl, @t, @t)
     ON CONFLICT(wallet) DO UPDATE SET positions = positions + 1, hits = hits + @hit, profitable = profitable + @prof, touched = touched + @touch,
       sum_ret = sum_ret + @ret, buy_sol = buy_sol + @b, pnl_sol = pnl_sol + @pnl, last_seen = @t`),
-  insPos: db.prepare(`INSERT OR REPLACE INTO wallet_positions VALUES (@w, @mint, @sym, @at, @m, @b, @s, @held, @lm, @ret, @hit, @touch, @grad, @t)`),
+  insPos: db.prepare(`INSERT OR REPLACE INTO wallet_positions2 VALUES (@w, @mint, @sym, @at, @m, @b, @s, @held, @lm, @ret, @hit, @touch, @grad, @t)`),
   insTrade: db.prepare(`INSERT INTO smart_trades VALUES (?,?,?,?,?,?,?,?,?,?,?)`),
   prune: db.prepare(`DELETE FROM smart_trades WHERE ts < ?`),
-  prunePos: db.prepare(`DELETE FROM wallet_positions WHERE scored_at < ?`),
-  pruneEmpty: db.prepare(`DELETE FROM wallet_perf WHERE last_seen < ? AND positions < 3`),
+  prunePos: db.prepare(`DELETE FROM wallet_positions2 WHERE scored_at < ?`),
+  pruneEmpty: db.prepare(`DELETE FROM wallet_perf2 WHERE last_seen < ? AND positions < 3`),
 };
 
 let tracked = new Map(); // wallet -> row
@@ -74,7 +74,7 @@ export const scorePositions = (t) => {
 export function refreshTracked() {
   const C = T(), now = Date.now();
   const days = (r) => Math.max(1, (now - r.first_seen) / 86400000);
-  const real = db.prepare(`SELECT * FROM wallet_perf WHERE positions >= ? AND CAST(hits AS REAL) / positions > ?`).all(C.minPositions, C.minRate)
+  const real = db.prepare(`SELECT * FROM wallet_perf2 WHERE positions >= ? AND CAST(hits AS REAL) / positions > ?`).all(C.minPositions, C.minRate)
     .filter((r) => r.positions / days(r) <= C.maxPositionsPerDay)
     .map((r) => ({ wallet: r.wallet, basis: 'realized', n: r.positions, k: r.hits, rate: r.hits / r.positions, lo: wilsonLo(r.hits, r.positions), avgRet: r.sum_ret / r.positions, pnlSol: r.pnl_sol, buySol: r.buy_sol,
       touchRate: r.touched / r.positions, firstSeen: r.first_seen, lastSeen: r.last_seen }));
@@ -89,10 +89,10 @@ export function refreshTracked() {
     list = [...list, ...proxy.slice(0, C.topN - list.length)];
   }
   // attach live realized stats to proxy rows when available
-  const perf = db.prepare('SELECT * FROM wallet_perf WHERE wallet = ?');
+  const perf = db.prepare('SELECT * FROM wallet_perf2 WHERE wallet = ?');
   list.forEach((r, i) => { r.rank = i + 1; if (r.basis === 'proxy') { const p = perf.get(r.wallet); if (p) { r.realN = p.positions; r.realHits = p.hits; r.avgRet = p.positions ? p.sum_ret / p.positions : null; r.pnlSol = p.pnl_sol; } } });
   tracked = new Map(list.map((r) => [r.wallet, r]));
-  pool = new Set(db.prepare('SELECT wallet FROM wallet_perf WHERE positions >= 3 ORDER BY positions DESC LIMIT 50000').all().map((r) => r.wallet));
+  pool = new Set(db.prepare('SELECT wallet FROM wallet_perf2 WHERE positions >= 3 ORDER BY positions DESC LIMIT 50000').all().map((r) => r.wallet));
   lastRefresh = now;
   log.info(`tracked wallets: ${list.length} (${list.filter((r) => r.basis === 'realized').length} realized, ${list.filter((r) => r.basis === 'proxy').length} proxy) · candidates ${real.length} · pool ${pool.size}`);
 }
@@ -119,7 +119,7 @@ export function startTracker({ engine }) {
 function openPositions() {
   const out = [];
   for (const t of engineRef?.tokens?.values?.() || []) {
-    if (!t.pos?.size || t.finalized) continue;
+    if (!t.pos?.size || t.finalized || t.rejectedHard) continue;
     for (const [w, p] of t.pos) { const r = tracked.get(w); if (!r) continue;
       const held = Math.max(0, p.bt - p.st); if (held <= 1 && p.s === 0) continue;
       const value = p.s + held * (t.mcap / 1e9);
@@ -131,18 +131,18 @@ function openPositions() {
 
 export function trackerView() {
   const C = T(), list = [...tracked.values()];
-  const recent = db.prepare('SELECT * FROM smart_trades ORDER BY ts DESC LIMIT 200').all();
-  const day = db.prepare('SELECT COUNT(*) n, SUM(is_buy) buys, COUNT(DISTINCT mint) tokens FROM smart_trades WHERE ts > ?').get(Date.now() - 86400000);
-  const scored = db.prepare('SELECT COUNT(*) wallets, SUM(positions) positions, SUM(positions >= ?) eligible FROM wallet_perf').get(C.minPositions);
+  const recent = db.prepare("SELECT * FROM smart_trades s WHERE NOT EXISTS (SELECT 1 FROM rejects r WHERE r.kind = 'curve' AND r.mint = s.mint) ORDER BY ts DESC LIMIT 200").all();
+  const day = db.prepare("SELECT COUNT(*) n, SUM(is_buy) buys, COUNT(DISTINCT mint) tokens FROM smart_trades s WHERE ts > ? AND NOT EXISTS (SELECT 1 FROM rejects r WHERE r.kind = 'curve' AND r.mint = s.mint)").get(Date.now() - 86400000);
+  const scored = db.prepare('SELECT COUNT(*) wallets, SUM(positions) positions, SUM(positions >= ?) eligible FROM wallet_perf2').get(C.minPositions);
   return { config: C, startedAt, lastRefresh, wallets: list, recent, open: openPositions(), day, scored,
     counts: { tracked: list.length, realized: list.filter((r) => r.basis === 'realized').length, proxy: list.filter((r) => r.basis === 'proxy').length } };
 }
 
 export function walletDetail(w) {
   const r = tracked.get(w) || null;
-  const perf = db.prepare('SELECT * FROM wallet_perf WHERE wallet = ?').get(w) || null;
+  const perf = db.prepare('SELECT * FROM wallet_perf2 WHERE wallet = ?').get(w) || null;
   const old = db.prepare('SELECT * FROM wallets WHERE wallet = ?').get(w) || null;
-  const positions = db.prepare('SELECT * FROM wallet_positions WHERE wallet = ? ORDER BY first_at DESC LIMIT 300').all(w);
-  const trades = db.prepare('SELECT * FROM smart_trades WHERE wallet = ? ORDER BY ts DESC LIMIT 300').all(w);
+  const positions = db.prepare('SELECT * FROM wallet_positions2 WHERE wallet = ? ORDER BY first_at DESC LIMIT 300').all(w);
+  const trades = db.prepare("SELECT * FROM smart_trades s WHERE wallet = ? AND NOT EXISTS (SELECT 1 FROM rejects r WHERE r.kind = 'curve' AND r.mint = s.mint) ORDER BY ts DESC LIMIT 300").all(w);
   return { wallet: w, tracked: r, perf, proxy: old, positions, trades, open: openPositions().filter((p) => p.wallet === w) };
 }

@@ -8,6 +8,7 @@ import { market } from './market.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
 import { trackerView, walletDetail } from './engine/smartTracker.js';
+import { rejectsView, rejectRows } from './engine/rejects.js';
 import { closedCurrent, killStatsFrom, STRATEGIES } from './engine/paper.js';
 
 const H = 3600000, D = 86400000;
@@ -372,7 +373,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
     },
     tr_trades() {
       const v = trackerView();
-      const rows = all('SELECT * FROM smart_trades WHERE ts > ? ORDER BY ts DESC LIMIT 1000', Date.now() - 7 * D).map((r) => ({ ...r, short: sw(r.wallet), side: r.is_buy ? 'buy' : 'sell' }));
+      const rows = all("SELECT * FROM smart_trades s WHERE ts > ? AND NOT EXISTS (SELECT 1 FROM rejects r WHERE r.kind = 'curve' AND r.mint = s.mint) ORDER BY ts DESC LIMIT 1000", Date.now() - 7 * D).map((r) => ({ ...r, short: sw(r.wallet), side: r.is_buy ? 'buy' : 'sell' }));
       return { title: 'Tracked wallet trades', explain: 'Every buy and sell by a tracked wallet on a Pump.fun curve, recorded live as it happened. Last 7 days, newest first. Tap a row for the token.',
         stats: [['Trades 24 h', v.day.n, 'num'], ['Buys 24 h', v.day.buys, 'num'], ['Tokens 24 h', v.day.tokens, 'num'], ['Shown', rows.length, 'num']],
         series: { label: 'Tracked wallet trades per hour, last 24 h', kind: 'bar', fmt: 'num', points: bucket(rows.filter((r) => r.ts > Date.now() - D).map((r) => ({ t: r.ts })), H, Date.now() - D) },
@@ -400,6 +401,33 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         { title: 'Scored positions', cols: [C('Entered', 'first_at', 'time'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Out', 'sell_sol', 'solusd'), C('Return', 'retPct', 'spct'), C('Hit', 'hit', 'yes'), C('Graduated', 'graduated', 'yes')], rows: posRows },
       ], note: `Solscan: https://solscan.io/account/${w}` };
   };
+  // ---- rejects bucket ----
+  const rejCols = (kind) => [C('Rejected', 'first_ts', 'time'), C('Token', 'symbol', 'token'), C('Reason', 'reason'), C('Age', 'age_sec', 'age'),
+    kind === 'grad' ? C('Mcap at reject', 'mcap_usd', 'usd') : C('Mcap at reject', 'mcap', 'mcap'), C(kind === 'grad' ? 'High 6 h after' : 'High after', 'afterX', 'mult'), ...(kind === 'curve' ? [C('Graduated', 'graduated', 'yes')] : [])];
+  const KN = { curve: 'New coins', grad: 'Graduated coins' };
+  const rejSummary = (rows) => { const lab = rows.filter((r) => r.labeled); return { lab: lab.length, x2: lab.filter((r) => r.missed).length }; };
+  const rejDrill = (kind, cat = null, onlyMissed = false) => {
+    const v = rejectsView(), V = v[kind];
+    let rows = rejectRows(kind, { cat, limit: 2000 }); if (onlyMissed) rows = rows.filter((r) => r.missed);
+    const sm = rejSummary(rows), base = kind === 'curve' ? V.launches : V.seen;
+    const title = onlyMissed ? `${KN[kind]}: rejected, then 2x+` : cat ? `${KN[kind]} rejected: ${cat}` : `${KN[kind]} in the rejects bucket`;
+    return { title, explain: `${kind === 'curve' ? 'New Pump.fun launches' : 'Graduated Pump.fun coins'} that failed a hard filter at least once in the last 24 h. Rejection is sticky: from that moment the coin gets no alerts, no paper entries in any book, no tracked-wallet trades recorded and no Edge Lab samples. "High after" is the highest market cap ${kind === 'curve' ? 'reached after the rejecting snapshot (within the 1 h window)' : 'in the 6 h after the rejecting poll'}, as a multiple of the market cap at rejection; it shows what the filter cost when it was wrong. Tap a row for the coin.`,
+      stats: [['Coins', rows.length, 'num'], ...(cat || onlyMissed ? [] : [[kind === 'curve' ? 'Share of launches' : 'Share of graduates seen', base ? (V.n / base) * 100 : null, 'pct']]), ['Outcome known', sm.lab, 'num'], ['Went 2x+ after reject', sm.x2, 'num'], ['2x+ rate', sm.lab ? (sm.x2 / sm.lab) * 100 : null, 'pct']],
+      series: { label: 'Rejected per hour', kind: 'bar', fmt: 'num', points: bucket(rows.map((r) => ({ t: r.first_ts })), H, Date.now() - D) },
+      tables: [{ title: cat ? 'Coins' : 'By reason', cols: cat ? rejCols(kind) : [C('Reason', 'cat'), C('Coins', 'n', 'num'), C('Share', 'share', 'pct')], rows: cat ? rows.map((r) => ({ ...r, kind })) : V.byCat.map((c) => ({ ...c, share: (c.n / Math.max(1, V.n)) * 100, drill: `rej_cat:${kind}:${c.cat}`, label: c.cat, window: '' })) },
+        ...(cat ? [] : [{ title: 'Most recent', cols: rejCols(kind), rows: rows.slice(0, 500).map((r) => ({ ...r, kind })) }])] };
+  };
+  Object.assign(H_, {
+    rej_curve: () => rejDrill('curve'), rej_grad: () => rejDrill('grad'),
+    rej_missed_curve: () => rejDrill('curve', null, true), rej_missed_grad: () => rejDrill('grad', null, true),
+    rej_blocked() {
+      const v = rejectsView(), b = v.blocked.live;
+      const rows = all("SELECT entry_ts, book, symbol, mint, skip_reason, score FROM paper_trades WHERE status = 'skipped' AND skip_reason LIKE 'rejected%' AND entry_ts > ? ORDER BY entry_ts DESC LIMIT 500", Date.now() - D);
+      return { title: 'Trades blocked by the rejects rule', explain: 'Signals that would have produced an alert, a paper entry or a tracked-wallet trade record on a coin already in the rejects bucket. Live counters reset on restart; the table lists paper fills skipped because the coin was rejected between signal and fill.',
+        stats: [['Alerts blocked', b.alert, 'num'], ['Fills skipped', b.fill, 'num'], ['Graduate entries blocked', b.grad, 'num'], ['Tracked trades not recorded', b.tracker, 'num'], ['Skipped fills 24 h', rows.length, 'num']],
+        tables: [{ title: 'Skipped paper fills', cols: [C('Time', 'entry_ts', 'time'), C('Book', 'book', 'book'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num1'), C('Reason', 'skip_reason')], rows }] };
+    },
+  });
   // ---- uptime tape: everything that happened in a window [a, b) ----
   const EV_LABEL = { entry: 'Entry', exit: 'Exit', tp1: 'Take profit (partial)', stop: 'Stop triggered', trigger: 'Exit triggered', confirm: 'Confirm check', skip: 'Skipped' };
   const tapeDrill = (a, b) => {
@@ -465,7 +493,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       ] };
   };
   return (key) => {
-    const fn = key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

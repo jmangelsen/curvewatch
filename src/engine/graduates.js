@@ -10,6 +10,7 @@
 // Every poll is a point in a per-token time series; features are computed from that series plus
 // DexScreener's own 5m/1h/6h windows. Snapshots are stored and labeled 1h and 6h later so the score
 // can be calibrated on your own data, and alerts feed a separate paper trader + kill rule.
+import { recordReject, isGradRejected, countBlocked } from './rejects.js';
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { db } from '../db.js';
@@ -262,6 +263,9 @@ export class Graduates extends EventEmitter {
     else if (tx5 === 0 && L.v5 === 0) reject = 'no trades in last 5 min';
     else if (fdvLiq != null && fdvLiq > 40) reject = `thin pool (FDV ${round(fdvLiq, 0)}× liquidity)`;
     st.reject = reject;
+    if (reject && !reject.startsWith('warming') && !isGradRejected(st.mint)) {
+      recordReject({ kind: 'grad', mint: st.mint, symbol: st.symbol, ts: Date.now(), reason: reject, age: ageMin * 60, mcapUsd: L.mcap, price: L.price });
+    }
 
     const parts = {};
     parts.volume = 20 * clamp(Math.log2(Math.max(volAccel, 1e-3)) / 2); // 4x the hourly pace = full marks
@@ -298,6 +302,7 @@ export class Graduates extends EventEmitter {
 
   maybeAlert(st, now) {
     if (st.reject || st.score == null || st.score < G.alertScore) return;
+    if (isGradRejected(st.mint)) { if (!st._blockedAlert) { st._blockedAlert = true; countBlocked('grad'); } return; } // sticky: once rejected, never alert or trade
     if (now - st.lastAlertAt < G.alertCooldownMin * MIN) return;
     if ((st.features?.seriesPts || 0) < 5) return; // need a few polls of our own before trusting the read
     st.lastAlertAt = now;
@@ -341,6 +346,7 @@ export class Graduates extends EventEmitter {
       const e = this.pending[i]; const st = this.watch.get(e.mint);
       this.pending.splice(i, 1);
       if (!st?.last || st.last.t < e.at) { if (st) this.pending.push({ ...e }); continue; }
+      if (st.reject || isGradRejected(e.mint)) { countBlocked('grad'); log.info(`GRAD SKIP ${st.symbol}: rejected before entry (${st.reject || 'rejects bucket'})`); continue; }
       const fill = st.last.price * (1 + this.impactPct(st.last.liq) / 100) * (1 + GP.extraSlippagePct / 100) / (1 - GP.feePct / 100);
       const units = (GP.sizeSol * (this.solUsd || 150)) / fill;
       const pos = { alertId: e.alertId, mint: e.mint, symbol: st.symbol, entryTs: now, entryPrice: fill, entryMcap: st.last.mcap, sizeSol: GP.sizeSol, units, unitsLeft: units, realized: 0, peak: GP.sizeSol, tp1Done: false,

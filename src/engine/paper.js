@@ -12,6 +12,7 @@ import { curveBuy, curveSell, round } from '../util.js';
 import { logger } from '../log.js';
 import { gate, marketTag } from './marketgate.js';
 import { CFG } from '../version.js';
+import { countBlocked } from './rejects.js';
 const log = logger('paper');
 const P = config.paper;
 const SC = config.strategies;
@@ -148,6 +149,7 @@ export function tick(getToken) {
       paperEvents.push({ type: 'skip', pos: { book: e.book, mint: e.mint, symbol: token.symbol, reason, slipPct: slip } });
     };
     if (token.graduated) { skip('curve closed before entry'); continue; }
+    { const rj = token.rejectedHard?.reason || token.lastScore?.reject; if (rj) { skip(`rejected before entry: ${rj}`); countBlocked('fill'); continue; } }
     if (S.requireMinRet != null && token.mcap < e.signalMcap * (1 + S.requireMinRet)) { skip(`price ${round(slip, 1)}% vs signal after ${S.delaySec}s (needs ≥ ${round(S.requireMinRet * 100, 0)}%)`); continue; }
     const tokens = curveBuy(token.vsol, token.vtok, P.sizeSol, P.feePct) * (1 - P.extraSlippagePct / 100);
     const gated = gate.enforcing ? 1 : 0;

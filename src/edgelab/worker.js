@@ -30,7 +30,11 @@ try {
 const NO_TR = [];
 const quality = { entries: 0, exitSnapshot: 0, exitGraduated: 0, exitFinal: 0, pending: 0, excludedGap: 0, badMcap: 0 };
 const samples = Object.fromEntries(HORIZONS.map((h) => [h.id, []])); // horizon -> [{ mint, ts, gross, f, s }]
+// sticky rejects: a coin rejected at or before a checkpoint is never sampled from then on (no look-ahead: only earlier rejects count)
+const rejAt = new Map();
+try { for (const r of db.prepare("SELECT mint, first_ts FROM rejects WHERE kind = 'curve'").iterate()) rejAt.set(r.mint, r.first_ts); } catch { /* table not created yet */ }
 for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features FROM snapshots WHERE features IS NOT NULL AND reject IS NULL AND COALESCE(gap,0) = 0 AND checkpoint IN (${entryCps.join(',')}) ORDER BY ts`).iterate()) {
+  { const rj = rejAt.get(r.mint); if (rj != null && rj <= r.ts) { quality.stickyRejected = (quality.stickyRejected || 0) + 1; continue; } }
   let f; try { f = JSON.parse(r.features); } catch { continue; }
   const T = tok.get(r.mint);
   for (const h of HORIZONS) {

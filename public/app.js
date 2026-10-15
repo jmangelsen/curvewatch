@@ -43,7 +43,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -1437,7 +1437,7 @@ function renderDrill() {
     const lim = DR.shown[ti] || 50;
     return `<div class="drill-tbl"><h3>${esc(tb.title)} <span class="hint">· ${rows.length} rows${rows.length ? ' · tap a column to sort' : ''}</span></h3>
       ${rows.length ? `<div class="table-wrap"><table><thead><tr>${tb.cols.map((c) => `<th data-t="${ti}" data-col="${c.k}" class="${NUMF.has(c.fmt) ? 'num' : ''}" ${so?.c === c.k ? `aria-sort="${so.dir === 'asc' ? 'ascending' : 'descending'}"` : ''}>${esc(c.h)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.drill ? `data-drill="${esc(r.drill)}" data-label="${esc(r.label || '')}" data-value="${esc(r.loPct == null ? '' : signed(r.loPct, 1, '%') + ' lower bound')}" data-sub="${esc(r.window || '')}"` : r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_|book_|edge|tape|tok|tr_|wallet)/.test(d.key) ? `data-mint="${esc(r.mint)}"${r.kind === 'grad' ? ' data-kind="grad"' : ''}` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.drill ? `data-drill="${esc(r.drill)}" data-label="${esc(r.label || '')}" data-value="${esc(r.loPct == null ? '' : signed(r.loPct, 1, '%') + ' lower bound')}" data-sub="${esc(r.window || '')}"` : r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_|book_|edge|tape|tok|tr_|wallet|rej)/.test(d.key) ? `data-mint="${esc(r.mint)}"${r.kind === 'grad' ? ' data-kind="grad"' : ''}` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
       ${rows.length > lim ? `<button class="more" data-t="${ti}">Show ${Math.min(100, rows.length - lim)} more</button>` : ''}` : '<div class="empty">No rows yet.</div>'}</div>`;
   }).join('');
   $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
@@ -1613,3 +1613,52 @@ async function loadTracker() {
 $('#trFeed')?.addEventListener('click', (e) => { const r = e.target.closest('[data-mint]'); if (r) openDrawer(r.dataset.mint); });
 document.querySelector('.tabs [data-tab=intel]')?.addEventListener('click', loadTracker);
 setInterval(() => { if (S.tab === 'intel' && !document.hidden) loadTracker(); }, 10000);
+
+// ================= Rejects tab =================
+const RJ = { kind: 'curve', cat: 'All', v: null, all: false };
+async function loadRejects() {
+  try { RJ.v = await get('/api/rejects'); } catch (e) { $('#rjKpis').innerHTML = `<div class="empty"><strong>Rejects unavailable</strong> ${esc(e.message)}</div>`; return; }
+  renderRejects();
+}
+function renderRejects() {
+  const v = RJ.v; if (!v) return;
+  const k = (key, label, value, sub) => `<div class="kpi" data-drill="${key}" data-label="${esc(label)}" data-value="${esc(value)}" data-sub="${esc(sub)}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
+  const C = v.curve, G = v.grad, rate = (a, b) => (b ? pct((a / b) * 100, 1) : '–');
+  const b = v.blocked.live, blocked = (b.alert || 0) + (b.fill || 0) + (b.grad || 0) + (b.tracker || 0);
+  $('#rjKpis').innerHTML =
+    k('rej_curve', 'New coins rejected', n(C.n, 0), `${rate(C.n, C.launches)} of ${n(C.launches, 0)} launches`)
+    + k('rej_grad', 'Graduates rejected', n(G.n, 0), G.seen ? `${rate(G.n, G.seen)} of ${n(G.seen, 0)} watched` : 'graduated coins')
+    + k('rej_missed_curve', 'New coins 2x+ after reject', rate(C.outcome.x2, C.outcome.labeled), `${n(C.outcome.x2, 0)} of ${n(C.outcome.labeled, 0)} with outcome`)
+    + k('rej_missed_grad', 'Graduates 2x+ after reject', rate(G.outcome.x2, G.outcome.labeled), `${n(G.outcome.x2, 0)} of ${n(G.outcome.labeled, 0)} with outcome`)
+    + k('rej_curve', 'Last hour', `${n(C.hour, 0)} + ${n(G.hour, 0)}`, 'new coins + graduates')
+    + k('rej_blocked', 'Trades blocked', n(blocked, 0), `since restart · ${n(b.fill || 0, 0)} fill${b.fill === 1 ? '' : 's'}, ${n(b.alert || 0, 0)} alert${b.alert === 1 ? '' : 's'}, ${n(b.tracker || 0, 0)} wallet trade${b.tracker === 1 ? '' : 's'}`);
+  const cats = (V, kind) => {
+    const oc = Object.fromEntries((V.outcome.byCat || []).map((r) => [r.cat, r])), max = Math.max(1, ...V.byCat.map((c) => c.n));
+    return V.byCat.length ? V.byCat.map((c) => { const o = oc[c.cat]; const x2 = o && o.n ? (o.x2 / o.n) * 100 : null;
+      return `<button class="rj-cat" data-drill="rej_cat:${kind}:${esc(c.cat)}" data-label="${esc(c.cat)}" data-value="${n(c.n, 0)} coins" data-sub="${kind === 'curve' ? 'new coins' : 'graduates'} · 24 h">
+        <span class="rj-name">${esc(c.cat)}</span><span class="rj-bar"><i style="width:${(c.n / max) * 100}%"></i></span><span class="rj-n">${n(c.n, 0)}</span><span class="rj-x ${x2 >= 10 ? 'down' : 'faint'}">${x2 == null ? '–' : pct(x2, 0)} 2x+</span></button>`; }).join('')
+      : '<div class="empty">Nothing rejected in this window.</div>';
+  };
+  $('#rjCatCurve').innerHTML = cats(C, 'curve'); $('#rjCatGrad').innerHTML = cats(G, 'grad');
+  const V = RJ.kind === 'curve' ? C : G;
+  if (RJ.cat !== 'All' && !V.byCat.some((c) => c.cat === RJ.cat)) RJ.cat = 'All';
+  $('#rjCats').innerHTML = ['All', ...V.byCat.map((c) => c.cat)].map((c) => `<button data-c="${esc(c)}" aria-selected="${RJ.cat === c}">${esc(c)}</button>`).join('');
+  $('#rjKind').querySelectorAll('button').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.k === RJ.kind)));
+  let rows = v.recent[RJ.kind]; if (RJ.cat !== 'All') rows = rows.filter((r) => r.cat === RJ.cat);
+  const cap = RJ.all ? rows.length : 25, px = solPx() || 0;
+  const mc = (r) => (RJ.kind === 'grad' ? usd(r.mcap_usd) : r.mcap != null ? usd(r.mcap * px) : '–');
+  $('#rjFeed').innerHTML = rows.length ? `<div class="rj-feed"><div class="rj-row rj-head"><span>When</span><span>Coin</span><span>Reason</span><span class="num">Mcap</span><span class="num" title="Highest market cap after rejection, as a multiple"><span class="rj-dl">High after</span><span class="rj-ml">Peak</span></span></div>
+    ${rows.slice(0, cap).map((r) => `<div class="rj-row" data-mint="${esc(r.mint)}"${RJ.kind === 'grad' ? ' data-kind="grad"' : ''}><span class="faint">${ago(r.first_ts)}</span><span class="rj-sym">${esc(r.symbol || shortM(r.mint))}</span><span class="rj-reason">${esc(r.reason || '')}</span><span class="num">${mc(r)}</span><span class="num ${r.missed ? 'up' : 'faint'}">${r.afterX == null ? 'pending' : `${n(r.afterX, 2)}×`}</span></div>`).join('')}</div>
+    ${rows.length > cap ? `<button class="more rj-more" data-rjall="1">Show all ${rows.length} recent</button>` : ''}
+    <button class="more rj-more" data-drill="${RJ.kind === 'curve' ? 'rej_curve' : 'rej_grad'}" data-label="Full 24 h list" data-value="${n(V.n, 0)} coins" data-sub="${RJ.kind === 'curve' ? 'new coins' : 'graduates'}">Open the full 24 h list</button>`
+    : '<div class="empty">No rejects in this view yet.</div>';
+}
+$('#rjKind')?.addEventListener('click', (e) => { const b = e.target.closest('button[data-k]'); if (!b) return; RJ.kind = b.dataset.k; RJ.cat = 'All'; RJ.all = false; renderRejects(); });
+$('#rjCats')?.addEventListener('click', (e) => { const b = e.target.closest('button[data-c]'); if (!b) return; RJ.cat = b.dataset.c; RJ.all = false; renderRejects(); });
+$('#rjFeed')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-rjall]')) { RJ.all = true; renderRejects(); return; }
+  const r = e.target.closest('.rj-row[data-mint]'); if (!r) return;
+  if (r.dataset.kind === 'grad') openGradDrawer(r.dataset.mint); else openDrawer(r.dataset.mint);
+});
+document.querySelector('.tabs [data-tab=rejects]')?.addEventListener('click', loadRejects);
+setInterval(() => { if (S.tab === 'rejects' && !document.hidden) loadRejects(); }, 15000);

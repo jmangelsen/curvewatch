@@ -31,6 +31,7 @@
     <button role="tab" aria-selected="false" data-tab="intel" data-short="Intel">Intel</button>
     <button role="tab" aria-selected="false" data-tab="health" data-short="Health">Health<span class="hdot" id="hDot"></span></button>
     <button role="tab" aria-selected="false" data-tab="edge" data-short="Edge">Edge Lab</button>
+    <button role="tab" aria-selected="false" data-tab="rejects" data-short="Rejects">Rejects</button>
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
@@ -264,6 +265,23 @@
     </div>
   </section>
 
+  <section id="tab-rejects" class="tab-panel" hidden>
+    <div class="grid-rej">
+      <article class="card rj-hero">
+        <div class="card-head"><h2>Rejects bucket</h2><span class="hint">a coin that fails a hard filter once is out for good: no alerts, no paper trades, no tracked-wallet trades recorded · last 24 h</span></div>
+        <div id="rjKpis" class="mini-kpis"><div class="empty">Loading rejects…</div></div>
+      </article>
+      <article class="card"><div class="card-head"><h2>Why new coins are rejected</h2><span class="hint">tap a reason · 2x+ = went on to double after rejection</span></div><div id="rjCatCurve" class="rj-cats"></div></article>
+      <article class="card"><div class="card-head"><h2>Why graduates are rejected</h2><span class="hint">tap a reason · warm-up after migration is not a reject</span></div><div id="rjCatGrad" class="rj-cats"></div></article>
+      <article class="card rj-feed-card">
+        <div class="card-head"><h2>Live rejects</h2>
+          <div class="seg" id="rjKind"><button data-k="curve" aria-selected="true">New coins</button><button data-k="grad" aria-selected="false">Graduated</button></div>
+          <span class="hint" id="rjFeedHint">tap a coin for its detail</span></div>
+        <div class="seg rj-chips" id="rjCats"></div>
+        <div id="rjFeed"></div>
+      </article>
+    </div>
+  </section>
   <section id="tab-edge" class="tab-panel" hidden>
     <div class="grid-edge">
       <article class="card e-hero" id="eHero"><div class="empty">Loading Edge Lab…</div></article>

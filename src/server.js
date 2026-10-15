@@ -16,7 +16,7 @@ import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js'
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -84,6 +84,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
 
   app.get('/api/edge', (req, res) => { try { res.json(edgeView()); } catch (e) { log.warn('edge', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/edge/:key', (req, res) => { const d = edgeDetail(req.params.key); d ? res.json(d) : res.status(404).json({ error: 'not computed yet' }); });
+  app.get('/api/rejects', (req, res) => { try { res.json(rejectsView({ windowH: Math.min(168, Math.max(1, Number(req.query.h) || 24)) })); } catch (e) { log.warn('rejects', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/tracker', (req, res) => { try { res.json(trackerView()); } catch (e) { log.warn('tracker', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/tape/marks', (req, res) => { const mins = Math.min(1440, Math.max(10, Number(req.query.mins) || 1440)); res.json({ since: Date.now() - mins * 60000, marks: tapeMarks(Date.now() - mins * 60000) }); });
   app.get('/api/drill/:key', (req, res) => { try { const d = drill(req.params.key); if (!d) return res.status(404).json({ error: 'unknown tile' }); res.json(d); } catch (e) { log.warn('drill', req.params.key, e.stack); res.status(500).json({ error: e.message }); } });

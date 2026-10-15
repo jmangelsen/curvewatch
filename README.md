@@ -382,6 +382,19 @@ Amber ticks on the tape = paper entries, green/red ticks = exits (by P&L). Tap a
 - The scoring feature `smartBuyers` still uses the older smart set; it was not switched, so the paper-test fingerprint is unchanged.
 - API: `GET /api/tracker`, drills `tracker`, `tr_trades`, `tr_open`, `wallet:<address>`.
 
+## 5g. Rejects bucket and the Rejects tab (October 15, 2026)
+
+Rule: a coin that fails any hard filter once is rejected for good (sticky). From that moment it gets no alerts, no paper entry in any book (main, band, flow, confirm, random control, graduates), no tracked-wallet trade records, and no Edge Lab samples. Paper fills re-check the rule at the moment of fill (`rejected before entry: ...` skips). Positions already open when a coin is rejected keep their normal exits. The graduates' post-migration warm-up is not a reject.
+
+- New coin rejects (src/engine/score.js): non-SOL quote, mayhem mode, serial launcher, creator sold, bundled launch, top-10 concentration, drawdown from peak, late on curve, wash trading.
+- Graduate rejects (src/engine/graduates.js): low liquidity, collapsed vs migration, no trades in 5 min, thin pool.
+- Table `rejects` (kind, mint, first_ts, reason, category, age, mcap at reject). Backfilled once from snapshots and grad_snapshots on first start (kv `rejects_backfill_v1`).
+- Rejects tab: 24 h counts and share of launches/graduates, reasons with a "2x+ after reject" rate (curve: max mcap after the rejecting snapshot; graduates: 6 h high after the rejecting poll), live feed with New coins / Graduated switch and reason filters, blocked-trade counters. Every tile, reason and row opens a drill-down or the coin's drawer.
+- Smart-wallet tracker: views hide every trade on a coin in the bucket; wallet ranking restarted in new tables `wallet_perf2` / `wallet_positions2` scored only on never-rejected coins (old tables kept, not deleted).
+- Edge Lab: snapshots of coins rejected at or before the entry snapshot are skipped (no look-ahead).
+- API: `GET /api/rejects?h=24`; drills `rej_curve`, `rej_grad`, `rej_missed_curve`, `rej_missed_grad`, `rej_blocked`, `rej_cat:<kind>:<category>`.
+- Caveats: the graduates paper book has no settings fingerprint, so its history mixes pre- and post-rule trades; about 500 graduate rejects recorded at the first restart carry the restart time, not the true first-reject time; non-SOL-quote coins' mcap is computed with SOL curve math and is unreliable.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.
