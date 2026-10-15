@@ -9,6 +9,7 @@ import * as paper from './engine/paper.js';
 import { metaStats, metaQueueLen } from './engine/metadata.js';
 import { sendTelegram, tgEnabled, tgStats, esc as tgEsc } from './engine/telegram.js';
 import { TELEGRAM_DAILY_BLOCK, telegramFullText } from './compliance.js';
+import { startTgBot } from './engine/tgBot.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
 import { Graduates } from './engine/graduates.js';
@@ -187,6 +188,7 @@ const healthData = (scope) => {
 };
 try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
 startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail }), edgeView, edgeDetail, trackerView, rejectsView });
+startTgBot({ engine, grads, strong, status }); // two-way lookups; no-op unless Telegram is configured
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

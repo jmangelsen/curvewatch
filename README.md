@@ -102,6 +102,10 @@ Set at minimum:
 | `TELEGRAM_BOT_TOKEN` | from **@BotFather** → `/newbot` |
 | `TELEGRAM_CHAT_ID` | open your bot, send `/start`, then run `TELEGRAM_BOT_TOKEN=<token> npm run tg-setup` (or `docker compose run --rm curvewatch node scripts/telegram-setup.js`). It prints your numeric chat id and sends a test message. A @username is not enough. |
 | `TELEGRAM_MODE` | `strong` (default): only strong signals and system messages. `all`: every alert too (expect dozens per hour). |
+| `TELEGRAM_STRONG_CHAT_ID` | optional second chat or group for strong signals (group ids are negative; add the bot, post, rerun `tg-setup`) |
+
+**Two-way lookups.** Once the token and chat id are set, the bot also answers messages from the allowlisted chat(s). Send a mint address or a pump.fun / DexScreener / Solscan link and it replies with a data card: stage, live curve state, score with its reasons and flags, creator history, holder concentration, the sticky-reject verdict, graduation base rates for that score bucket and reject category, the PumpSwap pool state if it graduated, and this machine's own alerts and paper trades on the token. `/status` gives a one-line health check; `/help` lists commands. Messages from any other chat are ignored and logged. The card is identical for anyone who asks, never uses the words buy or sell, and ends with the disclosure; it is a lookup, not an entry recommendation. Polling uses one `getUpdates` call every 3 s (long-poll), so only one Curvewatch instance should run per bot token.
+
 | `HEALTHCHECK_URL` | free check at healthchecks.io (period 5 min, grace 5 min); you get emailed if the box or feed dies |
 | `RPC_WS_URLS` | leave the public default to start; later add `wss://mainnet.helius-rpc.com/?api-key=KEY,` in front |
 
