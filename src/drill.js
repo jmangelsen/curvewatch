@@ -4,6 +4,7 @@
 // Values are raw (SOL amounts, SOL mcaps, ms timestamps); the client converts SOL to USD with the live price.
 import { db } from './db.js';
 import { config } from './config.js';
+import { runGradBacktest, gradBacktestTrades } from './engine/gradBacktest.js';
 import { market } from './market.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
@@ -521,8 +522,27 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         { title: 'Recorded trades, newest first', cols: [C('Time', 'ts', 'time'), C('Side', 'side'), C('SOL', 'sol', 'solusd'), C('Wallet', 'wallet', 'short')], rows: trades.map((t) => ({ ...t, side: t.is_buy ? 'buy' : 'sell' })) },
       ] };
   };
+  const symOf = db.prepare('SELECT symbol FROM grad_watch WHERE mint = ?');
+  function gbtDrill(k) {
+    const BT = runGradBacktest({ solUsd: market.solUsd || 100 });
+    if (k === 'all') {
+      return { title: 'Graduates backtest sweep', explain: `${BT.variants} variants (${BT.entryScores.length} entry thresholds × ${BT.variants / BT.entryScores.length} exit rules) replayed over ${BT.snapshots.toLocaleString()} stored ${BT.resolutionMin}-minute snapshots of ${BT.tokens.toLocaleString()} graduates. Every variant is scored on the same history, so the best row is flattered by selection: the expected best-of-${BT.variants} lift on pure noise is about ${BT.bestOfLiftPts == null ? '?' : BT.bestOfLiftPts.toFixed(0)} points. Trust the time split (first half / second half) over the rank.`,
+        stats: [['Variants', BT.variants, 'num'], ['Snapshots', BT.snapshots, 'num'], ['Graduates', BT.tokens, 'num'], ['Best-of lift', BT.bestOfLiftPts, 'spct']],
+        tables: [{ title: 'All variants, best lower bound first', cols: [C('Entry ≥', 'entryScore', 'num0'), C('Exit rule', 'label'), C('Trades', 'n', 'num'), C('Tokens', 'mints', 'num'), C('Mean', 'meanPct', 'spct'), C('95% low', 'loPct', 'spct'), C('1st half', 'firstHalfPct', 'spct'), C('2nd half', 'secondHalfPct', 'spct'), C('Win', 'winPct', 'pct'), C('Liq gone', 'liqGone', 'num'), C('Live', 'live')],
+          rows: BT.results.map((r) => ({ ...r, live: r.live || '', drill: `gbt:${r.key}` })) }] };
+    }
+    const R = BT.results.find((r) => r.key === k), T = gradBacktestTrades(k); if (!R || !T) return null;
+    return { title: `${R.label} · entries at score ≥ ${R.entryScore}`, explain: `Every scored poll at or above ${R.entryScore} (one per token per ${config.grads.alertCooldownMin} min) is entered at that poll's price plus price impact, fee and slippage, then walked forward through the stored snapshots under this exit rule. "Liquidity gone" means the token was later dropped for a dead pool while the position was still open; it is booked at −100%. "Open at end of data" positions are marked at the last price.`,
+      stats: [['Trades', R.n, 'num'], ['Mean', R.meanPct, 'spct'], ['95% low', R.loPct, 'spct'], ['Win rate', R.winPct, 'pct'], ['First half', R.firstHalfPct, 'spct'], ['Second half', R.secondHalfPct, 'spct']],
+      series: { label: 'P&L per trade (%) in entry order', kind: 'bar', fmt: 'spct', points: [...T].sort((a, b) => a.ts - b.ts).map((t) => [t.ts, t.pct]) },
+      tables: [
+        { title: 'Exit mix', cols: [C('Exit', 'reason'), C('Trades', 'n', 'num'), C('Avg P&L', 'avgPct', 'spct')], rows: R.mix },
+        { title: 'Trades', cols: [C('Entered', 'ts', 'time'), C('Token', 'symbol', 'token'), C('Score', 'score', 'num0'), C('P&L', 'pct', 'spct'), C('Held', 'heldMin', 'min'), C('Exit', 'reason')],
+          rows: [...T].sort((a, b) => b.ts - a.ts).map((t) => ({ ...t, symbol: symOf.get(t.mint)?.symbol || t.mint.slice(0, 6) })) },
+      ] };
+  }
   return (key) => {
-    const fn = key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

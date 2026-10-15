@@ -1500,7 +1500,7 @@ const etaTxt = (e) => { const d = e?.daysLeft; if (d == null) return 'no tokens 
   const why = e.spanLeft >= (e.tokenDays ?? 0) ? 'for the 3-day span' : 'at the current rate'; return d < 1 / 24 ? `under an hour ${why}` : d < 1 ? `about ${Math.ceil(d * 24)} h ${why}` : `about ${n(d, 1)} days ${why}`; };
 const sp = (v, d = 1) => (v == null || !Number.isFinite(v) ? '–' : signed(v, d, '%'));
 async function loadEdge() {
-  try { const [d, gp] = await Promise.all([get('/api/edge'), get('/api/grads/paper').catch(() => null)]); EX.data = d; EX.books = gp?.books || null; renderEdge(); } catch (e) { $('#eHero').innerHTML = `<div class="empty"><strong>Edge Lab unavailable</strong>${esc(e.message)}</div>`; }
+  try { const [d, gp, bt] = await Promise.all([get('/api/edge'), get('/api/grads/paper').catch(() => null), get('/api/grads/backtest').catch(() => null)]); EX.data = d; EX.books = gp?.books || null; EX.bt = bt; renderEdge(); } catch (e) { $('#eHero').innerHTML = `<div class="empty"><strong>Edge Lab unavailable</strong>${esc(e.message)}</div>`; }
 }
 const eRow = (t) => (EX.scope === 'counted' ? t : { ...t, ...t.context, halves: null, robustMeanPct: null, vsUniverse: null, checks: {} });
 function renderEdge() {
@@ -1542,7 +1542,33 @@ function renderEdge() {
   const fams = ['All', ...new Set(v.hypotheses.map((h) => h.family).filter((f) => f !== 'Reference')), 'Reference'];
   $('#eFam').innerHTML = fams.map((f) => `<button data-f="${esc(f)}" aria-selected="${EX.fam === f}">${esc(f)}</button>`).join('');
   $('#eWin').innerHTML = ['All', ...v.horizons.map((h) => h.id)].map((w) => `<button data-w="${w}" aria-selected="${EX.win === w}">${w === 'All' ? 'All windows' : w.replace('-', '→') + 's'}</button>`).join('');
-  renderEdgeMap(); renderEdgeBoard(); renderEdgeSide(); renderEdgeBooks();
+  renderEdgeMap(); renderEdgeBoard(); renderEdgeSide(); renderEdgeBooks(); renderEdgeBacktest();
+}
+EX.btScore = 'all';
+function renderEdgeBacktest() {
+  const el = $('#eBacktest'); if (!el) return;
+  const BT = EX.bt;
+  if (!BT?.results) { el.innerHTML = `<div class="card-head"><h2>Graduates backtest sweep</h2></div><div class="empty"><strong>Not available</strong>The backtest runs on the stored graduate snapshots.</div>`; return; }
+  const rows = BT.results.filter((r) => EX.btScore === 'all' || r.entryScore === Number(EX.btScore));
+  const top = rows.slice(0, 8), live = rows.filter((r) => r.live && !top.includes(r));
+  const best = BT.results[0], anyPositive = BT.results.some((r) => r.loPct > 0);
+  const row = (r, i) => `<tr data-drill="gbt:${r.key}" data-label="${esc(r.label)}" role="button" tabindex="0" class="${r.live ? 'is-live' : ''}">
+      <td class="mono">${i != null ? i + 1 : '·'}</td><td class="mono">${r.entryScore}</td><td>${esc(r.label)}${r.live ? ` <span class="bookchip ${r.live}">live ${r.live}</span>` : ''}</td>
+      <td class="mono">${r.n}<span class="faint"> / ${r.mints}</span></td><td class="mono ${cls(r.meanPct)}">${signed(r.meanPct, 1, '%')}</td><td class="mono ${cls(r.loPct)}">${signed(r.loPct, 1, '%')}</td>
+      <td class="mono"><span class="${cls(r.firstHalfPct)}">${signed(r.firstHalfPct, 0, '%')}</span> <span class="faint">→</span> <span class="${cls(r.secondHalfPct)}">${signed(r.secondHalfPct, 0, '%')}</span></td><td class="mono">${pct(r.winPct, 0)}</td></tr>`;
+  el.innerHTML = `<div class="card-head"><h2>Graduates backtest sweep</h2><span class="hint">${BT.variants} variants · ${n(BT.snapshots, 0)} snapshots · ${n(BT.tokens, 0)} graduates · ${BT.resolutionMin}-min resolution</span></div>
+    <p class="explain">Every entry threshold and exit rule replayed over the same stored history, so nothing here waits for new data. Nothing here is a pass either: the same history scores all ${BT.variants} variants, and the expected best-of-${BT.variants} lift on pure noise is about <b>${BT.bestOfLiftPts == null ? '?' : n(BT.bestOfLiftPts, 0)} points</b>, so read the time split (first half → second half), not the rank. ${anyPositive ? 'At least one variant has a lower bound above zero; that is a candidate to register in the Edge Lab, not a result.' : `<b>No variant has a lower bound above zero.</b> The least bad is "${esc(best.label)}" at entries ≥ ${best.entryScore}: ${signed(best.meanPct, 1, '%')} per trade. Shorter holds lose less, which says the alert fires on momentum that then fades; the lever is entry quality, not exit shape.`}</p>
+    <div class="seg" role="tablist">${['all', ...BT.entryScores].map((v) => `<button data-bt="${v}" class="${String(EX.btScore) === String(v) ? 'on' : ''}">${v === 'all' ? 'All entries' : `score ≥ ${v}`}</button>`).join('')}</div>
+    <div class="btable-wrap"><table class="btable compact"><thead><tr><th>#</th><th>Entry ≥</th><th>Exit rule</th><th>Trades / tokens</th><th>Mean</th><th>95% low</th><th>1st → 2nd half</th><th>Win</th></tr></thead>
+      <tbody>${top.map(row).join('')}${live.length ? `<tr class="sep"><td colspan="8">live rules, for reference</td></tr>${live.map((r) => row(r, null)).join('')}` : ''}</tbody></table></div>
+    <div class="bt-cards">${[...top, ...live].map((r, i) => `<div class="bt-card ${r.live ? 'is-live' : ''}" data-drill="gbt:${r.key}" data-label="${esc(r.label)}" role="button" tabindex="0">
+        <div class="bt-card-head"><span class="mono faint">${top.includes(r) ? '#' + (i + 1) : 'live'}</span><span class="mono">entry ≥ ${r.entryScore}</span>${r.live ? `<span class="bookchip ${r.live}">live ${r.live}</span>` : ''}</div>
+        <div class="bt-card-rule">${esc(r.label)}</div>
+        <div class="bt-card-grid"><div><div class="label">Mean</div><div class="value ${cls(r.meanPct)}">${signed(r.meanPct, 1, '%')}</div></div><div><div class="label">95% low</div><div class="value ${cls(r.loPct)}">${signed(r.loPct, 1, '%')}</div></div>
+          <div><div class="label">1st → 2nd half</div><div class="value"><span class="${cls(r.firstHalfPct)}">${signed(r.firstHalfPct, 0, '%')}</span> <span class="faint">→</span> <span class="${cls(r.secondHalfPct)}">${signed(r.secondHalfPct, 0, '%')}</span></div></div>
+          <div><div class="label">Trades / win</div><div class="value">${r.n} <span class="faint">· ${pct(r.winPct, 0)}</span></div></div></div></div>`).join('')}</div>
+    <div class="gbook-pair" data-drill="gbt:all" data-label="Backtest sweep" role="button" tabindex="0">Open all ${rows.length} variants, with every trade behind each row.</div>`;
+  el.querySelectorAll('[data-bt]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); EX.btScore = b.dataset.bt; renderEdgeBacktest(); }));
 }
 function renderEdgeBooks() {
   const el = $('#eBooks'); if (!el) return;

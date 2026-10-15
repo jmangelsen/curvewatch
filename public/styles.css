@@ -729,3 +729,18 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .gbook-pair.replay { border-left-color: var(--text-faint); }
 .gbook-pair .eyebrow { display: block; font-size: var(--text-xs); letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
 .gbook-pair .gbook-exits { margin-top: var(--space-2); display: flex; }
+.btable.compact td, .btable.compact th { padding: 6px 8px; font-size: var(--text-xs); white-space: nowrap; }
+.btable.compact td:nth-child(3) { white-space: normal; min-width: 220px; }
+.btable tr.is-live td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.btable tr.sep td { color: var(--text-faint); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .06em; padding-top: 10px; border-bottom: 0; }
+.btable tr[data-drill] { cursor: pointer; } .btable tr[data-drill]:hover td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.faint { color: var(--text-faint); }
+.bt-cards { display: none; }
+.bt-card { border: 1px solid var(--line); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-2); background: var(--surface-2); cursor: pointer; }
+.bt-card.is-live { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.bt-card-head { display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-xs); }
+.bt-card-rule { margin: 6px 0 8px; font-size: var(--text-sm); line-height: 1.35; }
+.bt-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-3); }
+.bt-card-grid .label { font-size: var(--text-xs); color: var(--text-faint); }
+.bt-card-grid .value { font-family: var(--font-mono); font-size: var(--text-base); font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { #eBacktest .btable-wrap { display: none; } .bt-cards { display: block; } #eBacktest .seg { display: flex; flex-wrap: wrap; } #eBacktest .seg button { flex: 1 1 auto; } }

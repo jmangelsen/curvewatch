@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { tapeMarks } from './drill.js';
+import { runGradBacktest } from './engine/gradBacktest.js';
 import { q } from './db.js';
 import { datasetStats, calibration, alertStats } from './stats.js';
 import * as paper from './engine/paper.js';
@@ -74,6 +75,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));
   app.get('/api/grads/paper', (req, res) => res.json(grads.paper()));
   app.get('/api/grads/calibration', (req, res) => res.json(grads.calibration()));
+  app.get('/api/grads/backtest', (req, res) => { try { res.json(runGradBacktest({ solUsd: grads.solUsd || 100, force: req.query.force === '1' })); } catch (e) { log.warn('backtest', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
 
   app.get('/api/market', (req, res) => res.json(gateView()));
