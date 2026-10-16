@@ -10,7 +10,7 @@
 #   3. .env from deploy/env.production with a random dashboard password (never overwrites an existing .env)
 #   4. npm ci --omit=dev, npm test
 #   5. systemd unit (deploy/curvewatch.service), enabled and started, with journald logging
-#   6. cron: nightly verified SQLite backup at 03:15 (14 kept), weekly `VACUUM` of the live DB Sunday 04:30
+#   6. cron: nightly verified SQLite backup at 03:15 (14 kept), weekly `VACUUM` Sunday 04:30, watchdog every 5 min (restarts a hung feed)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 APP="$(pwd)"
@@ -71,11 +71,13 @@ for i in $(seq 1 30); do
   sleep 2; [ "$i" = 30 ] && { echo "Not healthy after 60 s. Last log lines:"; journalctl -u curvewatch -n 60 --no-pager; exit 1; }
 done
 
-say "6/6 Cron: nightly verified backup, weekly VACUUM"
+say "6/6 Cron: nightly verified backup, weekly VACUUM, 5-minute watchdog"
 chmod +x deploy/backup.sh
 ( crontab -l 2>/dev/null | grep -v '# curvewatch' ; \
   echo "15 3 * * * ${APP}/deploy/backup.sh >> /var/log/curvewatch-backup.log 2>&1 # curvewatch"; \
-  echo "30 4 * * 0 sqlite3 ${APP}/data/curvewatch.db 'PRAGMA wal_checkpoint(TRUNCATE); VACUUM;' >> /var/log/curvewatch-backup.log 2>&1 # curvewatch" ) | crontab -
+  echo "30 4 * * 0 sqlite3 ${APP}/data/curvewatch.db 'PRAGMA wal_checkpoint(TRUNCATE); VACUUM;' >> /var/log/curvewatch-backup.log 2>&1 # curvewatch"; \
+  echo "*/5 * * * * APP=${APP} ${APP}/deploy/watchdog.sh # curvewatch" ) | crontab -
+chmod +x deploy/watchdog.sh
 touch /var/log/curvewatch-backup.log
 crontab -l | grep '# curvewatch'
 # first backup now, so the Health tab shows a fresh one and the script is proven on this box

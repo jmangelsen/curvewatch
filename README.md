@@ -153,6 +153,8 @@ systemctl restart curvewatch                                   # after editing /
 tail -3 /var/log/curvewatch-backup.log                         # last backups
 ```
 
+**Watchdog.** `deploy/watchdog.sh` runs from cron every 5 minutes. systemd already restarts a crashed process; the watchdog handles the other failure, a process that is alive while its feeds are dead (stuck websocket, DNS, RPC ban): three consecutive unhealthy `/health` checks restart the unit, log to `/var/log/curvewatch-watchdog.log`, and post to Telegram if configured. Restarts are rate-limited to one per 30 minutes so a dead upstream cannot cause a restart loop.
+
 ### 3.9 Monitoring and failure recovery
 
 | Failure | What happens automatically | What you do |
