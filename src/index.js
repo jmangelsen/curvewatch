@@ -40,7 +40,7 @@ const rpcs = config.tradeSource === 'rpc' ? Array.from({ length: Math.max(1, con
 const engine = new Engine({ pumpportal: pp });
 const grads = new Graduates();
 const strong = new Strong();
-engine.on('alert', (a) => { try { strong.consider('curve', { ...a, mcapUsd: market.solUsd ? a.mcap * market.solUsd : null }); } catch (e) { log.warn('strong (curve) failed', e.message); } });
+engine.on('alert', (a) => { try { const row = strong.consider('curve', { ...a, mcapUsd: market.solUsd ? a.mcap * market.solUsd : null }); if (row) { const why = engine.cleanEntry(a.mint); if (why) log.info(`clean book skipped ${a.symbol}: ${why}`); } } catch (e) { log.warn('strong (curve) failed', e.message); } });
 grads.on('alert', (a) => { try { strong.consider('grad', { ...a, mcapUsd: a.mcap }); } catch (e) { log.warn('strong (grad) failed', e.message); } });
 
 const refreshPx = () => refreshSolUsd(grads.solUsd).then((px) => { if (px && !grads.solUsd) grads.solUsd = px; });

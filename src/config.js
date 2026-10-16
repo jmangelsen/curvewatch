@@ -128,6 +128,10 @@ export const config = {
     // Control group: at each Main/Band/Flow signal, buy a random OTHER eligible token matched on age and mcap.
     // Every strategy must beat this, not just zero; otherwise the score adds nothing over picking at random.
     random: { enabled: bool('RANDOM_ENABLED', true), ageTolPct: num('RANDOM_AGE_TOL_PCT', 50), mcapTolPct: num('RANDOM_MCAP_TOL_PCT', 40) },
+    // Candidate books (registered 2026-10-16 after the first two full days came in at −14…−21% for every book).
+    clean: { enabled: bool('CLEAN_ENABLED', true), maxBundlePct: num('CLEAN_MAX_BUNDLE_PCT', 25), maxTop10Pct: num('CLEAN_MAX_TOP10_PCT', 40) },
+    hold120: { enabled: bool('HOLD120_ENABLED', true), checkpointSec: num('HOLD120_CHECKPOINT_SEC', 120) },
+    timed: { enabled: bool('TIMED_ENABLED', true), holdMin: num('TIMED_HOLD_MIN', 60) },
     confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 38.5) },
   },
 
@@ -143,6 +147,8 @@ export const config = {
     lookbackHours: num('MARKET_GATE_LOOKBACK_H', 6),
   },
 
+  // 24-hour gate: the bar a book must clear on a rolling day before any money is discussed. Written before looking.
+  gate24h: { hours: num('GATE24_HOURS', 24), minN: num('GATE24_MIN_N', 300), minMeanPct: num('GATE24_MIN_MEAN_PCT', 0), minLoPct: num('GATE24_MIN_LO_PCT', -3) },
   killRule: {
     // PASS needs all of: n >= minTrades, 99% low bound of avg P&L/trade > 0, both halves positive, and beating the
     // random control book (95% low bound of the difference > 0). Six books at a 95% bar would pass one by luck ~26% of the time.

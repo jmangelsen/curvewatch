@@ -181,6 +181,7 @@ export class Engine extends EventEmitter {
     t.bandAt = Date.now(); t.bandScore = s.score;
     this.startRecording(t);
     paper.scheduleEntry(t, t.alertId || null, { book: 'band', score: s.score, features: f });
+    this.maybeHold120(t, s, f);
     this.maybeConfirm(t, s, f);
     this.maybeRandom(t);
     this.counters.bandEntries = (this.counters.bandEntries || 0) + 1;
@@ -220,6 +221,27 @@ export class Engine extends EventEmitter {
     paper.scheduleEntry(pick, null, { book: 'random', score: pick.lastScore.score, features: pick.lastFeatures });
   }
 
+  /** Hold-120 candidate: first main/band signal before the checkpoint; the entry fires at the checkpoint and requires price ≥ signal price. */
+  maybeHold120(t, s, f) {
+    const H = config.strategies.hold120;
+    if (!H.enabled || t.hold120At || t.rejectedHard || f.ageSec >= H.checkpointSec) return;
+    t.hold120At = Date.now();
+    paper.scheduleEntry(t, t.alertId || null, { book: 'hold120', score: s.score, features: f, delaySec: H.checkpointSec - f.ageSec });
+  }
+
+  /** Clean-strong candidate: called by index.js when the Strong layer accepts a curve alert. Applies the creator and holder filters at signal time. */
+  cleanEntry(mint) {
+    const Cc = config.strategies.clean, t = this.tokens.get(mint);
+    if (!Cc.enabled || !t || t.cleanAt || t.graduated || t.rejectedHard) return 'no token';
+    const f = t.lastFeatures, s = t.lastScore; if (!f || !s || s.reject) return 'rejected';
+    const why = f.creatorRugs > 0 ? `creator has ${f.creatorRugs} rug${f.creatorRugs > 1 ? 's' : ''}` : f.creatorSold ? 'creator has sold' : f.bundlePct >= Cc.maxBundlePct ? `bundle ${round(f.bundlePct, 0)}%` : f.top10Pct >= Cc.maxTop10Pct ? `top-10 ${round(f.top10Pct, 0)}%` : null;
+    t.cleanAt = Date.now();
+    this.counters.cleanConsidered = (this.counters.cleanConsidered || 0) + 1;
+    if (why) { this.counters.cleanFiltered = (this.counters.cleanFiltered || 0) + 1; return why; }
+    paper.scheduleEntry(t, t.alertId || null, { book: 'clean', score: s.score, features: f });
+    return null;
+  }
+
   /** Confirm book: one per token, on its first main or band signal; the entry itself checks price after the wait. */
   maybeConfirm(t, s, f) {
     if (!config.strategies.confirm.enabled || t.confirmAt || t.rejectedHard) return;
@@ -237,6 +259,8 @@ export class Engine extends EventEmitter {
     t.snapshots.push(t.alertSnap); // reuse the max/min tracking machinery
     this.counters.alerts++; this.hour().alerts++;
     paper.scheduleEntry(t, id, { book: 'main', score: s.score, features: f });
+    paper.scheduleEntry(t, id, { book: 'timed', score: s.score, features: f });
+    this.maybeHold120(t, s, f);
     this.maybeConfirm(t, s, f);
     this.maybeRandom(t);
     const alert = { id, mint: t.mint, symbol: t.symbol, name: t.name, ts: t.alertedAt, score: s.score, mcap: t.mcap, ageSec: f.ageSec, progressPct: f.progressPct, reasons: s.reasons, flags: s.flags };

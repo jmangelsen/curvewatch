@@ -11,7 +11,7 @@ import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
 import { trackerView, walletDetail } from './engine/smartTracker.js';
 import { rejectsView, rejectRows } from './engine/rejects.js';
-import { closedCurrent, killStatsFrom, STRATEGIES } from './engine/paper.js';
+import { closedCurrent, killStatsFrom, STRATEGIES, gate24h } from './engine/paper.js';
 
 const H = 3600000, D = 86400000;
 const solHist = []; // [t, usd] one per minute, 48 h, in memory
@@ -327,6 +327,22 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       series: { label: 'Cumulative P&L (USD)', kind: 'line', fmt: 'susd', points: rows.map((r) => [r.exit_ts, (eq += r.pnl_sol)]) },
       tables: [{ title: 'Closed trades, newest first', cols: tradeCols.filter((c) => c.k !== 'book'), rows: [...rows].reverse().map(tradeRow) }] };
   };
+  // ---- 24h gate ----
+  const gateDrill = (b) => {
+    const g = gate24h(), x = g.books[b]; if (!x) return null;
+    const hrs = x.hours.filter((h) => h.n);
+    const line = { PASS: 'Every check cleared on a full rolling day. That is the first time this product has produced evidence worth acting on; the next step is to leave the rule untouched and see whether it holds a second day.',
+      FAIL: 'Enough trades, but at least one check failed. The failed line below is the reason; the fix is a different rule, not another day of the same one.',
+      COLLECTING: `Fewer than ${g.config.minN} closed trades in the window. At ${g.config.minN} trades the error on the mean is about ±${x.sdPct ? (1.96 * x.sdPct / Math.sqrt(g.config.minN)).toFixed(1) : '4'} points; before that a positive number is mostly noise.`,
+      CONTROL: 'The random control: picks from the same moments with the same costs. If it is positive, the market was rising and no book gets credit for the day.' }[x.status];
+    return { title: `24-hour gate · ${x.label}`, explain: `${line} Window: the ${g.config.hours} hours ending now. Rule: ${STRATEGIES[b]?.entry || b}.`,
+      stats: [['Status', x.status, 'text'], ['Closed in window', x.n, 'num'], ['Mean / trade', x.meanPct, 'spct'], ['95% low', x.loPct, 'spct'], ['Win rate', x.winRatePct, 'pct'], ['P&L in window', x.pnlSol, 'susd']],
+      series: hrs.length > 1 ? { label: 'Mean return per trade by exit hour', kind: 'bars', fmt: 'spct', points: hrs.map((h) => [h.t, h.meanPct]) } : undefined,
+      tables: [
+        { title: 'Checks', cols: [C('Check', 'k'), C('Result', 'ok'), C('Detail', 'text')], rows: Object.entries(x.checks).map(([k, c]) => ({ k: { sample: 'Sample size', mean: 'Mean after costs', bound: 'Lower bound', control: 'Random control', fixed: 'Rule fixed before window' }[k], ok: c.ok ? 'pass' : 'fail', text: c.text })) },
+        { title: 'By exit hour', cols: [C('Hour (UTC)', 'hour'), C('Closed', 'n', 'num'), C('Mean', 'meanPct', 'spct'), C('P&L', 'pnlSol', 'susd')], rows: hrs.map((h) => ({ hour: new Date(h.t).toISOString().slice(5, 13).replace('T', ' ') + ':00', n: h.n, meanPct: h.meanPct, pnlSol: h.pnlSol })) },
+      ] };
+  };
   // ---- Edge Lab ----
   const testCols = [C('Hypothesis', 'label'), C('Window', 'window'), C('Tokens', 'n', 'num'), C('Net mean', 'meanPct', 'spct'), C('Lower bound', 'loPct', 'spct'), C('Status', 'status')];
   const edgeList = (title, explain, filter) => () => {
@@ -548,7 +564,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         sections: SECTIONS,
         tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
-    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

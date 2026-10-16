@@ -36,6 +36,16 @@ export const STRATEGIES = {
     delaySec: SC.confirm.waitSec, tpMult: (1 + SC.confirm.tpGrossPct / 100) * COST, tpFraction: 1, stopPct: SC.confirm.stopNetPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin,
     requireMinRet: SC.confirm.minRetPct / 100,
     thesis: `Let the first-minute dump happen, buy only what survives, take a quicker +${SC.confirm.tpGrossPct}% (gross).` },
+  // ---- candidates, registered 2026-10-16 ----
+  clean: { id: 'clean', label: 'Clean strong', entry: `strong curve signal and creator with 0 rugs who has not sold, bundle < ${SC.clean.maxBundlePct}%, top-10 < ${SC.clean.maxTop10Pct}%`,
+    delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: 1, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, candidate: true,
+    thesis: 'Strong signals are the best-calibrated entries this machine has; the filters remove the launches where the exit is a rug or a bundle unwind rather than a market.' },
+  hold120: { id: 'hold120', label: 'Hold 120s', entry: `main or band signal before ${SC.hold120.checkpointSec}s of age; enter at the ${SC.hold120.checkpointSec}s checkpoint only if price ≥ signal price`,
+    delaySec: 0, tpMult: P.tp1Multiple, tpFraction: 1, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, requireMinRet: 0, candidate: true,
+    thesis: 'The alert fires on fading momentum; waiting for the fixed 2-minute checkpoint and requiring the price to have held removes the entries that were already rolling over.' },
+  timed: { id: 'timed', label: 'Timed 1h', entry: `main signal; no stop and no target, sell at ${SC.timed.holdMin} min (or curve close / idle)`,
+    delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: 100, trailPct: 100, maxHoldMin: SC.timed.holdMin, candidate: true,
+    thesis: 'About half of all trades hit the stop before the target. This variant rides the whole distribution for an hour; the graduates sweep found timed exits least bad, which is untested on the curve until now.' },
 };
 export const BOOKS = Object.keys(STRATEGIES).filter((b) => b === 'main' || SC[b]?.enabled !== false);
 
@@ -71,10 +81,10 @@ function valueOf(pos, token, tokens = pos.tokensLeft) {
 }
 
 /** Queue a paper entry for one book. opts: { book, score, features } */
-export function scheduleEntry(token, alertId, { book = 'main', score = null, features = null } = {}) {
+export function scheduleEntry(token, alertId, { book = 'main', score = null, features = null, delaySec = null } = {}) {
   const S = STRATEGIES[book];
   if (!P.enabled || !S || !BOOKS.includes(book) || open.has(key(book, token.mint)) || pendingEntries.some((e) => e.book === book && e.mint === token.mint)) return;
-  pendingEntries.push({ mint: token.mint, alertId, book, score, features: pickFeatures(features || token.lastFeatures), signalMcap: token.mcap, signalTs: Date.now(), at: Date.now() + S.delaySec * 1000, token });
+  pendingEntries.push({ mint: token.mint, alertId, book, score, features: pickFeatures(features || token.lastFeatures), signalMcap: token.mcap, signalTs: Date.now(), at: Date.now() + (delaySec ?? S.delaySec) * 1000, token });
 }
 
 // Restored positions whose token is no longer in the engine's memory (process restart): a minimal curve mirror,
@@ -325,6 +335,41 @@ const bookRows = (rows, b) => rows.filter((r) => (r.book || 'main') === b && !r.
 export const killRule = (book = 'main') => { const rows = closedCurrent(); return killStatsFrom(bookRows(rows, book), { control: book === 'random' || !BOOKS.includes('random') ? null : bookRows(rows, 'random') }); };
 const brief = (k) => ({ status: k.status, n: k.n, needed: k.needed, expectancyPct: k.expectancyPct, ciLowPct: k.ciLowPct, ciHighPct: k.ciHighPct, winRatePct: k.winRatePct, profitFactor: k.profitFactor, totalPnlSol: k.totalPnlSol });
 /** Side-by-side comparison for the Performance tab */
+// ---- 24-hour gate ----
+// The bar written down on 2026-10-16 before looking at the next day: a book passes when, over a rolling day, it has at
+// least minN closed trades, a positive mean after costs, a 95% lower bound above minLo, the random control is not also
+// positive (a market-wide pump does not count), and the rule was fixed before the window opened.
+const sinceStmt = { get: db.prepare('SELECT v FROM kv WHERE k = ?'), set: db.prepare('INSERT OR IGNORE INTO kv (k, v) VALUES (?, ?)') };
+for (const b of BOOKS) sinceStmt.set.run(`book_since:${b}:${CFG}`, String(Date.now())); // first time this book ran under these rules
+export function gate24h() {
+  const G = config.gate24h, now = Date.now(), start = now - G.hours * 3600000;
+  const rows = closedCurrent().filter((r) => !r.gated && r.exit_ts >= start && r.pnl_pct != null);
+  const stat = (rs) => {
+    const n = rs.length; if (!n) return { n: 0, meanPct: null, loPct: null, hiPct: null, winRatePct: null, pnlSol: 0 };
+    const mean = rs.reduce((a, r) => a + r.pnl_pct, 0) / n, sd = Math.sqrt(rs.reduce((a, r) => a + (r.pnl_pct - mean) ** 2, 0) / Math.max(1, n - 1)), se = sd / Math.sqrt(n);
+    return { n, meanPct: round(mean, 2), loPct: round(mean - 1.96 * se, 2), hiPct: round(mean + 1.96 * se, 2), winRatePct: round((rs.filter((r) => r.pnl_pct > 0).length / n) * 100, 1), pnlSol: round(rs.reduce((a, r) => a + (r.pnl_sol || 0), 0), 4), sdPct: round(sd, 1) };
+  };
+  const ctrl = stat(rows.filter((r) => (r.book || 'main') === 'random'));
+  const out = {};
+  for (const b of BOOKS) {
+    const rs = rows.filter((r) => (r.book || 'main') === b), st = stat(rs);
+    const since = Number(sinceStmt.get.get(`book_since:${b}:${CFG}`)?.v || now);
+    const checks = {
+      sample: { ok: st.n >= G.minN, text: `${st.n} / ${G.minN} closed trades in the window` },
+      mean: { ok: st.meanPct != null && st.meanPct > G.minMeanPct, text: `mean after costs ${st.meanPct != null ? `${st.meanPct > 0 ? '+' : ''}${st.meanPct}%` : '–'} (needs > ${G.minMeanPct}%)` },
+      bound: { ok: st.loPct != null && st.loPct > G.minLoPct, text: `95% lower bound ${st.loPct != null ? `${st.loPct > 0 ? '+' : ''}${st.loPct}%` : '–'} (needs > ${G.minLoPct}%)` },
+      control: { ok: b === 'random' ? true : !(ctrl.n >= 30 && ctrl.meanPct > 0), text: b === 'random' ? 'is the control' : `random control ${ctrl.n ? `${ctrl.meanPct > 0 ? '+' : ''}${ctrl.meanPct}% on ${ctrl.n}` : 'no trades'} (must not be positive)` },
+      fixed: { ok: since <= start, text: since <= start ? `rule fixed ${((now - since) / 3600000).toFixed(0)} h ago, before the window` : `rule fixed ${((now - since) / 3600000).toFixed(1)} h ago; the window must start after that (${((since - start) / 3600000).toFixed(1)} h to go)` },
+    };
+    const hard = Object.values(checks).every((c) => c.ok);
+    const status = b === 'random' ? (st.n ? 'CONTROL' : 'COLLECTING') : st.n < G.minN ? 'COLLECTING' : hard ? 'PASS' : 'FAIL';
+    // hourly path through the window, for the drill
+    const hours = []; for (let h = 0; h < G.hours; h++) { const a = start + h * 3600000, hr = rs.filter((r) => r.exit_ts >= a && r.exit_ts < a + 3600000); const x = stat(hr); hours.push({ t: a, n: x.n, meanPct: x.meanPct, pnlSol: x.pnlSol }); }
+    out[b] = { book: b, label: STRATEGIES[b].label, candidate: !!STRATEGIES[b].candidate, status, ...st, checks, since, hours };
+  }
+  return { config: G, windowStart: start, now, control: ctrl, order: BOOKS, books: out };
+}
+
 export function books() {
   const cur = closedCurrent();
   const byState = (rows, st) => rows.filter((r) => { try { return JSON.parse(r.market || '{}').state === st; } catch { return false; } });
@@ -336,7 +381,7 @@ export function books() {
       byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
   }
   const older = q.closedPapersAsc.all().filter((r) => r.cfg !== CFG || r.gap);
-  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
+  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
 }
 
 /** One-time backfill: label older closed trades (recorded before cause tracking) from the stored trade tape. */

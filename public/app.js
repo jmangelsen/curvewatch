@@ -307,7 +307,24 @@ function barsChart(el, cats, series, { h = 240, yMax = null, yFmt = (v) => `${n(
 }
 
 // ---------- kill rule card (shared by both paper books) ----------
+function renderGate() {
+  const g = S.paper?.books?.gate; if (!g) return;
+  const c = g.config, st = (x) => ({ PASS: 'up', FAIL: 'down', CONTROL: 'faint' }[x.status] || 'acc');
+  $('#gateHint').textContent = `rolling ${c.hours} h · needs ${c.minN} trades, mean > ${c.minMeanPct}%, 95% low > ${c.minLoPct}%, random not positive, rule fixed first`;
+  $('#gate').innerHTML = g.order.map((b) => { const x = g.books[b]; const failed = Object.entries(x.checks).filter(([, v]) => !v.ok).map(([k]) => ({ sample: 'sample', mean: 'mean', bound: 'bound', control: 'control', fixed: 'rule age' }[k]));
+    const value = x.status === 'COLLECTING' || x.status === 'CONTROL' ? (x.n ? signed(x.meanPct, 1, '%') : '–') : x.status;
+    const vcls = x.status === 'COLLECTING' || x.status === 'CONTROL' ? (x.n ? cls(x.meanPct) : 'faint') : st(x);
+    const sub = x.status === 'COLLECTING' ? `collecting · <b>${x.n}</b>/${c.minN} trades` : x.status === 'CONTROL' ? `control · ${x.n} trades` : `${x.n} trades · low ${signed(x.loPct, 1, '%')}${failed.length ? ` · fails: ${failed.join(', ')}` : ''}`;
+    return `<div class="kpi gate-tile ${x.candidate ? 'cand' : ''}" data-drill="gate:${b}" data-label="24h gate · ${esc(x.label)}" role="button" tabindex="0" aria-label="${esc(x.label)} gate: open detail">
+      <div class="label"><span>${esc(x.label)}</span>${x.candidate ? '<span class="cand-tag">candidate</span>' : ''}</div>
+      <div class="value ${vcls}">${value}</div>
+      <div class="sub">${sub}</div></div>`; }).join('');
+  const passed = g.order.filter((b) => g.books[b].status === 'PASS');
+  $('#gateNote').textContent = passed.length ? `${passed.map((b) => g.books[b].label).join(', ')} passed the gate on the last full day. Leave the rule alone and see if it holds a second day before anything else.` :
+    `No book has passed. A positive figure on fewer than ${c.minN} trades is inside the noise (about ±${(1.96 * 37 / Math.sqrt(27)).toFixed(0)} points at 27 trades, ±${(1.96 * 37 / Math.sqrt(c.minN)).toFixed(1)} at ${c.minN}). Tap a tile for the checks and the hour-by-hour path.`;
+}
 function renderBooks() {
+  renderGate();
   const P = S.paper; if (!P?.books) return;
   const { books: B, legacyV1: L } = P.books, band = P.band;
   $('#booksHint').textContent = `strategy lab · same costs · kill rule needs ${B.main.kill.needed} trades each`;
