@@ -142,6 +142,19 @@ cd /opt/curvewatch && git pull && docker compose up -d --build
 ```
 Open paper positions are voided on restart (honest: in-memory curve state is lost), and voided trades don't count toward the kill rule.
 
+### 3.7b One-command DigitalOcean provisioning (API)
+
+`deploy/provision-do.sh` creates the whole server from a laptop or sandbox: uploads an SSH key, creates a `s-1vcpu-2gb` Ubuntu 24.04 Droplet ($12/month, [pricing](https://www.digitalocean.com/pricing/droplets)), waits for boot, uploads the zip and a prepared `.env`, runs `deploy/install-systemd.sh` non-interactively and checks `/health`. Needs a [personal access token](https://cloud.digitalocean.com/account/api/tokens) with `account:read`, `ssh_key:read/create`, `droplet:read/create`, `image:read`, `region:read`, `size:read` (or Full Access), exported as `DIGITALOCEAN_TOKEN`.
+
+```bash
+cp deploy/env.production my.env            # fill TELEGRAM_*, DASHBOARD_PASSWORD
+ssh-keygen -t ed25519 -f ~/.ssh/curvewatch_deploy -N ""
+export DIGITALOCEAN_TOKEN=...
+ZIP=../curvewatch.zip ENV_FILE=my.env bash deploy/provision-do.sh
+```
+
+Re-running with a new zip updates the code and keeps `data/`, `backups/` and `.env`. Set `EXTRA_PUBKEY="ssh-ed25519 ..."` to add a second key (your PC) to root's `authorized_keys`.
+
 ### 3.8 Native install with systemd (no Docker)
 One command on a fresh Ubuntu 24.04 / Debian 12 box, with the project unzipped at `/opt/curvewatch`:
 ```bash
