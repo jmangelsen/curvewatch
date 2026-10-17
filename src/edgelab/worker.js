@@ -9,16 +9,18 @@ const { dbPath, reg, cost, replayCfg } = workerData;
 const t0 = Date.now();
 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 db.pragma('busy_timeout = 5000');
+// Bound the scan to a rolling window so the worker's heap stays flat as the database grows.
+const WINDOW_DAYS = Number(process.env.EDGE_WINDOW_DAYS || 10), SINCE = Date.now() - WINDOW_DAYS * 86400000;
 
 // ---------- 1. forward-return labels ----------
 const entryCps = [...new Set(HORIZONS.map((h) => h.entry))], exitCps = [...new Set(HORIZONS.map((h) => h.exit))];
 const exitMcap = new Map(); // mint -> { cp: mcap }
-for (const r of db.prepare(`SELECT mint, checkpoint c, mcap FROM snapshots WHERE checkpoint IN (${exitCps.join(',')}) AND COALESCE(gap,0) = 0`).iterate()) {
+for (const r of db.prepare(`SELECT mint, checkpoint c, mcap FROM snapshots WHERE checkpoint IN (${exitCps.join(',')}) AND COALESCE(gap,0) = 0 AND ts >= ${SINCE}`).iterate()) {
   let o = exitMcap.get(r.mint); if (!o) exitMcap.set(r.mint, (o = {})); o[r.c] = r.mcap;
 }
 const tok = new Map();
 for (const r of db.prepare(`SELECT t.mint, t.symbol, t.graduated, t.graduated_at, t.peak_mcap_1h, t.mcap_1h, t.finalized, COALESCE(t.gap,0) gap
-  FROM tokens t WHERE t.mint IN (SELECT mint FROM snapshots WHERE features IS NOT NULL)`).iterate()) tok.set(r.mint, r);
+  FROM tokens t WHERE t.created_at >= ${SINCE} AND t.mint IN (SELECT mint FROM snapshots WHERE features IS NOT NULL AND ts >= ${SINCE})`).iterate()) tok.set(r.mint, r);
 
 // tracked-wallet buys recorded live (wallet was on the tracked list when it bought)
 const trBuys = new Map(); // mint -> [{ ts, age, basis, wallet }]
@@ -33,7 +35,7 @@ const samples = Object.fromEntries(HORIZONS.map((h) => [h.id, []])); // horizon 
 // sticky rejects: a coin rejected at or before a checkpoint is never sampled from then on (no look-ahead: only earlier rejects count)
 const rejAt = new Map();
 try { for (const r of db.prepare("SELECT mint, first_ts FROM rejects WHERE kind = 'curve'").iterate()) rejAt.set(r.mint, r.first_ts); } catch { /* table not created yet */ }
-for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features FROM snapshots WHERE features IS NOT NULL AND reject IS NULL AND COALESCE(gap,0) = 0 AND checkpoint IN (${entryCps.join(',')}) ORDER BY ts`).iterate()) {
+for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features FROM snapshots WHERE features IS NOT NULL AND reject IS NULL AND COALESCE(gap,0) = 0 AND checkpoint IN (${entryCps.join(',')}) AND ts >= ${SINCE} ORDER BY ts`).iterate()) {
   { const rj = rejAt.get(r.mint); if (rj != null && rj <= r.ts) { quality.stickyRejected = (quality.stickyRejected || 0) + 1; continue; } }
   let f; try { f = JSON.parse(r.features); } catch { continue; }
   const T = tok.get(r.mint);

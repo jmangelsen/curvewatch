@@ -53,8 +53,8 @@ export function runEdgeLab() {
   if (state.running) return;
   state.running = true; state.startedAt = Date.now();
   const c = costs(); state.costs = c;
-  const w = new Worker(new URL('./worker.js', import.meta.url), { workerData: { dbPath: path.join(config.dataDir, 'curvewatch.db'), reg, cost: c,
-    replayCfg: { feePct: config.paper.feePct, slipPct: config.paper.extraSlippagePct, sizeSol: config.paper.sizeSol, exitDelaySec: config.paper.exitDelaySec, stopPct: config.paper.stopPct, tp: config.paper.tp1Multiple } }, resourceLimits: { maxOldGenerationSizeMb: 512 } });
+  const w = new Worker(new URL('./worker.js', import.meta.url), { resourceLimits: { maxOldGenerationSizeMb: Number(process.env.EDGE_WORKER_HEAP_MB || 1024) }, workerData: { dbPath: path.join(config.dataDir, 'curvewatch.db'), reg, cost: c,
+    replayCfg: { feePct: config.paper.feePct, slipPct: config.paper.extraSlippagePct, sizeSol: config.paper.sizeSol, exitDelaySec: config.paper.exitDelaySec, stopPct: config.paper.stopPct, tp: config.paper.tp1Multiple } } });
   const kill = setTimeout(() => { log.warn('edge lab run timed out'); w.terminate(); }, 180000);
   w.once('message', (msg) => {
     const at = Date.now();

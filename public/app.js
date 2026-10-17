@@ -330,12 +330,12 @@ function renderBooks() {
   $('#booksHint').textContent = `strategy lab · same costs · kill rule needs ${B.main.kill.needed} trades each`;
   const statusCls = (st) => ({ PASS: 'up', FAIL: 'down' }[st] || 'acc');
   const row = (name, sub, k, open, extra = '') => `<tr class="${extra}"><td><span class="book-name">${name}</span><span class="book-sub">${sub}</span></td>
-    <td><span class="${extra ? '' : statusCls(k.status)}">${k.status === 'COLLECTING' ? `${k.n}/${k.needed}` : k.status}</span></td>
-    <td class="num">${k.n ? pct(k.winRatePct, 0) : '–'}</td>
-    <td class="num ${extra ? '' : cls(k.expectancyPct)}">${k.n ? signed(k.expectancyPct, 1, '%') : '–'}</td>
-    <td class="num">${k.n > 1 ? `${signed(k.ciLowPct, 0, '%')} to ${signed(k.ciHighPct, 0, '%')}` : '–'}</td>
-    <td class="num ${extra ? '' : cls(k.totalPnlSol)}">${k.n ? sUsdSigned(k.totalPnlSol) : '–'}</td>
-    <td class="num">${open ?? '–'}</td></tr>`;
+    <td data-label="Kill rule"><span class="${extra ? '' : statusCls(k.status)}">${k.status === 'COLLECTING' ? `${k.n}/${k.needed}` : k.status}</span></td>
+    <td class="num" data-label="Win">${k.n ? pct(k.winRatePct, 0) : '–'}</td>
+    <td class="num ${extra ? '' : cls(k.expectancyPct)}" data-label="Avg / trade">${k.n ? signed(k.expectancyPct, 1, '%') : '–'}</td>
+    <td class="num" data-label="95% range">${k.n > 1 ? `${signed(k.ciLowPct, 0, '%')} to ${signed(k.ciHighPct, 0, '%')}` : '–'}</td>
+    <td class="num ${extra ? '' : cls(k.totalPnlSol)}" data-label="P&amp;L">${k.n ? sUsdSigned(k.totalPnlSol) : '–'}</td>
+    <td class="num" data-label="Open">${open ?? '–'}</td></tr>`;
   $('#books').innerHTML = `<div class="btable-wrap"><table class="btable wide">
     <thead><tr><th>Book</th><th>Kill rule</th><th class="num">Win</th><th class="num">Avg / trade</th><th class="num">95% range</th><th class="num">P&amp;L</th><th class="num">Open</th></tr></thead>
     <tbody>${(P.books.order || Object.keys(B)).map((b) => row(B[b].label || b, B[b].entry || '', B[b].kill, B[b].open)).join('')}${L.n ? row('Old exits (v1)', 'main book before the change', L, null, 'legacy') : ''}</tbody></table></div>
@@ -813,7 +813,7 @@ function renderBoardSb() {
       <span class="bar" style="background:${BOOK_COL(r.book)}"></span>
       <span style="min-width:0"><span class="sb-name">${r.label} <span class="vchip-s ${v}">${r.verdict}</span></span>
         <span class="sb-entry" title="${esc(r.entry)}">${esc(r.entry)}</span>
-        <span class="sb-stats">${r.n} trades · ${r.winRatePct == null ? '–' : Math.round(r.winRatePct) + '%'} win (needs ${Math.round(r.breakevenWinPct)}%)${top ? ` · top loss: ${top.cause.toLowerCase()}` : ''}</span></span>
+        <span class="sb-stats">${r.n} trades · ${r.winRatePct == null ? '–' : Math.round(r.winRatePct) + '%'} win (${r.breakevenWinPct > 0 ? `needs ${Math.round(r.breakevenWinPct)}%` : 'no fixed breakeven'})${top ? ` · top loss: ${top.cause.toLowerCase()}` : ''}</span></span>
       <span><span class="sb-avg ${cls(r.avgPct)}">${r.avgPct == null ? '–' : signed(r.avgPct, 1, '%')}</span>${range}</span></button>`;
   }).join('') + `<div class="small-note">Bar = 95% range of average P&amp;L per trade (−50% to +50%), dot = average, tick = zero. Click a strategy for its full report.</div>`;
 }
@@ -1084,7 +1084,7 @@ function renderReport() {
   $('#repCoverage').innerHTML = `<div class="cov">
     <div><div class="label">Hours recorded</div><div class="value ${d.coverage.pct >= 80 ? 'up' : 'acc'}">${pct(d.coverage.pct, 0)}</div><div class="sub">${d.coverage.hours} of ${d.coverage.possibleHours} h · needs 80%+</div></div>
     <div><div class="label">Closed paper trades</div><div class="value">${totN}</div><div class="sub">across ${d.bookOrder.length} books</div></div>
-    <div><div class="label">Strong signals graded</div><div class="value">${d.strong.labeled}</div><div class="sub">${d.strong.hitRatePct == null ? 'none graded yet' : `${pct(d.strong.hitRatePct, 0)} hit · breakeven ${d.breakevenPct}%`}</div></div>
+    <div><div class="label">Strong signals graded</div><div class="value">${d.strong.labeled}</div><div class="sub">${d.strong.hitRatePct == null ? 'none graded yet' : `${pct(d.strong.hitRatePct, 0)} hit · breakeven ${pct(d.breakevenPct, 0)}`}</div></div>
     <div><div class="label">Market pause</div><div class="value">${esc(String(d.gateMode).toUpperCase())}</div><div class="sub">${d.gateMode === 'shadow' ? 'tags entries, blocks nothing' : 'blocking entries when COLD'}</div></div></div>
     <div class="covbar" title="hours recorded per day">${d.daily.map((x) => `<i class="${x.hours ? '' : 'zero'}" style="height:${Math.max(8, (x.hours / maxH) * 100)}%" title="${x.date}: ${x.hours} h"></i>`).join('')}</div>`;
   $('#repVerdicts').innerHTML = d.verdicts.map((v) => `<div class="verdict ${v.tone}"><div class="vq">${esc(v.q)}</div><span class="vchip">${esc(v.verdict)}</span><div class="vd">${esc(v.detail)}</div></div>`).join('');
@@ -1233,7 +1233,7 @@ function histSvg(h, { unit = '%', bad = (lo) => lo < 0 } = {}) {
   return `<svg viewBox="0 0 ${W} ${H}">${h.map((b, i) => { const bh = ((H - pad - 14) * b.n) / max, x = 4 + i * bw;
     return `<rect x="${x + 2}" y="${H - pad - bh}" width="${bw - 4}" height="${Math.max(bh, b.n ? 1 : 0)}" rx="2" fill="${bad(b.lo) ? 'var(--down)' : 'var(--up)'}" opacity=".8"/>
       <text x="${x + bw / 2}" y="${H - pad - bh - 3}" text-anchor="middle" font-size="10" fill="var(--text-muted)" font-family="var(--font-mono)">${b.n || ''}</text>
-      <text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="9.5" fill="var(--text-faint)" font-family="var(--font-mono)">${b.lo}${i === 0 ? unit : ''}</text>`; }).join('')}</svg>`;
+      <text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10.5" fill="var(--text-faint)" font-family="var(--font-mono)">${b.lo}${i === 0 ? unit : ''}</text>`; }).join('')}</svg>`;
 }
 function renderFills(f) {
   if (!f) return;
@@ -1617,7 +1617,7 @@ function renderEdgeBacktest() {
       <td class="mono"><span class="${cls(r.firstHalfPct)}">${signed(r.firstHalfPct, 0, '%')}</span> <span class="faint">→</span> <span class="${cls(r.secondHalfPct)}">${signed(r.secondHalfPct, 0, '%')}</span></td><td class="mono">${pct(r.winPct, 0)}</td></tr>`;
   el.innerHTML = `<div class="card-head"><h2>Graduates backtest sweep</h2><span class="hint">${BT.variants} variants · ${n(BT.snapshots, 0)} snapshots · ${n(BT.tokens, 0)} graduates · ${BT.resolutionMin}-min resolution</span></div>
     <p class="explain">Every entry threshold and exit rule replayed over the same stored history, so nothing here waits for new data. Nothing here is a pass either: the same history scores all ${BT.variants} variants, and the expected best-of-${BT.variants} lift on pure noise is about <b>${BT.bestOfLiftPts == null ? '?' : n(BT.bestOfLiftPts, 0)} points</b>, so read the time split (first half → second half), not the rank. ${anyPositive ? 'At least one variant has a lower bound above zero; that is a candidate to register in the Edge Lab, not a result.' : `<b>No variant has a lower bound above zero.</b> The least bad is "${esc(best.label)}" at entries ≥ ${best.entryScore}: ${signed(best.meanPct, 1, '%')} per trade. Shorter holds lose less, which says the alert fires on momentum that then fades; the lever is entry quality, not exit shape.`}</p>
-    <div class="seg" role="tablist">${['all', ...BT.entryScores].map((v) => `<button data-bt="${v}" class="${String(EX.btScore) === String(v) ? 'on' : ''}">${v === 'all' ? 'All entries' : `score ≥ ${v}`}</button>`).join('')}</div>
+    <div class="seg" role="tablist">${["all", ...(BT.entryScores || [])].map((v) => `<button data-bt="${v}" class="${String(EX.btScore) === String(v) ? 'on' : ''}">${v === 'all' ? 'All entries' : `score ≥ ${v}`}</button>`).join('')}</div>
     <div class="btable-wrap"><table class="btable compact"><thead><tr><th>#</th><th>Entry ≥</th><th>Exit rule</th><th>Trades / tokens</th><th>Mean</th><th>95% low</th><th>1st → 2nd half</th><th>Win</th></tr></thead>
       <tbody>${top.map(row).join('')}${live.length ? `<tr class="sep"><td colspan="8">live rules, for reference</td></tr>${live.map((r) => row(r, null)).join('')}` : ''}</tbody></table></div>
     <div class="bt-cards">${[...top, ...live].map((r, i) => `<div class="bt-card ${r.live ? 'is-live' : ''}" data-drill="gbt:${r.key}" data-label="${esc(r.label)}" role="button" tabindex="0">
@@ -1637,11 +1637,12 @@ function renderEdgeBooks() {
     ${BV ? booksHtml(BV) : '<div class="empty">Graduates paper data unavailable.</div>'}`;
 }
 function edgeRows() {
-  const v = EX.data; const hy = Object.fromEntries(v.hypotheses.map((h) => [h.id, h]));
+  const v = EX.data; if (!v?.tests || !v?.hypotheses) return [];
+  const hy = Object.fromEntries(v.hypotheses.map((h) => [h.id, h]));
   return v.tests.map(eRow).filter((t) => (EX.fam === 'All' ? !t.reference : hy[t.hyp].family === EX.fam) && (EX.win === 'All' || t.horizon === EX.win));
 }
 function renderEdgeMap() {
-  const v = EX.data, B = v.bar, svg = $('#eMap'); if (!svg) return;
+  const v = EX.data, B = v?.bar, svg = $('#eMap'); if (!svg || !B) return;
   const rows = edgeRows().filter((t) => t.n > 1 && t.loPct != null);
   const W = Math.max(320, svg.clientWidth || 800), H = svg.clientHeight || 340, l = 46, r = 14, t = 14, b = 30;
   const maxN = Math.max(B.minTokens * 3, ...rows.map((x) => x.n));

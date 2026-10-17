@@ -179,10 +179,10 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
   }
   {
     const q = `Are strong signals hitting +${config.strong.targetPct}% before −${config.strong.stopPct}% often enough?`;
-    if (strong.labeled < 30) v.push({ q, verdict: 'NOT ENOUGH DATA', tone: 'wait', detail: `${strong.labeled} of 30 strong signals graded.${strong.hitRatePct != null ? ` ${fmt0(strong.hitRatePct)} hit so far.` : ''} Breakeven is ${BREAKEVEN_PCT}%.` });
-    else if (strong.lo > BREAKEVEN_PCT) v.push({ q, verdict: 'YES', tone: 'good', detail: `${fmt0(strong.hitRatePct)} hit (95% low bound ${fmt0(strong.lo)}) over ${strong.labeled}, above the ${BREAKEVEN_PCT}% breakeven.` });
-    else if (strong.hi < BREAKEVEN_PCT) v.push({ q, verdict: 'NO', tone: 'bad', detail: `${fmt0(strong.hitRatePct)} hit (95% high bound ${fmt0(strong.hi)}): below the ${BREAKEVEN_PCT}% breakeven.` });
-    else v.push({ q, verdict: 'UNCLEAR', tone: 'wait', detail: `${fmt0(strong.hitRatePct)} hit over ${strong.labeled}; the 95% range (${fmt0(strong.lo)}–${fmt0(strong.hi)}) straddles ${BREAKEVEN_PCT}%.` });
+    if (strong.labeled < 30) v.push({ q, verdict: 'NOT ENOUGH DATA', tone: 'wait', detail: `${strong.labeled} of 30 strong signals graded.${strong.hitRatePct != null ? ` ${fmt0(strong.hitRatePct)} hit so far.` : ''} Breakeven is ${BREAKEVEN_PCT.toFixed(0)}%.` });
+    else if (strong.lo > BREAKEVEN_PCT) v.push({ q, verdict: 'YES', tone: 'good', detail: `${fmt0(strong.hitRatePct)} hit (95% low bound ${fmt0(strong.lo)}) over ${strong.labeled}, above the ${BREAKEVEN_PCT.toFixed(0)}% breakeven.` });
+    else if (strong.hi < BREAKEVEN_PCT) v.push({ q, verdict: 'NO', tone: 'bad', detail: `${fmt0(strong.hitRatePct)} hit (95% high bound ${fmt0(strong.hi)}): below the ${BREAKEVEN_PCT.toFixed(0)}% breakeven.` });
+    else v.push({ q, verdict: 'UNCLEAR', tone: 'wait', detail: `${fmt0(strong.hitRatePct)} hit over ${strong.labeled}; the 95% range (${fmt0(strong.lo)}–${fmt0(strong.hi)}) straddles ${BREAKEVEN_PCT.toFixed(0)}%.` });
   }
   {
     const q = 'Is anything ready for real money?';
