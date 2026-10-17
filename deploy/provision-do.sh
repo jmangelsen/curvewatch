@@ -26,6 +26,8 @@ api() { # method path [json]
 }
 jq_() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
 
+if [ -n "${RESUME_IP:-}" ]; then IP="$RESUME_IP"; DID="(resumed)"; echo "resuming at $IP (steps 4-6 only; no API calls)"; fi
+if [ -z "${RESUME_IP:-}" ]; then
 say "1/6 Account and SSH key"
 api GET /account | jq_ "d['account']['email'] + ' · status ' + d['account']['status'] + ' · droplet limit ' + str(d['account']['droplet_limit'])"
 FP="$(ssh-keygen -lf "$SSH_KEY.pub" -E md5 | awk '{print $2}' | sed 's/^MD5://')"
@@ -62,9 +64,11 @@ for i in $(seq 1 60); do
 done
 [ -n "$IP" ] || { echo "no public IP after 5 minutes"; exit 1; }
 echo "droplet $DID is $ST at $IP"
+fi
 SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "root@$IP")
 for i in $(seq 1 40); do "${SSH[@]}" true 2>/dev/null && break; sleep 5; [ "$i" = 40 ] && { echo "SSH never came up"; exit 1; }; done
 echo "ssh ready"
+if [ "${STOP_AFTER:-}" = 3 ]; then echo "STOP_AFTER=3: droplet ready at IP=$IP; continue with RESUME_IP=$IP"; exit 0; fi
 # cloud-init may still be installing packages; wait for it so apt is not locked
 "${SSH[@]}" 'cloud-init status --wait >/dev/null 2>&1 || true'
 

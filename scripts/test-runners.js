@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import os from 'node:os'; import path from 'node:path'; import fs from 'node:fs';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cwrn-'));
 process.env.RUNNER_PICK_HOUR = '0'; process.env.RUNNER_MIN_ELIGIBLE = '2'; process.env.RUNNER_PICKS = '3';
+// runners first on purpose: on a fresh database its tables come from other modules, so import order must not matter
+const { Runners, rankFeatures } = await import('../src/engine/runners.js');
 await import('../src/engine/graduates.js');
 const { db } = await import('../src/db.js');
-const { Runners, rankFeatures } = await import('../src/engine/runners.js');
 let n = 0; const t = (name, f) => { f(); n++; console.log('ok', name); };
 const H = 3600000, now = Date.now();
 const base = { volAccel: 1, txAccel: 1, buyRatio1h: 0.5, buyRatio5: 0.5, tx5: 10, vsMig: 1.5, fromPeak: 0.8, mcapUsd: 300000, liqUsd: 40000, liqTrend: 1, socials: 1, hasSite: false, hasProfile: true, c1h: 20, fdvLiq: 7 };

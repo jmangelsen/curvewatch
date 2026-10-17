@@ -32,25 +32,27 @@ db.exec(`CREATE TABLE IF NOT EXISTS runner_picks (
 CREATE INDEX IF NOT EXISTS idx_rp_day ON runner_picks(day, book);
 CREATE INDEX IF NOT EXISTS idx_rp_label ON runner_picks(labeled48, ts);`);
 
-const Q = {
-  ins: db.prepare(`INSERT OR IGNORE INTO runner_picks (day, ts, book, rank, mint, symbol, name, score, mcap, liq, age_h, price, reasons, flags, features, late)
+const SQL = {
+  ins: (`INSERT OR IGNORE INTO runner_picks (day, ts, book, rank, mint, symbol, name, score, mcap, liq, age_h, price, reasons, flags, features, late)
     VALUES (@day, @ts, @book, @rank, @mint, @symbol, @name, @score, @mcap, @liq, @ageH, @price, @reasons, @flags, @features, @late)`),
-  dayPicks: db.prepare('SELECT * FROM runner_picks WHERE day = ? ORDER BY book, rank'),
-  hasDay: db.prepare("SELECT COUNT(*) n FROM runner_picks WHERE day = ? AND book = 'rule'"),
-  unlabeled: db.prepare('SELECT * FROM runner_picks WHERE labeled48 = 0 AND ts < ? ORDER BY ts LIMIT 400'),
-  future: db.prepare('SELECT ts, mcap FROM grad_snapshots WHERE mint = ? AND ts > ? AND ts <= ? ORDER BY ts'),
-  label24: db.prepare('UPDATE runner_picks SET peak24 = ?, low24 = ?, labeled24 = 1, x2_24h = ?, halved_24h = ? WHERE id = ?'),
-  label48: db.prepare('UPDATE runner_picks SET peak48 = ?, labeled48 = 1, hit_target = ? WHERE id = ?'),
-  all: db.prepare('SELECT * FROM runner_picks ORDER BY ts DESC, book, rank'),
-  days: db.prepare(`SELECT day, MIN(ts) ts, SUM(book='rule') picks, SUM(CASE WHEN book='rule' AND labeled48=1 THEN 1 ELSE 0 END) scored48,
+  dayPicks: ('SELECT * FROM runner_picks WHERE day = ? ORDER BY book, rank'),
+  hasDay: ("SELECT COUNT(*) n FROM runner_picks WHERE day = ? AND book = 'rule'"),
+  unlabeled: ('SELECT * FROM runner_picks WHERE labeled48 = 0 AND ts < ? ORDER BY ts LIMIT 400'),
+  future: ('SELECT ts, mcap FROM grad_snapshots WHERE mint = ? AND ts > ? AND ts <= ? ORDER BY ts'),
+  label24: ('UPDATE runner_picks SET peak24 = ?, low24 = ?, labeled24 = 1, x2_24h = ?, halved_24h = ? WHERE id = ?'),
+  label48: ('UPDATE runner_picks SET peak48 = ?, labeled48 = 1, hit_target = ? WHERE id = ?'),
+  all: ('SELECT * FROM runner_picks ORDER BY ts DESC, book, rank'),
+  days: (`SELECT day, MIN(ts) ts, SUM(book='rule') picks, SUM(CASE WHEN book='rule' AND labeled48=1 THEN 1 ELSE 0 END) scored48,
     SUM(CASE WHEN book='rule' AND hit_target=1 THEN 1 ELSE 0 END) hits, SUM(CASE WHEN book='rule' AND x2_24h=1 THEN 1 ELSE 0 END) x2,
     SUM(CASE WHEN book='random' AND hit_target=1 THEN 1 ELSE 0 END) rnd_hits, SUM(CASE WHEN book='random' AND x2_24h=1 THEN 1 ELSE 0 END) rnd_x2,
     SUM(CASE WHEN book='random' AND labeled48=1 THEN 1 ELSE 0 END) rnd_scored FROM runner_picks GROUP BY day ORDER BY day DESC LIMIT 60`),
-  token: db.prepare('SELECT created_at, creator FROM tokens WHERE mint = ?'),
-  curveRejected: db.prepare("SELECT 1 FROM rejects WHERE mint = ? AND kind = 'curve' LIMIT 1"),
-  peakEver: db.prepare('SELECT MAX(mcap) m FROM grad_snapshots WHERE mint = ?'),
-  kvGet: db.prepare('SELECT v FROM kv WHERE k = ?'), kvSet: db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v'),
+  token: ('SELECT created_at, creator FROM tokens WHERE mint = ?'),
+  curveRejected: ("SELECT 1 FROM rejects WHERE mint = ? AND kind = 'curve' LIMIT 1"),
+  peakEver: ('SELECT MAX(mcap) m FROM grad_snapshots WHERE mint = ?'),
+  kvGet: ('SELECT v FROM kv WHERE k = ?'), kvSet: ('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v'),
 };
+// Prepared lazily: other modules (graduates, rejects) create some of these tables at import, and import order must not matter on a fresh database.
+const Q = new Proxy({}, { get: (c, k) => (c[k] ||= db.prepare(SQL[k])) });
 
 const localParts = (ts = Date.now()) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: config.telegram.timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false }).formatToParts(ts).map((p) => [p.type, p.value]));
 export const localDay = (ts = Date.now()) => { const p = localParts(ts); return `${p.year}-${p.month}-${p.day}`; };

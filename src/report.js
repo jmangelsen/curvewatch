@@ -22,16 +22,18 @@ const BREAKEVEN_PCT = (config.strong.stopPct / (config.strong.targetPct + config
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_tokens_created ON tokens(created_at)'); } catch { /* ignore */ }
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_exit ON paper_trades(exit_ts)'); } catch { /* ignore */ }
 
-const Q = {
-  curve: db.prepare(`SELECT id, book, rules, gated, score, market, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM paper_trades
+const SQL = {
+  curve: (`SELECT id, book, rules, gated, score, market, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM paper_trades
     WHERE status='closed' AND exit_ts >= ? AND cfg = ? AND COALESCE(gap,0) = 0 ORDER BY exit_ts`),
-  grad: db.prepare(`SELECT id, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM grad_paper WHERE status='closed' AND exit_ts >= ? ORDER BY exit_ts`),
-  hours: db.prepare(`SELECT DISTINCT CAST(created_at / ${HOUR} AS INTEGER) h FROM tokens WHERE created_at >= ?`),
-  launches: db.prepare(`SELECT created_at t FROM tokens WHERE created_at >= ?`),
-  alerts: db.prepare(`SELECT ts t FROM alerts WHERE ts >= ?`),
-  gradAlerts: db.prepare(`SELECT ts t FROM grad_alerts WHERE ts >= ?`),
-  strong: db.prepare(`SELECT ts t, kind, mode, outcome, labeled FROM strong_signals WHERE ts >= ?`),
+  grad: (`SELECT id, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM grad_paper WHERE status='closed' AND exit_ts >= ? ORDER BY exit_ts`),
+  hours: (`SELECT DISTINCT CAST(created_at / ${HOUR} AS INTEGER) h FROM tokens WHERE created_at >= ?`),
+  launches: (`SELECT created_at t FROM tokens WHERE created_at >= ?`),
+  alerts: (`SELECT ts t FROM alerts WHERE ts >= ?`),
+  gradAlerts: (`SELECT ts t FROM grad_alerts WHERE ts >= ?`),
+  strong: (`SELECT ts t, kind, mode, outcome, labeled FROM strong_signals WHERE ts >= ?`),
 };
+// Prepared lazily so a fresh database can boot regardless of module import order.
+const Q = new Proxy({}, { get: (c, k) => (c[k] ||= db.prepare(SQL[k])) });
 
 const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
 const variance = (a) => { if (a.length < 2) return null; const m = mean(a); return a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1); };
