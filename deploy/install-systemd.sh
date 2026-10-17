@@ -73,7 +73,7 @@ done
 
 say "6/6 Cron: nightly verified backup, weekly VACUUM, 5-minute watchdog"
 chmod +x deploy/backup.sh
-( crontab -l 2>/dev/null | grep -v '# curvewatch' ; \
+( { crontab -l 2>/dev/null || true; } | { grep -v '# curvewatch' || true; } ; \
   echo "15 3 * * * ${APP}/deploy/backup.sh >> /var/log/curvewatch-backup.log 2>&1 # curvewatch"; \
   echo "30 4 * * 0 sqlite3 ${APP}/data/curvewatch.db 'PRAGMA wal_checkpoint(TRUNCATE); VACUUM;' >> /var/log/curvewatch-backup.log 2>&1 # curvewatch"; \
   echo "*/5 * * * * APP=${APP} ${APP}/deploy/watchdog.sh # curvewatch" ) | crontab -
