@@ -147,6 +147,10 @@ export const config = {
     lookbackHours: num('MARKET_GATE_LOOKBACK_H', 6),
   },
 
+  // Runner board (registered 2026-10-17): young graduates most likely to go on a $1.5M+ run, frozen daily and scored later.
+  runners: { enabled: bool('RUNNERS_ENABLED', true), picks: num('RUNNER_PICKS', 10), pickHour: num('RUNNER_PICK_HOUR', 9), minEligible: num('RUNNER_MIN_ELIGIBLE', 5),
+    minAgeH: num('RUNNER_MIN_AGE_H', 2), maxAgeH: num('RUNNER_MAX_AGE_H', 8), minMcapUsd: num('RUNNER_MIN_MCAP_USD', 100000), maxMcapUsd: num('RUNNER_MAX_MCAP_USD', 750000),
+    minLiqUsd: num('RUNNER_MIN_LIQ_USD', 20000), targetMcapUsd: num('RUNNER_TARGET_MCAP_USD', 1500000) },
   // 24-hour gate: the bar a book must clear on a rolling day before any money is discussed. Written before looking.
   gate24h: { hours: num('GATE24_HOURS', 24), minN: num('GATE24_MIN_N', 300), minMeanPct: num('GATE24_MIN_MEAN_PCT', 0), minLoPct: num('GATE24_MIN_LO_PCT', -3) },
   killRule: {

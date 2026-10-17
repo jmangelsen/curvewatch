@@ -26,6 +26,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="live" data-short="Live">Live</button>
     <button role="tab" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
+    <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
     <button role="tab" aria-selected="false" data-tab="report" data-short="Report">Report</button>
     <button role="tab" aria-selected="false" data-tab="intel" data-short="Intel">Intel</button>
@@ -74,6 +75,32 @@
   </section>
 
   <!-- GRADUATES -->
+  <section id="tab-runners" class="tab-panel" hidden>
+    <div class="kpis" id="rnKpis"></div>
+    <div class="baseline" role="note">
+      <span class="baseline-tag">Registered rule</span>
+      <span id="rnRule">Loading the runner board.</span>
+    </div>
+    <div class="grid-runners">
+      <article class="card rn-today-card">
+        <div class="card-head"><h2 id="rnTodayTitle">Today's picks</h2><span class="hint" id="rnTodayHint"></span></div>
+        <div class="rn-list" id="rnToday"></div>
+      </article>
+      <article class="card rn-live-card tile-drill" data-drill="rn_live" data-label="Eligible now" role="button" tabindex="0">
+        <div class="card-head"><h2>Eligible now</h2><span class="hint" id="rnLiveHint"></span></div>
+        <div class="rn-list" id="rnLive"></div>
+      </article>
+      <article class="card rn-score-card tile-drill" data-drill="rn_scorecard" data-label="Scorecard" role="button" tabindex="0">
+        <div class="card-head"><h2>Scorecard</h2><span class="hint" id="rnScoreHint"></span></div>
+        <div class="table-wrap"><table class="board responsive" id="rnScore"><thead><tr><th>Cut</th><th class="num">Scored</th><th class="num">Hit $1.5M</th><th class="num">2× in 24h</th><th class="num">Halved</th></tr></thead><tbody></tbody></table></div>
+        <p class="small-note" id="rnScoreNote"></p>
+      </article>
+      <article class="card rn-days-card">
+        <div class="card-head"><h2>History</h2><span class="hint" id="rnDaysHint"></span></div>
+        <div class="table-wrap"><table class="board responsive" id="rnDays"><thead><tr><th>Day</th><th class="num">Picks</th><th class="num">Scored</th><th class="num">Hits</th><th class="num">2×</th><th class="num">Random hits</th><th class="num">Random 2×</th></tr></thead><tbody></tbody></table></div>
+      </article>
+    </div>
+  </section>
   <section id="tab-grads" class="tab-panel" hidden>
     <div class="kpis" id="gKpis"></div>
     <div class="baseline" role="note">

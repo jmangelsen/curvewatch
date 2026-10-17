@@ -10,6 +10,8 @@ import { metaStats, metaQueueLen } from './engine/metadata.js';
 import { sendTelegram, tgEnabled, tgStats, esc as tgEsc } from './engine/telegram.js';
 import { TELEGRAM_DAILY_BLOCK, telegramFullText } from './compliance.js';
 import { startTgBot } from './engine/tgBot.js';
+import { Runners } from './engine/runners.js';
+import { fmtUsd } from './market.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
 import { Graduates } from './engine/graduates.js';
@@ -187,8 +189,17 @@ const healthData = (scope) => {
     random: { pool: engine.counters.randomPool ?? null, noMatch: engine.counters.randomNoMatch || 0 } } });
 };
 try { const nb = paper.backfillCauses(); if (nb) log.info(`labeled causes for ${nb} older paper trades`); } catch (e) { log.warn('cause backfill failed', e.message); }
-startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail }), edgeView, edgeDetail, trackerView, rejectsView });
-startTgBot({ engine, grads, strong, status }); // two-way lookups; no-op unless Telegram is configured
+const runners = new Runners({ grads });
+if (config.runners.enabled) runners.start();
+runners.on('picks', (o) => {
+  if (!tgEnabled() || !o.picks.length) return;
+  const L = [`<b>Runner board · ${o.day}</b> · ${o.k} of ${o.eligible} eligible young graduates, ranked by the registered rule${o.late ? ' (late pick)' : ''}`,
+    ...o.picks.map((x, i) => `${i + 1}. <b>${tgEsc(x.symbol || x.mint.slice(0, 6))}</b> · ${fmtUsd(x.mcap)} · ${x.ageH.toFixed(1)} h · score ${x.score.toFixed(0)}${x.reasons.length ? ` · ${tgEsc(x.reasons.slice(0, 2).join(', '))}` : ''}${x.flags.length ? ` · flag: ${tgEsc(x.flags[0])}` : ''}`),
+    '', `Target: ${fmtUsd(config.runners.targetMcapUsd)} within 48 h. Base rate for this list so far is on the Runners tab; in the registration sample 6% of eligible coins reached it and 72% halved within a day. A ranked watch set, not a forecast with demonstrated skill.`];
+  sendTelegram(L.join('\n'));
+});
+startServer({ engine, status, grads, strong, runners, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners }), edgeView, edgeDetail, trackerView, rejectsView });
+startTgBot({ engine, grads, strong, status, runners }); // two-way lookups; no-op unless Telegram is configured
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

@@ -6,7 +6,7 @@ import { db } from './db.js';
 import { config } from './config.js';
 import { runGradBacktest, gradBacktestTrades } from './engine/gradBacktest.js';
 import { SECTIONS, SHORT, simulationParams } from './compliance.js';
-import { market } from './market.js';
+import { market, fmtUsd } from './market.js';
 import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
 import { trackerView, walletDetail } from './engine/smartTracker.js';
@@ -63,7 +63,7 @@ function paperDrill(focus) {
   };
 }
 
-export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = () => null }) {
+export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = () => null, runners = null }) {
   const H_ = {
     launches() {
       const since = Date.now() - 3 * H;
@@ -327,6 +327,33 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       series: { label: 'Cumulative P&L (USD)', kind: 'line', fmt: 'susd', points: rows.map((r) => [r.exit_ts, (eq += r.pnl_sol)]) },
       tables: [{ title: 'Closed trades, newest first', cols: tradeCols.filter((c) => c.k !== 'book'), rows: [...rows].reverse().map(tradeRow) }] };
   };
+  // ---- Runner board ----
+  const rnScorecard = () => {
+    if (!runners) return null; const sc = runners.scorecard(), B = sc.books, name = { rule: 'Registered rule', random: 'Random from eligible', mcap: 'Top by market cap', vol: 'Top by 1h volume' };
+    const fmtCi = (c) => (c ? `${c.lo}–${c.hi}%` : '–');
+    return { title: 'Runner board scorecard', explain: `Each day the same eligible set is cut four ways at the same moment; only the ranking differs. The rule has skill only if its hit rate beats the random cut with intervals that do not overlap. Target: market cap ≥ ${fmtUsd(sc.target)} within 48 h of the pick; secondary: 2× the pick-time market cap within 24 h. Picks are frozen and labeled from the graduate snapshots that follow; a coin that stops being watched counts as a miss.`,
+      stats: [['Rule picks scored', B.rule.scored48, 'num'], ['Rule hit rate', B.rule.hitPct, 'pct'], ['Random hit rate', B.random.hitPct, 'pct'], ['Rule 2× in 24h', B.rule.x2Pct, 'pct'], ['Random 2× in 24h', B.random.x2Pct, 'pct'], ['Rule halved in 24h', B.rule.halvedPct, 'pct']],
+      tables: [
+        { title: 'By cut', cols: [C('Cut', 'name'), C('Picks', 'picks', 'num'), C('Scored 48h', 'scored48', 'num'), C(`Hit ${fmtUsd(sc.target)}`, 'hits', 'num'), C('Hit %', 'hitPct', 'pct'), C('95% CI', 'hitCi'), C('2× 24h %', 'x2Pct', 'pct'), C('2× CI', 'x2Ci'), C('Halved %', 'halvedPct', 'pct'), C('Median peak ×', 'medianPeakMult', 'num')],
+          rows: Object.entries(B).map(([k, v]) => ({ name: name[k], ...v, hitCi: fmtCi(v.hitCi), x2Ci: fmtCi(v.x2Ci) })) },
+        { title: 'By day', cols: [C('Day', 'day'), C('Picks', 'picks', 'num'), C('Scored', 'scored48', 'num'), C('Hits', 'hits', 'num'), C('2×', 'x2', 'num'), C('Random hits', 'rnd_hits', 'num'), C('Random 2×', 'rnd_x2', 'num')], rows: sc.days.map((r) => ({ ...r, drill: `rn_day:${r.day}`, label: `Picks ${r.day}` })) },
+      ] };
+  };
+  const rnDay = (day) => {
+    if (!runners) return null; const v = runners.dayView(day); const name = { rule: 'Registered rule', random: 'Random from eligible', mcap: 'Top by market cap', vol: 'Top by 1h volume' };
+    const rows = v.rows.map((r) => ({ ...r, cut: name[r.book] || r.book, outcome: r.labeled48 ? (r.hit_target ? 'hit target' : r.x2_24h ? '2× only' : r.halved_24h ? 'halved' : 'no run') : r.labeled24 ? (r.x2_24h ? '2× (48h pending)' : r.halved_24h ? 'halved (48h pending)' : 'pending') : 'pending',
+      peakMult: r.peak48 ? round(r.peak48 / r.mcap, 2) : r.peak24 ? round(r.peak24 / r.mcap, 2) : null, nowMult: r.nowMcap ? round(r.nowMcap / r.mcap, 2) : null, why: r.reasons.join(' · '), flag: r.flags.join(' · '), drill: `tok:${r.mint}`, label: r.symbol || r.mint.slice(0, 6) }));
+    return { title: `Runner picks · ${day}`, explain: `Frozen at ${rows[0] ? new Date(rows[0].ts).toISOString().slice(11, 16) : '–'} UTC. Peak × is the highest market cap after the pick divided by the pick-time market cap; now × is the current multiple for coins still watched. Tap a row for the token record.`,
+      tables: [{ title: 'Picks', cols: [C('Cut', 'cut'), C('#', 'rank', 'num'), C('Token', 'symbol'), C('Pick mcap', 'mcap', 'usd'), C('Age h', 'age_h', 'num'), C('Score', 'score', 'num'), C('Peak ×', 'peakMult', 'num'), C('Now ×', 'nowMult', 'num'), C('Outcome', 'outcome'), C('Reasons', 'why'), C('Flags', 'flag')], rows }] };
+  };
+  const rnLive = () => {
+    if (!runners) return null; const v = runners.view();
+    return { title: 'Runner board · eligible now', explain: `${v.eligible} of ${v.watched} watched graduates pass the filters (${v.config.minAgeH}–${v.config.maxAgeH} h old, ${fmtUsd(v.config.minMcapUsd)}–${fmtUsd(v.config.maxMcapUsd)}, pool ≥ ${fmtUsd(v.config.minLiqUsd)}, no rejects, creator not a rugger, target not already printed). Picks freeze daily at ${String(v.config.pickHour).padStart(2, '0')}:00 ${v.config.timezone}.`,
+      tables: [
+        { title: 'Ranked', cols: [C('#', 'rank', 'num'), C('Token', 'symbol'), C('Mcap', 'mcap', 'usd'), C('Pool', 'liq', 'usd'), C('Age h', 'ageH', 'num'), C('Score', 'score', 'num'), C('× mig', 'vsMig', 'num'), C('Reasons', 'why'), C('Flags', 'flag')], rows: v.live.map((x, i) => ({ ...x, rank: i + 1, why: x.reasons.join(' · '), flag: x.flags.join(' · '), drill: `tok:${x.mint}`, label: x.symbol || x.mint.slice(0, 6) })) },
+        { title: 'Why the rest are excluded', cols: [C('Reason', 'k'), C('Count', 'n', 'num')], rows: Object.entries(v.excluded).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n })) },
+      ] };
+  };
   // ---- 24h gate ----
   const gateDrill = (b) => {
     const g = gate24h(), x = g.books[b]; if (!x) return null;
@@ -564,7 +591,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         sections: SECTIONS,
         tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
-    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

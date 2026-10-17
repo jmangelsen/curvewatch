@@ -18,7 +18,7 @@ import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js'
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -73,6 +73,8 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/config', (req, res) => res.json({ scoring: config.scoring, paper: config.paper, killRule: config.killRule, lifecycle: config.lifecycle, tradeSource: config.tradeSource, telegram: !!config.telegram.botToken }));
 
   // Post-graduation tracker
+  app.get('/api/runners', (req, res) => res.json({ ...runners.view(), notice: API_NOTICE }));
+  app.get('/api/runners/day/:day', (req, res) => res.json(runners.dayView(String(req.params.day).slice(0, 10))));
   app.get('/api/grads', (req, res) => res.json({ ...grads.board(Math.min(200, Number(req.query.limit) || 80)), stats: grads.stats() }));
   app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));
   app.get('/api/grads/paper', (req, res) => res.json({ ...grads.paper(), notice: API_NOTICE }));

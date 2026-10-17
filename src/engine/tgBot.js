@@ -129,9 +129,9 @@ function finish(L, mint) {
 }
 
 const HELP = ['<b>Curvewatch bot</b>', 'Send a Pump.fun mint address or a pump.fun / DexScreener link and I reply with what Curvewatch has recorded about that token: stage, score and reasons, reject verdict, base rates for similar coins, pool state if it graduated, and this machine\'s paper record.',
-  '', '/status – collector and books in one line', '/help – this message', '', 'Strong signals, graduate alerts and the daily summary arrive here automatically.'].join('\n');
+  '', '/runners – the live runner board (young graduates ranked for a $1.5M+ run) and its scorecard', '/status – collector and books in one line', '/help – this message', '', 'Strong signals, graduate alerts and the daily summary arrive here automatically.'].join('\n');
 
-export function startTgBot({ engine, grads, strong, status }) {
+export function startTgBot({ engine, grads, strong, status, runners }) {
   if (!tgEnabled() || !T.botToken) return null;
   const allow = new Set([T.chatId, T.strongChatId].filter(Boolean).map(String));
   let offset = Number(Q.kv.get('tg_offset')?.v || 0), busy = false, failures = 0;
@@ -150,6 +150,15 @@ export function startTgBot({ engine, grads, strong, status }) {
         if (!allow.has(chat)) { log.info(`ignored message from chat ${chat}`); continue; }
         const text = msg.text.trim();
         if (/^\/(start|help)/.test(text)) { await reply(chat, HELP); continue; }
+        if (/^\/runners/.test(text)) {
+          const v = runners?.view?.(); if (!v) { await reply(chat, 'Runner board unavailable.'); continue; }
+          const top = v.live.slice(0, Math.min(10, v.live.length)), sc = v.scorecard.books;
+          const L = [`<b>Runner board · live</b> · ${v.eligible} eligible now (graduated, ${v.config.minAgeH}–${v.config.maxAgeH} h old, ${fmtUsd(v.config.minMcapUsd)}–${fmtUsd(v.config.maxMcapUsd)}, pool ≥ ${fmtUsd(v.config.minLiqUsd)}, no rejects)`,
+            ...top.map((x, i) => `${i + 1}. <b>${esc(x.symbol || x.mint.slice(0, 6))}</b> · ${fmtUsd(x.mcap)} · ${x.ageH.toFixed(1)} h · score ${x.score.toFixed(0)}${x.reasons.length ? ` · ${esc(x.reasons.slice(0, 2).join(', '))}` : ''}${x.flags.length ? ` · flag: ${esc(x.flags[0])}` : ''}`),
+            top.length ? '' : 'Nothing eligible right now.',
+            `Scorecard: rule ${sc.rule.hits}/${sc.rule.scored48} reached ${fmtUsd(v.config.targetMcapUsd)} in 48 h vs random ${sc.random.hits}/${sc.random.scored48}; doubled in 24 h: rule ${sc.rule.x2}/${sc.rule.scored24} vs random ${sc.random.x2}/${sc.random.scored24}. Today's frozen picks are on the dashboard.`];
+          await reply(chat, L.join('\n')); continue;
+        }
         if (/^\/status/.test(text)) { const s = status?.(); await reply(chat, s ? `<b>Status</b> · ${s.feeds?.every((f) => f.healthy) ? 'feeds healthy' : 'a feed is unhealthy'} · ${s.engine?.tracked ?? '–'} tokens live · kill rule ${s.kill?.status || '–'} (${s.kill?.n ?? 0}/${s.kill?.needed ?? '–'}) · graduates ${s.gradKill?.status || '–'}` : 'status unavailable'); continue; }
         const mint = extractMint(text);
         if (!mint) { await reply(chat, 'Send a mint address (ends in <code>pump</code>) or a pump.fun / DexScreener link. /help for more.'); continue; }

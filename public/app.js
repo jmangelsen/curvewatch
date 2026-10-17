@@ -43,7 +43,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -534,6 +534,43 @@ function renderIntel() {
 
 // ---------- graduates ----------
 S.gFilter = 'rejected';
+async function loadRunners() {
+  try { S.rn = await get('/api/runners'); renderRunners(); } catch (e) { console.warn(e); }
+}
+function renderRunners() {
+  const v = S.rn; if (!v) return; const c = v.config, sc = v.scorecard.books, R = sc.rule, N = sc.random;
+  const pickTime = `${String(c.pickHour).padStart(2, '0')}:00 ${c.timezone.split('/').pop().replace('_', ' ')}`;
+  $('#rnRule').innerHTML = `Eligible: graduated to PumpSwap, ${c.minAgeH}–${c.maxAgeH} h since mint, market cap ${usd(c.minMcapUsd)}–${usd(c.maxMcapUsd)}, pool ≥ ${usd(c.minLiqUsd)}, no reject bucket, creator not a known rugger, target not already printed. Ranked by volume acceleration, buy pressure, strength vs migration and peak, pool depth, organic profile; penalised for paid boosts, vertical 1h moves and sellers dominating. ${c.picks} picks freeze daily at ${pickTime} and are scored against a random draw from the same eligible set. In the registration sample 6% of eligible coins reached ${usd(c.targetMcapUsd)} within 48 h and 72% halved within 24 h; no feature separated the doublers, so the rule has no demonstrated skill until the scorecard shows it.`;
+  const kp = [
+    ['Eligible now', n(v.eligible, 0), `${n(v.watched, 0)} graduates watched`, 'rn_live'],
+    ["Today's picks", n(v.today.rows.filter((r) => r.book === 'rule').length, 0), v.today.rows.length ? `frozen ${new Date(v.today.rows[0].ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : `freeze at ${pickTime}`, v.today.rows.length ? `rn_day:${v.today.day}` : 'rn_live'],
+    [`Rule hit ${usd(c.targetMcapUsd)}`, R.hitPct == null ? '–' : pct(R.hitPct, 0), R.scored48 ? `${R.hits} of ${R.scored48} scored · random ${N.hitPct == null ? '–' : pct(N.hitPct, 0)}` : 'scored 48 h after each pick', 'rn_scorecard'],
+    ['Rule 2× in 24h', R.x2Pct == null ? '–' : pct(R.x2Pct, 0), R.scored24 ? `${R.x2} of ${R.scored24} · random ${N.x2Pct == null ? '–' : pct(N.x2Pct, 0)}` : 'scored 24 h after each pick', 'rn_scorecard'],
+    ['Rule halved in 24h', R.halvedPct == null ? '–' : pct(R.halvedPct, 0), R.scored24 ? `random ${N.halvedPct == null ? '–' : pct(N.halvedPct, 0)}` : 'the usual outcome', 'rn_scorecard'],
+    ['Days on record', n(v.scorecard.days.length, 0), v.scorecard.days.length ? `since ${v.scorecard.days.at(-1).day}` : 'first picks today', 'rn_scorecard'],
+  ];
+  $('#rnKpis').innerHTML = kp.map(([l, val, sub, key]) => `<div class="kpi" data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0" aria-label="${esc(l)}: open detail"><div class="label">${esc(l)}</div><div class="value">${val}</div><div class="sub">${esc(sub)}</div></div>`).join('');
+  const item = (x, i, extra = '') => `<div class="rn-row" data-drill="tok:${x.mint}" data-label="${esc(x.symbol || '')}" role="button" tabindex="0">
+      <div class="rn-rank">${i + 1}</div>
+      <div class="rn-main"><div class="rn-top"><span class="sym">${esc(x.symbol || '?')}</span><small>${esc(x.name || '')}</small>${extra}</div>
+        <div class="rn-meta"><span>${usd(x.mcap)}</span><span>pool ${usd(x.liq)}</span><span>${n(x.ageH ?? x.age_h, 1)} h</span>${x.vsMig != null ? `<span>${n(x.vsMig, 1)}× mig</span>` : ''}</div>
+        <div class="rn-why">${esc((x.reasons || []).slice(0, 3).join(' · ') || 'no positive signals')}${(x.flags || []).length ? ` <span class="rn-flag">${esc(x.flags.slice(0, 2).join(' · '))}</span>` : ''}</div></div>
+      <div class="rn-score ${x.score >= 60 ? 'up' : x.score < 30 ? 'muted' : ''}">${n(x.score, 0)}</div></div>`;
+  const rule = v.today.rows.filter((r) => r.book === 'rule');
+  $('#rnTodayTitle').textContent = rule.length ? `Picks · ${v.today.day}` : "Today's picks";
+  $('#rnTodayHint').textContent = rule.length ? `${rule.length} frozen${rule[0].late ? ' (late)' : ''} · tap a row for the token record` : `frozen once daily at ${pickTime} when ≥ ${c.minEligible} coins are eligible`;
+  $('#rnToday').innerHTML = rule.length ? rule.map((x, i) => item(x, i, x.nowMcap ? `<span class="pill ${x.nowMcap >= 2 * x.mcap ? 'up' : x.nowMcap <= 0.5 * x.mcap ? 'down' : 'acc'}">now ${n(x.nowMcap / x.mcap, 2)}×</span>` : `<span class="pill">no longer watched</span>`)).join('') : `<div class="empty"><strong>No picks frozen yet today</strong>Picks freeze at ${pickTime}. Until then the Eligible now list is the candidate set.</div>`;
+  $('#rnLiveHint').textContent = `${v.eligible} pass the filters · ranked by the rule · live`;
+  $('#rnLive').innerHTML = v.live.length ? v.live.slice(0, 10).map((x, i) => item(x, i)).join('') : `<div class="empty"><strong>Nothing eligible right now</strong>${Object.entries(v.excluded).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, m]) => `${m} ${k}`).join(' · ') || 'no graduates watched'}</div>`;
+  const name = { rule: 'Registered rule', random: 'Random from eligible', mcap: 'Top by market cap', vol: 'Top by 1h volume' };
+  const ci = (x) => (x ? ` <span class="faint">(${x.lo}–${x.hi})</span>` : '');
+  $('#rnScore tbody').innerHTML = Object.entries(sc).map(([k, b]) => `<tr><td data-label="Cut">${name[k]}</td><td class="num" data-label="Scored">${b.scored48}</td><td class="num" data-label="Hit">${b.hitPct == null ? '–' : pct(b.hitPct, 0)}${ci(b.hitCi)}</td><td class="num" data-label="2×">${b.x2Pct == null ? '–' : pct(b.x2Pct, 0)}${ci(b.x2Ci)}</td><td class="num" data-label="Halved">${b.halvedPct == null ? '–' : pct(b.halvedPct, 0)}</td></tr>`).join('');
+  $('#rnScoreHint').textContent = R.scored48 ? `${R.scored48} rule picks scored` : 'outcomes arrive 24 h and 48 h after each pick';
+  $('#rnScoreNote').textContent = R.scored48 >= 30 && N.scored48 >= 30 ? (R.hitCi && N.hitCi && R.hitCi.lo > N.hitCi.hi ? 'The rule beats the random cut with non-overlapping intervals. That is the first evidence of skill; keep the rule fixed and see if it holds.' : 'The rule and the random cut overlap. The ranking has not shown skill; the eligible set itself is the useful part.') : 'Skill cannot be judged until about 30 scored picks per cut; intervals are Wilson 95%.';
+  const D = v.scorecard.days;
+  $('#rnDaysHint').textContent = D.length ? `${D.length} days` : '';
+  $('#rnDays tbody').innerHTML = D.length ? D.map((d) => `<tr data-drill="rn_day:${d.day}" data-label="Picks ${d.day}" role="button" tabindex="0"><td data-label="Day">${d.day}</td><td class="num" data-label="Picks">${d.picks}</td><td class="num" data-label="Scored">${d.scored48}</td><td class="num" data-label="Hits">${d.hits}</td><td class="num" data-label="2×">${d.x2}</td><td class="num" data-label="Random hits">${d.rnd_hits}</td><td class="num" data-label="Random 2×">${d.rnd_x2}</td></tr>`).join('') : '<tr><td colspan="7"><div class="empty">No days on record yet.</div></td></tr>';
+}
 async function loadGrads() {
   try {
     const needCal = !S.gCal || Date.now() - (S.gCalAt || 0) > 60000;
@@ -721,6 +758,7 @@ async function boot() {
   setInterval(refreshAlerts, 15000);
   setInterval(() => { if (S.tab === 'perf') { loadPerf(); loadTerm(true); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'report') loadReport(); if (S.tab === 'perf') loadBench(); }, 20000);
   setInterval(() => { if (S.tab === 'grads' && !document.hidden) loadGrads(); }, 15000);
+  setInterval(() => { if (S.tab === 'runners' && !document.hidden) loadRunners(); }, 30000);
   if (location.hash === '#grads') document.querySelector('.tabs [data-tab=grads]')?.click();
 }
 // =====================================================================
