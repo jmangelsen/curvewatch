@@ -143,8 +143,13 @@ table.board { width: 100%; border-collapse: collapse; font-size: var(--text-sm);
 @media (max-width: 700px) {
   .btable-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   /* Paper books: stacked cards instead of a sideways-scrolling table */
-  .btable.wide, .btable.wide tbody { display: block; }
-  .btable.wide thead { display: none; }
+  .btable.wide, .btable.wide tbody, .btable.stack-m, .btable.stack-m tbody { display: block; }
+  .btable.wide thead, .btable.stack-m thead { display: none; }
+  .btable.stack-m tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1) var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--divider); }
+  .btable.stack-m td { border: 0; padding: 0; white-space: normal; text-align: left; }
+  .btable.stack-m td:first-child { grid-column: 1 / -1; padding-bottom: 2px; }
+  .btable.stack-m td[data-label]::before { content: attr(data-label); display: block; font-family: var(--font-body, inherit); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+  .btable.stack-m td.num { font-size: var(--text-sm); }
   .btable.wide tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-1) var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--divider); }
   .btable.wide td { border: 0; padding: 0; white-space: normal; text-align: left; }
   .btable.wide td:first-child { grid-column: 1 / -1; padding-bottom: var(--space-1); }
@@ -671,7 +676,7 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .tr-row:hover { background: var(--surface-2); }
 .tr-row .num { text-align: right; font-family: var(--font-mono); }
 .mono { font-family: var(--font-mono); }
-@media (max-width: 720px) { .tr-grid { grid-template-columns: minmax(0, 1fr); } .tr-h { flex-wrap: wrap; } .tr-tbl th:nth-child(4), .tr-tbl td:nth-child(4), .tr-tbl th:nth-child(5), .tr-tbl td:nth-child(5) { display: none; } .tr-tbl th, .tr-tbl td { padding-left: var(--space-1); padding-right: var(--space-1); } .tr-row { grid-template-columns: 3.6rem 2.6rem minmax(0, 1.2fr) minmax(0, 1fr) 4rem; font-size: 12px; } }
+@media (max-width: 720px) { .tr-grid { grid-template-columns: minmax(0, 1fr); } .tr-h { flex-wrap: wrap; } .tr-tbl th:nth-child(4), .tr-tbl td:nth-child(4), .tr-tbl th:nth-child(5), .tr-tbl td:nth-child(5) { display: none; } .tr-tbl th, .tr-tbl td { padding-left: var(--space-1); padding-right: var(--space-1); } .tr-row { grid-template-columns: 3.4rem 2.4rem minmax(0, 1.5fr) minmax(0, 1fr) 3.8rem; gap: var(--space-1); padding-left: var(--space-2); padding-right: var(--space-2); font-size: 12px; } }
 .tr-grid > div { min-width: 0; }
 @media (max-width: 800px) and (min-width: 721px) { .tabs button { padding: var(--space-1) var(--space-2); } .top { gap: var(--space-2); } }
 /* Rejects tab */
@@ -802,3 +807,18 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
   .mini-kpis > div, .mctx > div { margin: 0; padding: 0; }
   .rn-row { grid-template-columns: 22px minmax(0, 1fr) 40px; gap: var(--space-2); }
 }
+
+/* Health orb: room for the pulse ring (scale 1.15) inside its own box */
+.h-orb { width: 52px; height: 52px; }
+.h-orb::before { inset: 18px; }
+.h-orb::after { inset: 4px; }
+@media (max-width: 720px) { .sb-entry { white-space: normal; overflow: visible; } }
+/* Last mobile overflows: wallet labels get a wider column, token names wrap onto their own line, the health orb's pulse ring stays inside its box */
+.h-orb { overflow: visible; }
+.h-orb::before, .h-orb::after { box-sizing: border-box; }
+@media (max-width: 720px) {
+  .alert-top { flex-wrap: wrap; row-gap: 2px; }
+  .alert-top .when { margin-left: auto; }
+  .alert .name { flex: 1 1 100%; order: 9; max-width: none; white-space: normal; overflow: visible; }
+}
+@media (max-width: 720px) { .tile-drill:not(.card) { margin: 0; padding: 0; border-color: transparent; } .tile-drill:not(.card):hover { background: transparent; } }

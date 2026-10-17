@@ -1330,6 +1330,13 @@ function ciBar(lo, hi, m, span) {
   const p = (v) => Math.max(0, Math.min(100, 50 + (v / span) * 50));
   return `<div class="ci ${lo > 0 ? 'good' : hi < 0 ? 'bad' : ''}"><span class="z"></span><span class="r" style="left:${p(lo)}%;width:${Math.max(1, p(hi) - p(lo))}%"></span><span class="m" style="left:${p(m)}%"></span></div>`;
 }
+/** Copy header text onto each cell so tables can stack into labeled cards on narrow screens. */
+function labelCells(root) {
+  for (const t of root.querySelectorAll('table.stack-m')) {
+    const heads = [...t.querySelectorAll('thead th')].map((h) => h.textContent.trim());
+    for (const tr of t.querySelectorAll('tbody tr')) [...tr.children].forEach((td, i) => { if (i > 0 && heads[i]) td.setAttribute('data-label', heads[i]); });
+  }
+}
 function renderBench() {
   const b = BX, el = $('#benchBody'); if (!b || !el) return;
   const sg = (x, d = 1) => (x == null ? '–' : `${x >= 0 ? '+' : ''}${n(x, d)}`);
@@ -1341,12 +1348,12 @@ function renderBench() {
   el.innerHTML = `<div class="bench">
     <div>
       <h3>Each strategy vs the Random control (avg P&amp;L per trade, current test)</h3>
-      <div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Trades</th><th class="num">Avg</th><th class="num">Win</th><th class="num">vs Random</th><th>95% range (pts)</th><th>Verdict</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="btable stack-m"><thead><tr><th>Book</th><th class="num">Trades</th><th class="num">Avg</th><th class="num">Win</th><th class="num">vs Random</th><th>95% range (pts)</th><th>Verdict</th></tr></thead><tbody>
       ${b.vsRandom.map((r) => `<tr data-drill="book_${r.book}" data-label="${esc(r.label)} book" data-value="${r.avgPct == null ? '' : sg(r.avgPct) + '% / trade'}" data-sub="${r.n} trades · ${esc(r.verdict)}"><td><span class="dotc" style="background:${BOOK_COL(r.book)}"></span>${esc(r.label)}</td><td class="num">${r.n}</td><td class="num ${cls(r.avgPct)}">${r.avgPct == null ? '–' : sg(r.avgPct) + '%'}</td><td class="num">${pct(r.winRatePct, 0)}</td><td class="num">${r.diff == null ? '–' : sg(r.diff) + ' pts'}</td><td>${ciBar(r.lo, r.hi, r.diff, span)}</td><td><span class="verd ${vcls(r.verdict)}">${r.verdict}</span></td></tr>`).join('')}
       <tr class="legacy" data-drill="b_random" data-label="Random control"><td><span class="dotc" style="background:${BOOK_COL('random')}"></span>Random (control)</td><td class="num">${b.random.n}</td><td class="num">${b.random.avgPct == null ? '–' : sg(b.random.avgPct) + '%'}</td><td class="num">${pct(b.random.winRatePct, 0)}</td><td colspan="3" class="hint">baseline · verdicts need ${b.random.needed}+ trades in both</td></tr>
       </tbody></table></div>
       <h3 style="margin-top:var(--space-4)">Same tokens, different rules (each book minus Main on tokens both traded)</h3>
-      <div class="table-wrap"><table class="btable"><thead><tr><th>Book</th><th class="num">Shared tokens</th><th class="num">Diff</th><th>95% range (pts)</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="btable stack-m"><thead><tr><th>Book</th><th class="num">Shared tokens</th><th class="num">Diff</th><th>95% range (pts)</th></tr></thead><tbody>
       ${b.pairs.map((r) => `<tr data-drill="book_${r.book}" data-label="${esc(r.label)} book"><td><span class="dotc" style="background:${BOOK_COL(r.book)}"></span>${esc(r.label)}</td><td class="num">${r.shared}</td><td class="num ${cls(r.diffPts)}">${r.diffPts == null ? '–' : sg(r.diffPts) + ' pts'}</td><td>${ciBar(r.lo, r.hi, r.diffPts, span)}</td></tr>`).join('')}
       </tbody></table></div>
       <p class="small-note">Random buys a different eligible token at the same moment as each signal (similar age and mcap, same exits and costs). Beating zero is not enough: a book has to beat this to show the score adds anything. The same-token table isolates entry timing and exit rules from token selection.</p>
@@ -1360,6 +1367,7 @@ function renderBench() {
       ${bar('Ours: fell ≤20%', G.ours.fellTo20Pct, 100, 'var(--down)')}${bar('Belphor: fell ≤20%', G.belphor.fellTo20Pct, 100, 'var(--text-faint)')}
       <p class="small-note">Ours: ${G.ours.n} graduates tracked ${G.ours.minHours} h or more (of ${G.ours.allWatched} watched); "fell" uses the last observed price, so it undercounts versus Belphor's longer horizon.</p></div><p class="small-note">Lift says whether alerts find movers; the tables on the left say whether trading them pays after costs. Both have to be true.</p>
     </div></div>`;
+  labelCells(el);
 }
 
 
