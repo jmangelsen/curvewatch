@@ -12,7 +12,7 @@ import { curveBuy, curveSell, round } from '../util.js';
 import { logger } from '../log.js';
 import { gate, marketTag } from './marketgate.js';
 import { verdictFor, VERDICTS } from '../verdicts.js';
-import { sequentialVerdict } from './seqtest.js';
+import { sequentialVerdict, confidenceSequence } from './seqtest.js';
 const SEQ_PASS_MARGIN = 0.02, SEQ_MIN_TRADES = 20; // pre-registered: PASS needs the anytime 95% lower bound above +2% per trade after cost
 import { CFG } from '../version.js';
 import { countBlocked } from './rejects.js';
@@ -398,7 +398,7 @@ export function books() {
       byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
   }
   const older = q.closedPapersAsc.all().filter((r) => r.cfg !== CFG || r.gap);
-  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), verdicts: VERDICTS, seqRule: { alpha: 0.05, passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES, hypothesisBooks: ['follow', 'followctl'] }, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
+  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, paired: { scale: pairedBooks('scale', 'main') }, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), verdicts: VERDICTS, seqRule: { alpha: 0.05, passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES, hypothesisBooks: ['follow', 'followctl'] }, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
 }
 
 /** One-time backfill: label older closed trades (recorded before cause tracking) from the stored trade tape. */
@@ -422,4 +422,25 @@ export function backfillCauses() {
   });
   tx();
   return rows.length;
+}
+
+/**
+ * Paired comparison of two books that take the same entries (same alert id, same settings fingerprint, both closed, neither gated).
+ * The statistic is the per-entry difference in after-cost return, so token selection cancels and only the exit rule remains.
+ * Returns the anytime-valid confidence sequence on the differences (clipped to [-4, 4] by construction of the inputs) and per-pair rows.
+ */
+export function pairedBooks(a, b) {
+  const rows = closedCurrent().filter((r) => !r.gated && r.pnl_pct != null && r.alert_id != null);
+  const A = new Map(rows.filter((r) => (r.book || 'main') === a).map((r) => [r.alert_id, r]));
+  const pairs = [];
+  for (const r of rows) if ((r.book || 'main') === b && A.has(r.alert_id)) { const x = A.get(r.alert_id); pairs.push({ alertId: r.alert_id, mint: r.mint, symbol: r.symbol, exitTs: Math.max(r.exit_ts, x.exit_ts), a: x.pnl_pct, b: r.pnl_pct, diff: x.pnl_pct - r.pnl_pct, aReason: x.exit_reason, bReason: r.exit_reason, aPeak: x.size_sol ? x.peak_value / x.size_sol : null }); }
+  pairs.sort((p, q) => p.exitTs - q.exitTs);
+  const d = pairs.map((p) => p.diff / 100);
+  const cs = confidenceSequence(d, { lo: -4, hi: 4 });
+  const n = pairs.length, mean = n ? d.reduce((s, v) => s + v, 0) / n : null;
+  const sd = n > 1 ? Math.sqrt(d.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1)) : null;
+  const se = sd != null ? sd / Math.sqrt(n) : null;
+  const tpHits = pairs.filter((p) => p.aPeak != null && p.aPeak >= (STRATEGIES[a]?.tpMult || Infinity)).length;
+  return { a, b, n, mean, sd, ci95: se != null ? [mean - 1.96 * se, mean + 1.96 * se] : null, cs: { lo: cs.lo, hi: cs.hi }, wins: pairs.filter((p) => p.diff > 0).length, losses: pairs.filter((p) => p.diff < 0).length, ties: pairs.filter((p) => p.diff === 0).length,
+    tpHits, meanA: n ? pairs.reduce((s, p) => s + p.a, 0) / n : null, meanB: n ? pairs.reduce((s, p) => s + p.b, 0) / n : null, pairs };
 }

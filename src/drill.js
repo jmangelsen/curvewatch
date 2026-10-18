@@ -11,7 +11,7 @@ import { CFG, CFG_SINCE, cfgHistory } from './version.js';
 import { benchmarks } from './benchmarks.js';
 import { trackerView, walletDetail } from './engine/smartTracker.js';
 import { rejectsView, rejectRows } from './engine/rejects.js';
-import { closedCurrent, killStatsFrom, STRATEGIES, gate24h } from './engine/paper.js';
+import { closedCurrent, killStatsFrom, STRATEGIES, gate24h, pairedBooks } from './engine/paper.js';
 import { sequentialVerdict, confidenceSequence } from './engine/seqtest.js';
 
 const H = 3600000, D = 86400000;
@@ -390,6 +390,22 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       tables: [{ title: 'Sequence path', cols: [C('Trades', 'n', 'num'), C('Mean', 'mean', 'spct'), C('Lower', 'lo', 'spct'), C('Upper', 'hi', 'spct')], rows: pts },
         { title: 'Closed trades, oldest first', cols: [C('Token', 'symbol'), C('Exit', 'exit', 'text'), C('P&L', 'pnl_pct', 'spct'), C('Reason', 'exit_reason', 'text')], rows: rows.slice(-200).map((r) => ({ symbol: r.symbol, exit: new Date(r.exit_ts).toISOString().slice(5, 16).replace('T', ' '), pnl_pct: r.pnl_pct, exit_reason: r.exit_reason, drill: `tok:${r.mint}`, label: r.symbol })) }] };
   };
+  // ---- Paired exit comparison (Scale-out vs Main) ----
+  const pairDrill = (a, b = 'main') => {
+    const P = pairedBooks(a, b); if (!STRATEGIES[a] || !STRATEGIES[b]) return null;
+    const pm = (v) => (v == null ? null : v * 100);
+    const verdict = !P.n ? 'No pair has closed yet; both books take every Main signal, so pairs accumulate at the Main signal rate.'
+      : P.cs.hi < 0 ? 'The sequence is entirely below zero: the scale-out exit loses money relative to Main at 95% confidence on identical entries.'
+      : P.cs.lo > 0 ? 'The sequence is entirely above zero: the scale-out exit beats Main at 95% confidence on identical entries. Check the hit count before celebrating; a handful of +125% trades can carry this.'
+      : `Not decided. The anytime-valid interval on the per-entry difference still contains zero; width ${((P.cs.hi - P.cs.lo) * 100).toFixed(1)} points.`;
+    return { title: `${STRATEGIES[a].label} vs ${STRATEGIES[b].label} · paired on identical entries`,
+      explain: `${verdict} Method: for each Main signal both books hold the same token from the same fill; the statistic is the difference in after-cost return per entry (${STRATEGIES[a].label} minus ${STRATEGIES[b].label}), so token selection cancels and only the exit rule remains. Interval: hedged betting confidence sequence, α = 0.05, valid at every n. Pre-deployment measurement on 2,639 recorded signals: 7 ever reached +125%; simulated difference −15.5% vs −15.6%, so the registered expectation is a null result.`,
+      stats: [['Pairs closed', P.n, 'num'], ['Mean difference', pm(P.mean), 'spct'], ['CS lower', P.n ? pm(P.cs.lo) : null, 'spct'], ['CS upper', P.n ? pm(P.cs.hi) : null, 'spct'], [`${STRATEGIES[a].label} mean`, pm(P.meanA == null ? null : P.meanA / 100), 'spct'], [`${STRATEGIES[b].label} mean`, pm(P.meanB == null ? null : P.meanB / 100), 'spct'], ['Scale-out better', P.wins, 'num'], ['Main better', P.losses, 'num'], ['Identical', P.ties, 'num'], ['Reached +125%', P.tpHits, 'num']],
+      series: P.n > 1 ? { label: 'Cumulative mean difference by pair (percentage points)', kind: 'line', fmt: 'spct', points: P.pairs.map((x, i, arr) => [i + 1, arr.slice(0, i + 1).reduce((s, y) => s + y.diff, 0) / (i + 1)]) } : undefined,
+      sections: [{ h: 'How to read it', p: 'Identical pairs are expected to dominate early: both books share the same hard stop, so any trade that stops out before +125% closes at the same price in both. The books only diverge on trades that run past +50% (Main takes profit) or +125% (Scale-out takes profit). The decision therefore rests on a minority of trades, which is why the sequence and the hit count are shown together.' }],
+      tables: [{ title: 'Pairs, oldest first', cols: [C('Token', 'symbol'), C('Exit', 'exit', 'text'), C(`${STRATEGIES[a].label}`, 'a', 'spct'), C(`${STRATEGIES[b].label}`, 'b', 'spct'), C('Diff', 'diff', 'spct'), C('Peak', 'peak', 'mult'), C('Scale-out exit', 'aReason', 'text'), C('Main exit', 'bReason', 'text')],
+        rows: P.pairs.slice(-300).reverse().map((x) => ({ symbol: x.symbol, exit: new Date(x.exitTs).toISOString().slice(5, 16).replace('T', ' '), a: x.a, b: x.b, diff: x.diff, peak: x.aPeak, aReason: x.aReason, bReason: x.bReason, drill: `tok:${x.mint}`, label: x.symbol })) }] };
+  };
   // ---- Edge Lab ----
   const testCols = [C('Hypothesis', 'label'), C('Window', 'window'), C('Tokens', 'n', 'num'), C('Net mean', 'meanPct', 'spct'), C('Lower bound', 'loPct', 'spct'), C('Status', 'status')];
   const edgeList = (title, explain, filter) => () => {
@@ -611,7 +627,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         sections: SECTIONS,
         tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
-    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('seq:') ? () => seqDrill(key.slice(4)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('seq:') ? () => seqDrill(key.slice(4)) : key.startsWith('pair:') ? () => pairDrill(key.slice(5)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

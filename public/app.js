@@ -329,6 +329,12 @@ function renderGate() {
         <div class="label"><span>${esc(x.label)}</span>${hyp ? `<span class="cand-tag">${b === 'followctl' ? 'control' : 'hypothesis 2'}</span>` : '<span class="cand-tag faint">reference</span>'}</div>
         <div class="value ${q.n ? (q.decision === 'CONTINUE' ? cls(q.mean * 100) : dc) : 'faint'}">${q.n ? (q.decision === 'CONTINUE' ? signed(q.mean * 100, 1, '%') : q.decision) : '–'}</div>
         <div class="sub">${q.n ? `${q.n} trades · CS ${signed(q.lo * 100, 1, '%')} to ${signed(q.hi * 100, 1, '%')}` : 'waiting for the first closed trade'}</div></div>`; }).join('');
+    const pr = S.paper?.books?.paired?.scale;
+    if (pr && B.scale) { const dec = pr.n ? (pr.cs.hi < 0 ? 'down' : pr.cs.lo > 0 ? 'up' : cls(pr.mean * 100)) : 'faint';
+      $('#gate').insertAdjacentHTML('beforeend', `<div class="kpi gate-tile cand" data-drill="pair:scale" data-label="Scale-out vs Main · paired" role="button" tabindex="0" aria-label="Scale-out versus Main paired comparison: open detail">
+        <div class="label"><span>Scale-out vs Main</span><span class="cand-tag">paired exit test</span></div>
+        <div class="value ${dec}">${pr.n ? signed(pr.mean * 100, 1, ' pts') : '–'}</div>
+        <div class="sub">${pr.n ? `${pr.n} pairs · CS ${signed(pr.cs.lo * 100, 1)} to ${signed(pr.cs.hi * 100, 1)} · ${pr.tpHits} reached +125%` : 'waiting for the first closed pair'}</div></div>`); }
     $('#gateNote').innerHTML = `<b>${esc(open.title)}</b> (opened ${esc(open.openedAt)}). ${esc(open.conclusion)} <span class="faint">Hypothesis 1 (curve-stage entry) was rejected on ${esc(v?.closedAt || '')}; Main and Random stay as reference rows.</span>`;
     return;
   }
