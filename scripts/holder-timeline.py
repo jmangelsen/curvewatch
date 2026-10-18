@@ -12,20 +12,24 @@ Known gaps: accounts closed outright are invisible (undercount), partial sells a
 Usage (inside the credential proxy, which injects the api-key):
   pplx credentials run <helius-handle> -- python3 scripts/holder-timeline.py <mint> [--budget-sec 780] [--rps 9]
 """
-import argparse, json, os, sqlite3, subprocess, sys, threading, time
+import argparse, hashlib, json, os, sqlite3, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 # HTTP goes through curl: the credential proxy's CA is accepted by curl but rejected by Python 3.14's stricter ssl checks.
 
 RPC = 'https://mainnet.helius-rpc.com/'
 ap = argparse.ArgumentParser()
-ap.add_argument('mint'); ap.add_argument('--budget-sec', type=float, default=780); ap.add_argument('--rps', type=float, default=9)
+ap.add_argument('mint'); ap.add_argument('--budget-sec', type=float, default=780); ap.add_argument('--rps', type=float, default=8)
+ap.add_argument('--sample', type=int, default=0, help='probe at most this many accounts, chosen by a stable hash of the address; counts are scaled by the kept fraction')
 ap.add_argument('--max-pages', type=int, default=3, help='signature pages (1000 each) per account before giving up on the oldest')
 ap.add_argument('--db', default=os.path.join(os.environ.get('DATA_DIR', 'data'), 'curvewatch.db'))
 a = ap.parse_args()
 t_start = time.time()
 db = sqlite3.connect(a.db, timeout=30); db.execute('PRAGMA journal_mode=WAL')
 db.execute('''CREATE TABLE IF NOT EXISTS holder_entries (mint TEXT NOT NULL, account TEXT NOT NULL, owner TEXT, amount REAL, first_ts INTEGER, last_ts INTEGER, n_sigs INTEGER, truncated INTEGER DEFAULT 0, PRIMARY KEY (mint, account))''')
-db.execute('''CREATE TABLE IF NOT EXISTS holder_timeline_runs (mint TEXT PRIMARY KEY, accounts INTEGER, done INTEGER, calls INTEGER, started_at INTEGER, finished_at INTEGER)''')
+db.execute('''CREATE TABLE IF NOT EXISTS holder_timeline_runs (mint TEXT PRIMARY KEY, accounts INTEGER, done INTEGER, calls INTEGER, started_at INTEGER, finished_at INTEGER, sample_frac REAL DEFAULT 1, sampled INTEGER)''')
+for col in ('sample_frac REAL DEFAULT 1', 'sampled INTEGER'):
+    try: db.execute('ALTER TABLE holder_timeline_runs ADD COLUMN ' + col)
+    except sqlite3.OperationalError: pass
 db.commit()
 
 lock = threading.Lock(); calls = 0; last = [0.0]
@@ -44,7 +48,7 @@ def rpc(method, params, tries=6):
         out = p.stdout.rsplit('\n', 1); code = out[-1].strip() if len(out) == 2 else ''
         if code == '429' or code.startswith('5') or code == '':
             if i >= 2: print('http', repr(code), p.stderr.strip()[:120], file=sys.stderr)
-            time.sleep(1.5 * (i + 1)); continue
+            time.sleep(0.35 * (i + 1)); continue
         try:
             j = json.loads(out[0])
         except ValueError:
@@ -66,11 +70,15 @@ while True:
     for t in rows: accounts[t['address']] = (t.get('owner'), float(t.get('amount') or 0))
     if len(rows) < 1000: break
     page += 1
+# stable sample: keep an account when its hash bucket falls under the kept fraction, so reruns keep the same set
+frac = min(1.0, a.sample / len(accounts)) if a.sample and accounts else 1.0
+bucket = lambda acc: int(hashlib.sha1(acc.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+kept = [acc for acc in accounts if frac >= 1.0 or bucket(acc) < frac]
 known = {r[0] for r in db.execute('SELECT account FROM holder_entries WHERE mint=?', (a.mint,))}
-todo = [acc for acc in accounts if acc not in known]
-db.execute('INSERT INTO holder_timeline_runs (mint, accounts, done, calls, started_at) VALUES (?,?,?,?,?) ON CONFLICT(mint) DO UPDATE SET accounts=excluded.accounts', (a.mint, len(accounts), len(known), 0, int(t_start * 1000)))
+todo = [acc for acc in kept if acc not in known]
+db.execute('INSERT INTO holder_timeline_runs (mint, accounts, done, calls, started_at, sample_frac, sampled) VALUES (?,?,?,?,?,?,?) ON CONFLICT(mint) DO UPDATE SET accounts=excluded.accounts, sample_frac=excluded.sample_frac, sampled=excluded.sampled', (a.mint, len(accounts), len(known), 0, int(t_start * 1000), frac, len(kept)))
 db.commit()
-print(f'{a.mint}: {len(accounts)} token accounts ({page} DAS pages), {len(known)} already done, {len(todo)} to fetch', flush=True)
+print(f'{a.mint}: {len(accounts)} token accounts ({page} DAS pages), sample {len(kept)} ({frac:.3f}), {len(known)} already done, {len(todo)} to fetch', flush=True)
 
 # 2. first/last touch per account
 def probe(acc):

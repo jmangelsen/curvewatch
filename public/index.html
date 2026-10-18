@@ -161,6 +161,20 @@
         <div id="stRej"><div class="empty">Loading…</div></div>
       </article>
     </div>
+    <article class="card st-horde-card" id="stHordeCard">
+      <div class="card-head">
+        <div><h2>Horde reload cases</h2><p class="hint" id="hdHint">graduates that ran 3× inside their first 3 h · holder counts reconstructed from the chain where available</p></div>
+        <div class="st-ctl">
+          <div class="seg" id="hdMode"><button data-m="holders" aria-selected="true">holders</button><button data-m="mcap" aria-selected="false">market cap ×</button><button data-m="both" aria-selected="false">holders ÷ cap</button></div>
+          <button type="button" class="st-tog" id="hdLog" aria-pressed="true">log</button>
+        </div>
+      </div>
+      <div class="st-kpis" id="hdKpis"></div>
+      <div class="st-legend" id="hdLegend"></div>
+      <div class="st-plot"><canvas id="hdCanvas" role="img" aria-label="Holder and market-cap paths of the reload cases"></canvas><div class="st-tip" id="hdTip" hidden></div></div>
+      <p class="st-note" id="hdNote"></p>
+      <div id="hdTable"></div>
+    </article>
   </section>
   <section id="tab-codex" class="tab-panel cx-term" hidden>
     <header class="cx-bar" id="cxBar">

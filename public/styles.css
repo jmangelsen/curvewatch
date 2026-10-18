@@ -1166,3 +1166,10 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .board td > .wl { display: flex; width: 100%; }
 .board td > .wl a.mono { flex: 1; min-width: 96px; }
 @media (pointer: coarse) { .board td > .wl a.mono { min-height: 44px; } }
+
+/* horde reload cases */
+.st-horde-card { margin-top: var(--space-4); }
+.st-horde-card .card-head { align-items: flex-start; gap: var(--space-3); flex-wrap: wrap; } .st-horde-card .card-head .hint { margin: 2px 0 0; }
+.hd-tbl tr[data-hd] { cursor: pointer; } .hd-tbl tr.is-sel td { background: color-mix(in oklab, var(--accent) 10%, transparent); } .hd-tbl tr.faint td { color: var(--text-muted); }
+.hd-tbl td .hint { font-size: var(--text-xs); color: var(--text-faint); }
+@media (max-width: 720px) { .st-horde-card .st-plot { height: 300px; } }

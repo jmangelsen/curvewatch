@@ -268,3 +268,55 @@ export function drill({ key }) {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Horde cases (Hypothesis 3d): graduates that ran 3x inside their first 3 h, when they dipped, whether they reloaded,
+// and, where scripts/holder-timeline.py has reconstructed it from the chain, the holder count through the event.
+// holders(t) = accounts first touched by t, minus accounts now empty whose last touch was by t, scaled by the sample.
+// ---------------------------------------------------------------------------------------------------------------------
+function hordeTables() {
+  try { return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='holder_entries'").get(); } catch { return false; }
+}
+function holderCurve(mint, t0, t1, stepMs, frac) {
+  const rows = db.prepare('SELECT first_ts f, last_ts l, amount a FROM holder_entries WHERE mint=? AND first_ts>0').all(mint);
+  if (!rows.length) return null;
+  const firsts = rows.map((r) => r.f).sort((a, b) => a - b), exits = rows.filter((r) => !(r.a > 0) && r.l > 0).map((r) => r.l).sort((a, b) => a - b);
+  const upto = (arr, t) => { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] <= t) lo = m + 1; else hi = m; } return lo; };
+  const scale = 1 / Math.max(1e-6, frac || 1), out = [];
+  for (let t = t0; t <= t1; t += stepMs) out.push([t, Math.round((upto(firsts, t) - upto(exits, t)) * scale), Math.round(upto(firsts, t) * scale)]);
+  return out; // [t, holders, everEntered]
+}
+export function horde({ days = 30, hours = 12 } = {}) {
+  const since = Date.now() - days * 86400000;
+  const rows = db.prepare(`SELECT s.mint, s.ts, s.price, s.mcap, s.features, w.symbol, w.name, w.pair_created_at pc FROM grad_snapshots s JOIN grad_watch w ON w.mint=s.mint WHERE s.price>0 AND s.mcap>0 AND s.ts>? ORDER BY s.mint, s.ts`).all(since);
+  const by = new Map(); for (const r of rows) { let a = by.get(r.mint); if (!a) { a = []; by.set(r.mint, a); } a.push(r); }
+  const has = hordeTables();
+  const runs = has ? new Map(db.prepare('SELECT mint, accounts, done, sampled, sample_frac frac, finished_at fin FROM holder_timeline_runs').all().map((r) => [r.mint, r])) : new Map();
+  const cases = [];
+  for (const [mint, a] of by) {
+    const t0 = a[0].ts, first = a[0].mcap; let run = a[0], leg = null, dip = null;
+    for (let i = 1; i < a.length; i++) { const r = a[i]; if (r.ts - t0 > 3 * HOUR) break; if (r.mcap > run.mcap) run = r;
+      if (!leg && run.mcap >= 3 * first) leg = r;
+      if (leg && !dip && r.mcap <= 0.6 * run.mcap && r.ts - run.ts <= HOUR) dip = { r, top: run }; }
+    if (!leg) continue;
+    if (first > 400000 || (dip && dip.r.mcap < 10000) || a.length < 12 || run.mcap < 150000) continue; // DexScreener misreads and thin watches
+    const top = dip ? dip.top : run, from = dip ? dip.r : leg;
+    const after = a.filter((r) => r.ts > from.ts && r.ts <= from.ts + 6 * HOUR);
+    const reclaimed = after.some((r) => r.mcap >= top.mcap), peak = Math.max(...a.map((r) => r.mcap));
+    const fx = (r) => { try { return JSON.parse(r.features || '{}') || {}; } catch { return {}; } };
+    const run_ = runs.get(mint);
+    const curve = run_ && run_.done ? holderCurve(mint, t0 - 30 * 60000, t0 + hours * HOUR, 5 * 60000, run_.done / Math.max(1, run_.accounts)) : null; // scale by what has actually been probed
+    const hAt = (t) => { if (!curve) return null; let b = null; for (const p of curve) { if (p[0] <= t) b = p; else break; } return b ? b[1] : null; };
+    const series = a.filter((r) => r.ts <= t0 + hours * HOUR).map((r) => { const f = fx(r); return [r.ts, Math.round(r.mcap), f.tx1h ?? null, hAt(r.ts)]; });
+    cases.push({ mint, symbol: a[0].symbol || mint.slice(0, 6), name: a[0].name, firstTs: t0, pairCreatedAt: a[0].pc || null, firstMcap: Math.round(first), legTs: leg.ts, topTs: top.ts, topMcap: Math.round(top.mcap),
+      dipTs: dip ? dip.r.ts : null, dipMcap: dip ? Math.round(dip.r.mcap) : null, dipTxRising: dip ? (fx(dip.r).tx1h || 0) >= (fx(dip.top).tx1h || 0) : null,
+      reclaimed, peakMcap: Math.round(peak), peakMult: +(peak / first).toFixed(2), snaps: a.length,
+      holders: run_ && curve ? { accounts: run_.accounts, probed: run_.done, sampled: run_.sampled, frac: run_.done / Math.max(1, run_.accounts), complete: !!run_.fin, atFirst: hAt(t0), atTop: hAt(top.ts), atDip: dip ? hAt(dip.r.ts) : null, at6h: hAt(t0 + 6 * HOUR), curve } : null,
+      series });
+  }
+  cases.sort((x, y) => (y.holders ? 1 : 0) - (x.holders ? 1 : 0) || y.peakMcap - x.peakMcap);
+  const withH = cases.filter((c) => c.holders && c.dipTs);
+  const grp = (f) => { const s = withH.filter(f); const gain = s.map((c) => c.holders.atDip != null && c.holders.atTop ? c.holders.atDip / c.holders.atTop - 1 : null).filter((v) => v != null).sort((a, b) => a - b); return { n: s.length, medianDipHolderChangePct: gain.length ? +(100 * gain[gain.length >> 1]).toFixed(1) : null }; };
+  return { days, hours, n: cases.length, withDip: cases.filter((c) => c.dipTs).length, reconstructed: cases.filter((c) => c.holders).length, reclaimedVsFailed: { reclaimed: grp((c) => c.reclaimed), failed: grp((c) => !c.reclaimed) }, cases,
+    note: 'holders(t) is reconstructed from current token accounts (first/last touch); closed accounts are invisible, partial sells are not timed. Sampled coins are scaled by the kept fraction.' };
+}

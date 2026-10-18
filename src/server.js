@@ -82,6 +82,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/studio', sj('overview'));
   app.get('/api/studio/curves', sj('curves'));
   app.get('/api/studio/postgrad', sj('postgrad'));
+  app.get('/api/studio/horde', async (req, res) => { try { res.json(await studioCall('horde', { days: Math.max(1, Math.min(90, Number(req.query.days) || 30)), hours: Math.max(3, Math.min(24, Number(req.query.hours) || 12)) })); } catch (e) { log.warn('studio horde', e.message); res.status(500).json({ error: e.message }); } });
   app.get('/api/studio/features', sj('features'));
   app.get('/api/studio/rule', sj('testRule'));
   app.post('/api/studio/rule', express.json(), sj('testRule'));

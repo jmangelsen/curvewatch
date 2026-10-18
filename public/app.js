@@ -2331,6 +2331,7 @@ async function loadStudio() {
     if (id !== ST.busy) return;
     ST.over = over; ST.feats = feats; if (ST.stage === 'curve') ST.curves = stage; else ST.post = stage;
     stKpis(); stFeats(); stRej(); stLegend(); stDraw(); if (!ST.feat && feats.ranked[0]) stPickFeat(feats.ranked[0].feature, false); else stDeciles();
+    loadHorde();
   } catch (e) { if (id === ST.busy) $('#stKpis').innerHTML = `<div class="empty"><strong>Studio unavailable</strong>${esc(e.message)}</div>`; }
 }
 function stKpis() {
@@ -2490,4 +2491,79 @@ function stRej() {
     <table class="st-tbl"><thead><tr><th>Family</th><th>Tokens</th><th>Grads</th><th>Grad rate</th><th>2× rate</th></tr></thead><tbody>${f.rejectFamilies.slice(0, 9).map((x) => `<tr class="${x.family === '(pass)' ? 'is-pass' : pass && x.lo > pass.gradRate ? 'is-hot' : ''}"><td>${esc(x.family)}</td><td>${n(x.n, 0)}</td><td>${n(x.g, 0)}</td><td><span class="st-rate" style="--w:${Math.min(100, (x.gradRate / Math.max(0.01, Math.max(...f.rejectFamilies.map((y) => y.gradRate)))) * 100)}%">${x.gradRate.toFixed(2)}%</span></td><td>${x.x2Rate.toFixed(1)}%</td></tr>`).join('')}</tbody></table>
     <p class="st-note">A family shaded green has a graduation rate whose lower bound beats the pass group: that rule is discarding graduates. Whether those were tradeable is the paper books' question, not this table's.</p>`;
   if (typeof markTiles === 'function') markTiles();
+}
+
+// ================= Studio: horde reload cases (Hypothesis 3d) =================
+const HD = { data: null, mode: 'holders', log: true, focus: null, hover: null, paths: [], busy: 0 };
+async function loadHorde() {
+  const id = ++HD.busy;
+  try { const d = await get('/api/studio/horde?days=30&hours=12'); if (id !== HD.busy) return; HD.data = d; if (!HD.focus) HD.focus = (d.cases.find((c) => c.holders && c.reclaimed) || d.cases.find((c) => c.holders) || d.cases[0])?.mint || null; hdKpis(); hdLegend(); hdDraw(); hdTable(); }
+  catch (e) { if (id === HD.busy) $('#hdKpis').innerHTML = `<div class="empty"><strong>Horde cases unavailable</strong>${esc(e.message)}</div>`; }
+}
+const hdMin = (c, t) => (t - c.firstTs) / 60000;
+function hdKpis() {
+  const d = HD.data; if (!d) return; const rv = d.reclaimedVsFailed, k = (l, v, s) => `<div><div class="label">${esc(l)}</div><div class="value">${v}</div><div class="sub">${esc(s)}</div></div>`;
+  $('#hdKpis').innerHTML = k('3× first legs', n(d.n, 0), `in ${d.days} days · ${d.withDip} with a ≥ 40% dip inside the hour`) + k('Reclaimed the top', n(d.cases.filter((c) => c.reclaimed).length, 0), 'within 6 h of the dip')
+    + k('Holder curves', n(d.reconstructed, 0), d.reconstructed ? `${d.cases.filter((c) => c.holders && !c.holders.complete).length} still filling in` : 'run scripts/holder-timeline.py')
+    + k('Holders through the dip, reclaimed', rv.reclaimed.medianDipHolderChangePct == null ? '–' : signed(rv.reclaimed.medianDipHolderChangePct, 0, '%'), `median · n ${rv.reclaimed.n}`)
+    + k('Holders through the dip, failed', rv.failed.medianDipHolderChangePct == null ? '–' : signed(rv.failed.medianDipHolderChangePct, 0, '%'), `median · n ${rv.failed.n}`)
+    + k('Read', d.reconstructed >= 10 ? 'compare' : 'too few', d.reconstructed >= 10 ? 'both groups have curves' : 'H3d needs ≥ 10 reconstructed cases');
+}
+function hdLegend() {
+  $('#hdLegend').innerHTML = `<span><i style="background:${stCss('--up', '#1fbf8f')}"></i>reclaimed the top within 6 h</span><span><i style="background:${stCss('--down', '#e5484d')}"></i>did not</span><span><i style="background:${stCss('--text-faint', '#888')};opacity:.6"></i>no holder curve yet (cap only)</span><span class="st-lgnote">x = minutes after the first post-migration reading · ▲ leg top · ▼ dip · thick = selected · tap a row to select, tap the line to open the token</span>`;
+}
+function hdDraw() {
+  const cv = $('#hdCanvas'), wrap = cv?.parentElement, d = HD.data; if (!cv || !d) return;
+  const dpr = Math.min(2, devicePixelRatio || 1), W = wrap.clientWidth, H = wrap.clientHeight; if (!W || !H) return;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const pad = { l: 62, r: 14, t: 14, b: 28 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b, up = stCss('--up', '#1fbf8f'), dn = stCss('--down', '#e5484d'), faint = stCss('--text-faint', '#888');
+  const mode = HD.mode, cases = d.cases.filter((c) => mode === 'mcap' || c.holders);
+  const val = (c, p) => mode === 'mcap' ? p[1] / c.firstMcap : mode === 'holders' ? p[3] : (p[3] != null && p[1] > 0 ? p[3] / (p[1] / 1000) : null); // holders per $1k of cap
+  const pts = (c) => (mode === 'holders' && c.holders ? c.holders.curve.map((p) => [hdMin(c, p[0]), p[1]]) : c.series.map((p) => [hdMin(c, p[0]), val(c, p)])).filter((p) => p[1] != null && p[1] > 0 && p[0] >= -30 && p[0] <= d.hours * 60);
+  let lo = Infinity, hi = -Infinity; const all = cases.map((c) => ({ c, pts: pts(c) })).filter((x) => x.pts.length >= 2);
+  for (const x of all) for (const p of x.pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+  if (!Number.isFinite(lo)) { $('#hdNote').textContent = 'No holder curve has been reconstructed yet.'; return; }
+  if (HD.log) { lo = Math.max(lo, mode === 'mcap' ? 0.05 : 1) / 1.2; hi *= 1.2; } else { lo = 0; hi *= 1.05; }
+  const X = (m) => pad.l + (m + 30) / (d.hours * 60 + 30) * iw, Y = (v) => { const t = HD.log ? (Math.log(Math.max(v, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) : (v - lo) / (hi - lo); return pad.t + ih - t * ih; };
+  g.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace'; g.fillStyle = faint; g.strokeStyle = stCss('--border', '#333'); g.lineWidth = 1;
+  const ticks = []; if (HD.log) { for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v >= lo && v <= hi) ticks.push(v); } } else { const st = Math.pow(10, Math.floor(Math.log10(hi / 5))); for (let v = 0; v <= hi; v += st) ticks.push(v); }
+  g.textAlign = 'right'; for (const v of ticks) { const y = Y(v); g.globalAlpha = 0.5; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.globalAlpha = 1; g.fillText(mode === 'mcap' ? `${n(v, v < 10 ? 1 : 0)}×` : n(v, 0), pad.l - 6, y + 4); }
+  g.textAlign = 'center'; for (let m = 0; m <= d.hours * 60; m += 60) { const x = X(m); g.globalAlpha = 0.35; g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, pad.t + ih); g.stroke(); g.globalAlpha = 1; g.fillText(`${m / 60}h`, x, H - 10); }
+  if (mode === 'mcap') { const y1 = Y(1); g.setLineDash([4, 4]); g.strokeStyle = stCss('--text-muted', '#999'); g.beginPath(); g.moveTo(pad.l, y1); g.lineTo(W - pad.r, y1); g.stroke(); g.setLineDash([]); }
+  HD.paths = [];
+  const order = [...all].sort((a, b) => (a.c.mint === HD.focus) - (b.c.mint === HD.focus) || (a.c.holders ? 1 : 0) - (b.c.holders ? 1 : 0));
+  for (const x of order) {
+    const c = x.c, sel = c.mint === HD.focus, hot = HD.hover?.c.mint === c.mint, col = !c.holders && mode !== 'mcap' ? faint : c.reclaimed ? up : dn;
+    const P = x.pts.map((p) => [X(p[0]), Y(p[1]), p[0], p[1]]); HD.paths.push({ c, pts: P });
+    g.beginPath(); P.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.strokeStyle = col; g.lineWidth = sel ? 3 : hot ? 2.2 : 1.2; g.globalAlpha = sel || hot ? 1 : c.holders ? 0.55 : 0.3; g.stroke(); g.globalAlpha = 1;
+    if (sel || hot) { // mark the leg top and the dip on the selected case
+      const at = (t) => { const m = hdMin(c, t); let b = P[0]; for (const p of P) if (p[2] <= m) b = p; return b; };
+      const tri = (p, upward, color) => { if (!p) return; g.beginPath(); g.moveTo(p[0], p[1] + (upward ? 10 : -10)); g.lineTo(p[0] - 5, p[1] + (upward ? 18 : -18)); g.lineTo(p[0] + 5, p[1] + (upward ? 18 : -18)); g.closePath(); g.fillStyle = color; g.fill(); };
+      tri(at(c.topTs), true, col); if (c.dipTs) tri(at(c.dipTs), false, stCss('--text', '#fff'));
+    }
+  }
+  const sel = all.find((x) => x.c.mint === HD.focus)?.c;
+  $('#hdNote').textContent = sel ? `${sel.symbol}: first reading ${usd(sel.firstMcap)} → top ${usd(sel.topMcap)}${sel.dipTs ? ` → dip ${usd(sel.dipMcap)} (${Math.round((sel.dipMcap / sel.topMcap - 1) * 100)}%, hourly tx ${sel.dipTxRising ? 'still rising' : 'falling'})` : ''} → peak ${usd(sel.peakMcap)} (${n(sel.peakMult, 1)}×)${sel.holders ? ` · holders ${n(sel.holders.atFirst, 0)} at first reading, ${n(sel.holders.atTop, 0)} at the top${sel.holders.atDip != null ? `, ${n(sel.holders.atDip, 0)} at the dip` : ''}, ${n(sel.holders.at6h, 0)} at 6 h · ${sel.holders.complete ? `${n(sel.holders.probed, 0)} of ${n(sel.holders.accounts, 0)} accounts probed` : `filling in: ${n(sel.holders.probed, 0)} of ${n(sel.holders.sampled, 0)} sampled accounts (${n(sel.holders.accounts, 0)} total)`}` : ' · no holder curve yet'}` : '';
+}
+function hdNearest(mx, my) { let best = null, bd = 10; for (const p of HD.paths) for (let i = 1; i < p.pts.length; i++) { const [x1, y1] = p.pts[i - 1], [x2, y2] = p.pts[i]; const L2 = (x2 - x1) ** 2 + (y2 - y1) ** 2; const tt = L2 ? Math.max(0, Math.min(1, ((mx - x1) * (x2 - x1) + (my - y1) * (y2 - y1)) / L2)) : 0; const dd = Math.hypot(mx - (x1 + tt * (x2 - x1)), my - (y1 + tt * (y2 - y1))); if (dd < bd) { bd = dd; best = { ...p, seg: i }; } } return best; }
+function hdTable() {
+  const d = HD.data; if (!d) return; const h = (c, k) => (c.holders && c.holders[k] != null ? n(c.holders[k], 0) : '–');
+  const dipChg = (c) => (c.holders && c.holders.atDip != null && c.holders.atTop ? signed((c.holders.atDip / c.holders.atTop - 1) * 100, 0, '%') : '–');
+  $('#hdTable').innerHTML = `<div class="table-wrap"><table class="board hd-tbl"><thead><tr><th>Coin</th><th class="num">First</th><th class="num">Top</th><th class="num">Dip</th><th>Tx at dip</th><th class="num">Holders first</th><th class="num">at top</th><th class="num">at dip</th><th class="num">Δ through dip</th><th class="num">at 6 h</th><th>Reclaimed</th><th class="num">Peak ×</th></tr></thead><tbody>
+    ${d.cases.map((c) => `<tr data-hd="${esc(c.mint)}" class="${c.mint === HD.focus ? 'is-sel' : ''}${c.holders ? '' : ' faint'}"><td><b>${esc(c.symbol)}</b>${c.holders && !c.holders.complete ? ' <span class="hint">filling</span>' : ''}</td><td class="num">${usd(c.firstMcap)}</td><td class="num">${usd(c.topMcap)}</td><td class="num">${c.dipMcap ? `${usd(c.dipMcap)} <span class="down">${Math.round((c.dipMcap / c.topMcap - 1) * 100)}%</span>` : '–'}</td><td>${c.dipTxRising == null ? '–' : c.dipTxRising ? '<span class="up">rising</span>' : '<span class="down">falling</span>'}</td><td class="num">${h(c, 'atFirst')}</td><td class="num">${h(c, 'atTop')}</td><td class="num">${h(c, 'atDip')}</td><td class="num">${dipChg(c)}</td><td class="num">${h(c, 'at6h')}</td><td>${c.reclaimed ? '<span class="st st-PASS">YES</span>' : '<span class="st st-KILL">NO</span>'}</td><td class="num">${n(c.peakMult, 1)}×</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+{
+  const cv = $('#hdCanvas'), tip = $('#hdTip');
+  if (cv) {
+    const move = (e) => { const r = cv.getBoundingClientRect(); const h = hdNearest(e.clientX - r.left, e.clientY - r.top); if ((h && HD.hover && h.c.mint === HD.hover.c.mint) || (!h && !HD.hover)) return; HD.hover = h; hdDraw(); if (!h) { tip.hidden = true; cv.style.cursor = ''; return; } cv.style.cursor = 'pointer'; const c = h.c; tip.innerHTML = `<b>${esc(c.symbol)}</b> <span>${c.reclaimed ? 'reclaimed' : 'did not reclaim'}</span><br>top ${usd(c.topMcap)}${c.dipTs ? ` · dip ${usd(c.dipMcap)}` : ''} · peak ${n(c.peakMult, 1)}×${c.holders ? `<br>holders ${n(c.holders.atTop, 0)} at top → ${n(c.holders.at6h, 0)} at 6 h` : ''}<br><small>tap to open the token</small>`; tip.hidden = false; const x = e.clientX - r.left, y = e.clientY - r.top; tip.style.left = `${Math.min(x + 14, r.width - tip.offsetWidth - 6)}px`; tip.style.top = `${Math.max(6, y - tip.offsetHeight - 10)}px`; };
+    cv.addEventListener('mousemove', move); cv.addEventListener('mouseleave', () => { HD.hover = null; tip.hidden = true; hdDraw(); });
+    cv.addEventListener('click', (e) => { const r = cv.getBoundingClientRect(); const h = hdNearest(e.clientX - r.left, e.clientY - r.top) || HD.hover; if (!h) return; if (HD.focus !== h.c.mint) { HD.focus = h.c.mint; hdDraw(); hdTable(); return; } if (typeof openGradDrawer === 'function') openGradDrawer(h.c.mint); });
+    cv.addEventListener('touchstart', (e) => { const t = e.touches[0]; move({ clientX: t.clientX, clientY: t.clientY }); }, { passive: true });
+    new ResizeObserver(() => { if (S.tab === 'studio') hdDraw(); }).observe(cv.parentElement);
+    $('#hdMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; HD.mode = b.dataset.m; document.querySelectorAll('#hdMode button').forEach((x) => x.setAttribute('aria-selected', x === b)); hdDraw(); });
+    $('#hdLog').addEventListener('click', () => { HD.log = !HD.log; $('#hdLog').setAttribute('aria-pressed', HD.log); hdDraw(); });
+    $('#hdTable').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-hd]'); if (!tr) return; if (HD.focus === tr.dataset.hd) { if (typeof openGradDrawer === 'function') openGradDrawer(tr.dataset.hd); return; } HD.focus = tr.dataset.hd; hdDraw(); hdTable(); $('#hdCanvas').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
+  }
 }
