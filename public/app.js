@@ -1177,12 +1177,13 @@ const HSUB = { HEALTHY: 'Data is complete and the process is responsive. Results
   DEGRADED: 'At least one check failed. Results that overlap the problem are excluded automatically; fix the red items.', DOWN: 'No live trade data right now. A gap is open; open positions are flagged and excluded from stats.' };
 const tsShort = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 const bytes = (b) => (b == null ? '–' : b > 1e9 ? `${n(b / 1e9, 2)} GB` : b > 1e6 ? `${n(b / 1e6, 1)} MB` : `${n(b / 1e3, 0)} kB`);
+const bfNote = (b) => (!b ? '' : b.pending ? ' · <span class="acc">recovering graduations…</span>' : ` · <span class="up">${b.added} graduates recovered</span> of ${b.migrations} migrations${b.failed ? ` (${b.failed} unreadable)` : ''}`);
 function renderHealth() {
   const d = HX.data; if (!d) return; setHDot(d);
   const L = d.labels, cal = d.calibration;
   $('#hHero').innerHTML = `
     <div class="h-top">
-      <div class="h-state"><div class="h-orb ${d.overall}"></div><div><div class="h-word">${d.overall}</div><div class="h-sub">${HSUB[d.overall]}${d.openGap ? ` Gap open for ${age(d.openGap.sec)}.` : ''}</div></div></div>
+      <div class="h-state"><div class="h-orb ${d.overall}"></div><div><div class="h-word">${d.overall}</div><div class="h-sub">${HSUB[d.overall]}${d.backfill?.running || d.backfill?.queued ? ` Backfilling graduations missed during downtime (${d.backfill.queued} window${d.backfill.queued === 1 ? '' : 's'} queued).` : ''}${d.openGap ? ` Gap open for ${age(d.openGap.sec)}.` : ''}</div></div></div>
       <div class="h-meta">
         <div>Settings fingerprint<b>${esc(L.cfg)}</b></div>
         <div>Current test since<b>${tsShort(L.cfgSince)}</b></div>
@@ -1202,7 +1203,7 @@ function renderHealth() {
   $('#hFeeds').innerHTML = `<div class="table-wrap"><table class="btable"><thead><tr><th>Feed</th><th class="num">Events/s</th><th class="num">Reconnects</th><th class="num">Last msg</th><th>Last error</th></tr></thead><tbody>${d.feeds.map((f) =>
     `<tr><td><span class="dotc ${f.healthy ? 'on' : 'off'}"></span>${esc(f.name)}</td><td class="num">${n(f.evPerSec, 1)}</td><td class="num">${f.reconnects ?? 0}</td><td class="num">${f.secSinceMessage == null ? '–' : age(f.secSinceMessage)}</td><td class="hint" style="white-space:normal">${esc((f.lastError || '').slice(0, 70)) || '–'}</td></tr>`).join('')}</tbody></table></div>
     <p class="small-note">Launch capture compares launches seen by PumpPortal with launches the on-chain RPC feed also saw in the last hour: PumpPortal ${d.capture.pp}, RPC ${d.capture.rpc}, both ${d.capture.both}.</p>`;
-  $('#hGaps').innerHTML = d.gaps.length ? `<ul class="gap-list">${d.gaps.slice(0, 40).map((g) => `<li><span class="t">${tsShort(g.start)}</span><span class="d">${g.open ? 'open ' : ''}${age(g.sec)}</span><span>${esc(g.reason || '')}${g.open_trades ? ` · ${g.open_trades} trades flagged` : ''}${g.tokens_flagged ? ` · ${g.tokens_flagged} labels flagged` : ''}</span></li>`).join('')}</ul>`
+  $('#hGaps').innerHTML = d.gaps.length ? `<ul class="gap-list">${d.gaps.slice(0, 40).map((g) => `<li><span class="t">${tsShort(g.start)}</span><span class="d">${g.open ? 'open ' : ''}${age(g.sec)}</span><span>${esc(g.reason || '')}${g.open_trades ? ` · ${g.open_trades} trades flagged` : ''}${g.tokens_flagged ? ` · ${g.tokens_flagged} labels flagged` : ''}${bfNote(g.backfill)}</span></li>`).join('')}</ul>`
     : `<div class="empty"><strong>No gaps recorded</strong>Silence longer than ${cal.gapSec}s or any process downtime will appear here.</div>`;
   $('#hLabels').innerHTML = `<dl class="kv">
     <dt>Alerts past horizon, unlabeled</dt><dd>${L.overdueAlerts}</dd>

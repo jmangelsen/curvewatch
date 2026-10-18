@@ -11,6 +11,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { db, q } from './db.js';
 import { logger } from './log.js';
+import { backfillOf, backfillState } from './engine/backfill.js';
 const log = logger('health');
 
 db.exec(`
@@ -131,9 +132,13 @@ function openGap(start) {
   health.openGapStart = start;
   log.warn(`data gap opened: no trades for ${health.gapSec}s · ${open} open paper trades flagged`);
 }
+const gapListeners = [];
+/** Register a callback for ({ start, end }) when a data gap closes (restart downtime included). */
+export const onGapClosed = (fn) => gapListeners.push(fn);
 function closeGap() {
   const id = health.openGapId, start = health.openGapStart, end = Date.now();
   health.openGapId = null; health.openGapStart = null;
+  for (const fn of gapListeners) { try { fn({ start, end, id }); } catch (e) { log.warn('gap listener failed', e.message); } }
   // tokens alive during the gap: their outcome labels are incomplete
   let flagged = 0;
   if (engineRef) for (const t of engineRef.tokens.values()) if (!t.finalized && t.createdAt < end) { t.gapFlag = true; flagged++; }
@@ -252,7 +257,8 @@ export function healthView({ status, fills, labels }) {
     calibration: { gapSec: health.gapSec, lowRatePerMin: health.lowRatePerMin, baseline: health.baseline, at: health.calibratedAt, note: health.calibrationNote },
     coverage: { h24: cov24, d7: cov7, d14: cov14, test: covTest },
     minutes: mins.map((r) => [r.minute, r.trades, r.gap_sec || 0, r.up_sec, r.reconnects]),
-    gaps: gaps.slice(0, 50).map((g) => ({ ...g, sec: ((g.end || now) - g.start) / 1000, open: !g.end })),
+    gaps: gaps.slice(0, 50).map((g) => ({ ...g, sec: ((g.end || now) - g.start) / 1000, open: !g.end, backfill: backfillOf(g.id) })),
+    backfill: backfillState,
     feeds: status.feeds.map((f) => ({ name: f.name, healthy: f.healthy, connected: f.connected, evPerSec: f.evPerSec, msgPerSec: f.msgPerSec, kbPerSec: f.kbPerSec,
       reconnects: f.reconnects, connects: f.connects, secSinceMessage: f.secSinceMessage, lastError: f.lastError, since: f.since, failedTx: f.failedTx ?? null })),
     capture: { pp: capPP, rpc: capRPC, both: capBoth, pct: capRate },

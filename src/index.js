@@ -24,7 +24,8 @@ import { round } from './util.js';
 import { logger } from './log.js';
 import { db } from './db.js';
 import { initRejects, rejectsView } from './engine/rejects.js';
-import { initHealth, healthView, health } from './health.js';
+import { initHealth, healthView, health, onGapClosed } from './health.js';
+import { backfillGap, backfillPendingGaps, backfillState } from './engine/backfill.js';
 import { auditFills, fillsView, startFillAudit } from './fills.js';
 import { benchmarks } from './benchmarks.js';
 import { makeDrill } from './drill.js';
@@ -41,6 +42,8 @@ const pp = new PumpPortalFeed();
 const rpcs = config.tradeSource === 'rpc' ? Array.from({ length: Math.max(1, config.rpc.parallel) }, (_, i) => new RpcLogsFeed(i)) : [];
 const engine = new Engine({ pumpportal: pp });
 const grads = new Graduates();
+// Recover graduations missed while the collector was down (restart, crash, sleep): see engine/backfill.js
+onGapClosed(({ start, end, id }) => backfillGap(start, end, { grads, engine, gapId: id, reason: `gap ${new Date(start).toISOString().slice(11, 16)}–${new Date(end).toISOString().slice(11, 16)} UTC` }));
 const strong = new Strong();
 engine.on('alert', (a) => { try { const row = strong.consider('curve', { ...a, mcapUsd: market.solUsd ? a.mcap * market.solUsd : null }); if (row) { const why = engine.cleanEntry(a.mint); if (why) log.info(`clean book skipped ${a.symbol}: ${why}`); } } catch (e) { log.warn('strong (curve) failed', e.message); } });
 grads.on('alert', (a) => { try { strong.consider('grad', { ...a, mcapUsd: a.mcap }); } catch (e) { log.warn('strong (grad) failed', e.message); } });
@@ -81,7 +84,7 @@ function status() {
     alertScore: config.scoring.alertScore,
     band: (({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct }) => ({ status, n, needed, expectancyPct, ciLowPct, ciHighPct, totalPnlSol, winRatePct, lo: config.band.lo, hi: config.band.hi }))(paper.killRule('band')),
     paperRules: config.paper.rules, cfg: CFG, cfgSince: CFG_SINCE,
-    health: { gapSec: health.gapSec, openGap: !!health.openGapId },
+    health: { gapSec: health.gapSec, openGap: !!health.openGapId, backfill: backfillState },
     market: { state: gate.state, mode: gate.mode, enforcing: gate.enforcing, winRatePct: gate.winRatePct, n: gate.n },
   };
 }
@@ -165,6 +168,7 @@ if (cfg.grads.enabled) {
 }
 refreshSmartWallets();
 initHealth({ feeds, paper, engine });
+setTimeout(() => backfillPendingGaps({ grads, engine }), 15000); // after feeds are up, so a startup gap closes first
 // Tokens and alerts that were mid-window when the process stopped can never be labeled (in-memory state is gone).
 // Mark them lost (finalized = -1, gap = 1) so they are neither counted as backlog nor used in calibration.
 {
