@@ -66,6 +66,12 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     if (Number.isFinite(at) && at > 0 && at < Date.now() - 5000) return res.json({ ...codex.at(at), notice: API_NOTICE });
     res.json({ ...codex.now(), notice: API_NOTICE });
   });
+  app.get('/api/codex/chart', (req, res) => {
+    const { mint, venue, from, to, bucket } = req.query;
+    if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return res.status(400).json({ error: 'mint required' });
+    res.json({ ...codex.chart({ mint, venue: venue === 'pumpswap' ? 'pumpswap' : 'curve', from, to, bucketMs: bucket }), notice: API_NOTICE });
+  });
+  app.get('/api/codex/equity', (req, res) => res.json({ ...codex.equity(Math.min(168, Math.max(1, Number(req.query.hours) || 24))), notice: API_NOTICE }));
   app.get('/api/paper', (req, res) => {
     res.json({ notice: API_NOTICE, config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
   });

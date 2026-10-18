@@ -2038,15 +2038,16 @@ function renderCodex() {
   const d = CX.data; if (!d) return;
   const moment = CX.moment != null && CX.momentData;
   const view = moment ? CX.momentData : d;
-  cxHero(view, !!moment); cxKpis(d); $('#cxKpis').classList.toggle('dim', !!moment); cxStrip(d); cxBooks(view); cxGrid(view, !!moment); cxTape(d); cxDay(d);
+  cxHero(view, !!moment); cxKpis(d); $('#cxKpis').classList.toggle('dim', !!moment); cxStrip(d); cxTape(d); cxDay(d);
+  if (CX.view === 'term') { cxCells(view, !!moment); cxBlotter(view, !!moment); cxAccount(); cxLoadChart(); cxLiveTick(view); } else { cxBooks(view); cxGrid(view, !!moment); }
   $('#cxLiveBadge').className = `cx-live-badge ${moment ? 'off' : ''}`; $('#cxLiveBadge').innerHTML = moment ? `<i></i>${cxClock(view.ts)}` : '<i></i>LIVE';
-  $('#cxMomentLabel').textContent = moment ? `${new Date(view.ts).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · marks rebuilt from the tape` : 'any moment in the last 24 hours';
+  $('#cxMomentLabel').textContent = moment ? `${new Date(view.ts).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · marks rebuilt from the tape` : 'replay any moment in the last 24 hours';
   $('#cxBackLive').hidden = !moment; $('#cxMomentHint').textContent = moment ? 'step between trades or drag; release at the right edge for live' : 'drag the strip, or step between trades';
   $('#cxMoment').classList.toggle('moment', !!moment);
   CX.booted = true;
 }
 async function loadCodex() {
-  try { CX.data = await get('/api/codex'); CX.fullAt = Date.now(); if (CX.moment == null) renderCodex(); else { cxKpis(CX.data); cxStrip(CX.data); cxTape(CX.data); cxDay(CX.data); } } catch (e) { console.warn(e); }
+  try { CX.data = await get('/api/codex'); CX.fullAt = Date.now(); if (CX.view === 'term') await cxLoadEquity(); if (CX.moment == null) renderCodex(); else { cxKpis(CX.data); cxStrip(CX.data); cxTape(CX.data); cxDay(CX.data); } } catch (e) { console.warn(e); }
 }
 let cxMomentT = null;
 async function cxGoto(ts) {
@@ -2084,3 +2085,196 @@ function cxPulse(p) {
   $('#cxTabDot').hidden = !p.inTrade;
   if (S.tab === 'codex' && CX.moment == null && !document.hidden) renderCodex();
 }
+
+// ---- Codex terminal: account bar, blotter, chart, equity ----
+const LW = window.LightweightCharts || null;
+Object.assign(CX, { view: localStorage.getItem('cx.view') || (window.innerWidth < 900 ? 'cards' : 'term'), sel: null, selClosed: null, tf: Number(localStorage.getItem('cx.tf')) || 15000, kind: localStorage.getItem('cx.kind') || 'candles', log: false, levels: true, blTab: 'open', sort: { k: 'entryTs', d: -1 }, equity: null, chart: null, chartKey: null, chartData: null, lw: null, eqLw: null });
+const cxTzSec = (ms) => Math.floor((ms - new Date(ms).getTimezoneOffset() * 60000) / 1000);
+const cxSolUsd = () => CX.data?.solUsd || solPx() || null;
+const cxTheme = () => { const cs = getComputedStyle($('#tab-codex')); const g = (k) => cs.getPropertyValue(k).trim(); return { text: g('--text-muted'), faint: g('--text-faint'), border: g('--border'), up: g('--up'), down: g('--down'), accent: g('--accent'), surface: g('--surface') }; };
+
+function cxSetView(v) {
+  CX.view = v; localStorage.setItem('cx.view', v); $('#tab-codex').dataset.view = v;
+  for (const b of document.querySelectorAll('.cx-view button')) b.setAttribute('aria-pressed', String(b.dataset.view === v));
+  const m = $('#cxMoment');
+  if (v === 'cards') { if (!m.classList.contains('cx-moment-standalone')) { m.classList.add('cx-moment-standalone'); $('#cxBooks').before(m); } }
+  else { m.classList.remove('cx-moment-standalone'); $('#cxChartP').appendChild(m); }
+  if (CX.data) renderCodex();
+  if (v === 'term') setTimeout(() => { CX.lw?.applyOptions({ width: $('#cxLw').clientWidth, height: $('#cxLw').clientHeight }); CX.eqLw?.applyOptions({ width: $('#cxEq').clientWidth, height: $('#cxEq').clientHeight }); }, 50);
+}
+function cxCells(d, moment) {
+  const ps = d.positions, ex = d.exposure || {}, eq = CX.equity, s = CX.data?.series;
+  const openPnlUsd = ex.markUsd != null && ex.sizeUsd != null ? ex.markUsd - ex.sizeUsd : null;
+  const cells = [
+    ['Open P&L', openPnlUsd != null ? usd(openPnlUsd, { sign: true }) : '–', ex.pnlPct != null ? `${signed(ex.pnlPct, 1, '%')} on ${ex.sizeUsd != null ? usd(ex.sizeUsd) : '–'}` : 'nothing deployed', 'codex_market', cls(openPnlUsd)],
+    ['Realised 24h', eq ? (eq.pnlUsd != null ? usd(eq.pnlUsd, { sign: true }) : `${n(eq.pnlSol, 3)} SOL`) : '–', eq ? `${eq.trades} closed · ${eq.winRatePct != null ? pct(eq.winRatePct, 0) : '–'} above zero` : '', 'codex_equity', eq ? cls(eq.pnlSol) : ''],
+    ['Profit factor', eq && eq.profitFactor != null ? (eq.profitFactor === Infinity ? '∞' : n(eq.profitFactor, 2)) : '–', eq ? `avg win ${eq.avgWinPct != null ? signed(eq.avgWinPct, 0, '%') : '–'} · avg loss ${eq.avgLossPct != null ? signed(eq.avgLossPct, 0, '%') : '–'}` : '', 'codex_equity', eq && eq.profitFactor != null ? (eq.profitFactor >= 1 ? 'up' : 'down') : ''],
+    ['Max DD 24h', eq ? (eq.maxDrawdownUsd != null ? `−${usd(eq.maxDrawdownUsd)}` : `${n(eq.maxDrawdownSol, 3)} SOL`) : '–', eq ? `worst run ${eq.maxLossStreak} losses` : '', 'codex_equity', eq && eq.maxDrawdownSol > 0 ? 'down' : ''],
+    ['Exposure', ex.exposureUsd != null ? usd(ex.exposureUsd) : `${n(ex.exposureSol, 2)} SOL`, `${ps.length} position${ps.length === 1 ? '' : 's'} · ${d.coins} coin${d.coins === 1 ? '' : 's'} · ${Object.keys(d.books || {}).length} books`, 'codex_market', ''],
+    ['Time in market', s ? pct(s.timeInMarketPct, 0) : '–', s ? `peak ${Math.max(0, ...s.counts)} concurrent · 24h` : '', 'codex_market', ''],
+  ];
+  $('#cxCells').innerHTML = cells.map(([l, v, sub, key, c]) => `<div class="cx-cell" data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0"><div class="l">${l}</div><div class="v ${c || ''}">${v}</div><div class="s">${sub}</div></div>`).join('');
+  void moment;
+}
+const cxToStop = (p) => (p.stopMult && p.stopMult > 0.02 && p.markPct != null ? Math.max(0, (1 - p.stopMult / (1 + p.markPct / 100)) * 100) : null); // % the mark must fall to reach the stop
+const cxToTp = (p) => (p.tpMult && p.markPct != null ? (p.tpMult / (1 + p.markPct / 100) - 1) * 100 : null); // % the mark must rise to reach the target
+function cxBlotter(view, moment) {
+  const tab = $('#cxBlotter [role=tab][aria-selected=true]')?.dataset.bl || 'open', open = tab === 'open';
+  const tapeEl = $('#cxTape'), tapeCard = document.querySelector('.cx-tape-card');
+  if (tab === 'tape') { $('#cxBlTable').hidden = true; if (tapeEl.parentElement !== $('#cxBlotter .cx-blwrap')) $('#cxBlotter .cx-blwrap').appendChild(tapeEl); tapeEl.classList.add('in-blotter'); $('#cxBlOpen').textContent = view.positions.length; return; }
+  $('#cxBlTable').hidden = false; if (tapeEl.parentElement !== tapeCard) { tapeCard.appendChild(tapeEl); tapeEl.classList.remove('in-blotter'); }
+  $('#cxBlOpen').textContent = view.positions.length; $('#cxBlClosed').textContent = CX.equity ? CX.equity.trades : '–';
+  const tb = $('#cxBlTable tbody'), th = $('#cxBlTable thead');
+  if (open) {
+    const cols = [['Symbol · book', 'symbol'], ['Mark', 'markPct'], ['P&L $', 'pnlUsd'], ['Held', 'heldSec'], ['Risk', 'toStop']];
+    const rows = view.positions.filter((p) => !CX.filter || p.book === CX.filter).map((p) => ({ ...p, pnlUsd: p.markUsd != null && p.sizeUsd != null ? p.markUsd - p.sizeUsd : null, toStop: cxToStop(p), toTp: cxToTp(p) }));
+    const { k, d } = CX.sort; rows.sort((a, b) => { const x = a[k], y = b[k]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * d; });
+    th.innerHTML = `<tr>${cols.map(([l, key]) => `<th data-k="${key}" ${k === key ? `aria-sort="${d > 0 ? 'ascending' : 'descending'}"` : ''}>${l}${k === key ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr>`;
+    if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:28px 8px;font-family:var(--font-body)">${moment ? 'Flat at that moment' : 'Flat · no open paper position'}</td></tr>`; return; }
+    tb.innerHTML = rows.map((p) => { const fl = cxFlash(`bl:${p.key}`, p.markPct, moment), sel = CX.sel === p.key ? 'is-sel' : '';
+      const risk = p.toStop != null || p.toTp != null ? `<span class="risk" title="distance to stop ${p.toStop != null ? `${n(Math.abs(p.toStop), 0)}%` : '–'} · to target ${p.toTp != null ? (p.toTp <= 0 ? 'reached' : `${n(p.toTp, 0)}%`) : '–'}"><i class="s" style="--w:${p.toStop != null ? Math.max(4, Math.min(100, Math.abs(p.toStop))) : 0}%"></i><i class="t" style="--w:${p.toTp != null ? Math.max(4, Math.min(100, p.toTp)) : 0}%"></i></span><small>${p.toStop != null ? `${n(Math.abs(p.toStop), 0)}%` : '–'} · ${p.toTp != null ? (p.toTp <= 0 ? 'hit' : `${n(p.toTp, 0)}%`) : (p.tp1Done ? 'banked' : '–')}</small>` : '–';
+      return `<tr class="${sel} ${fl}" data-key="${esc(p.key)}" data-mint="${esc(p.mint)}" data-venue="${p.venue}" data-book="${esc(p.book)}" tabindex="0">
+        <td class="sym"><span class="symwrap">${cxAvatar(p)}<span class="symtxt"><b>${esc(p.symbol || '?')}</b><small><span class="bk" style="--bc:${cxBookColor(p.book)}"></span>${esc(p.bookLabel)}${p.approx ? ' · approx' : ''}${p.tp1Done ? ' · banked' : ''}</small></span></span></td>
+        <td class="${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</td>
+        <td class="${cls(p.pnlUsd)}">${p.pnlUsd != null ? usd(p.pnlUsd, { sign: true }) : '–'}</td>
+        <td>${age(p.heldSec)}</td>
+        <td class="riskcell">${risk}</td></tr>`; }).join('');
+  } else {
+    const eq = CX.equity; const rows = eq ? eq.points.filter((x) => x.symbol).slice().reverse() : [];
+    th.innerHTML = '<tr><th>Symbol · book</th><th>Exit</th><th>P&L</th><th>P&L $</th></tr>';
+    tb.innerHTML = rows.length ? rows.map((x) => `<tr data-closed="1" data-mint="${esc(x.mint)}" data-book="${esc(x.book)}" data-t="${x.t}" tabindex="0" class="${CX.selClosed === `${x.mint}:${x.t}` ? 'is-sel' : ''}"><td class="sym"><span class="symwrap"><span class="symtxt"><b>${esc(x.symbol)}</b><small><span class="bk" style="--bc:${cxBookColor(x.book)}"></span>${esc(eq.byBook[x.book]?.label || x.book)}</small></span></span></td><td>${cxClock(x.t)}</td><td class="${cls(x.pnlPct)}">${signed(x.pnlPct, 1, '%')}</td><td class="${cls(x.pnlSol)}">${cxSolUsd() ? usd(x.pnlSol * cxSolUsd(), { sign: true }) : `${n(x.pnlSol, 3)} SOL`}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:28px 8px;font-family:var(--font-body)">Nothing closed in the last 24 hours</td></tr>';
+  }
+}
+// ---- chart ----
+function cxEnsureChart() {
+  if (CX.lw || !LW) return;
+  const T = cxTheme();
+  const base = { layout: { background: { type: 'solid', color: 'transparent' }, textColor: T.text, fontFamily: getComputedStyle(document.body).getPropertyValue('--font-mono') || 'monospace', fontSize: 10, attributionLogo: false },
+    grid: { vertLines: { color: 'rgba(255,255,255,.04)' }, horzLines: { color: 'rgba(255,255,255,.05)' } }, crosshair: { mode: 0, vertLine: { color: T.faint, labelBackgroundColor: T.surface }, horzLine: { color: T.faint, labelBackgroundColor: T.surface } },
+    rightPriceScale: { borderColor: T.border, scaleMargins: { top: 0.08, bottom: 0.22 } }, timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: true, rightOffset: 4 }, handleScroll: true, handleScale: true,
+    localization: { priceFormatter: (v) => usd(v) } };
+  CX.lw = LW.createChart($('#cxLw'), { ...base, width: $('#cxLw').clientWidth, height: $('#cxLw').clientHeight });
+  CX.lwVol = CX.lw.addSeries(LW.HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+  CX.lw.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  CX.eqLw = LW.createChart($('#cxEq'), { ...base, width: $('#cxEq').clientWidth, height: $('#cxEq').clientHeight, rightPriceScale: { borderColor: T.border, scaleMargins: { top: 0.15, bottom: 0.1 } }, timeScale: { borderColor: T.border, timeVisible: true, secondsVisible: false }, handleScroll: false, handleScale: false, crosshair: { mode: 1 } });
+  CX.eqSeries = CX.eqLw.addSeries(LW.BaselineSeries, { baseValue: { type: 'price', price: 0 }, topLineColor: T.up, topFillColor1: 'rgba(39,209,127,.35)', topFillColor2: 'rgba(39,209,127,.02)', bottomLineColor: T.down, bottomFillColor1: 'rgba(255,84,104,.02)', bottomFillColor2: 'rgba(255,84,104,.35)', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+  new ResizeObserver(() => { if (CX.view !== 'term') return; CX.lw.applyOptions({ width: $('#cxLw').clientWidth, height: $('#cxLw').clientHeight }); CX.eqLw.applyOptions({ width: $('#cxEq').clientWidth, height: $('#cxEq').clientHeight }); }).observe($('#cxMain'));
+  CX.lw.subscribeCrosshairMove((param) => { const el = $('#cxChNote'); if (!param?.time || !CX.lwMain) { el.textContent = CX.chartData ? `${CX.chartData.trades ?? CX.chartData.points?.length ?? 0} ticks · ${CX.chartData.kind === 'ohlc' ? `${CX.tf / 1000}s candles` : 'snapshots'}` : ''; return; }
+    const d = param.seriesData.get(CX.lwMain); if (!d) return; const v = d.close ?? d.value; el.textContent = d.open != null ? `O ${usd(d.open)} H ${usd(d.high)} L ${usd(d.low)} C ${usd(d.close)}` : `mcap ${usd(v)}`; });
+}
+function cxSelect(key, { closed = null } = {}) {
+  CX.sel = key; CX.selClosed = closed; CX.chartKey = null; renderCodex(); cxLoadChart(true);
+}
+function cxSelected(view) { return view.positions.find((p) => p.key === CX.sel) || null; }
+async function cxLoadChart(force = false) {
+  if (CX.view !== 'term' || !LW) return;
+  const view = CX.moment != null && CX.momentData ? CX.momentData : CX.data; if (!view) return;
+  let p = cxSelected(view), closed = null;
+  if (!p && CX.selClosed) { const [mint, t] = CX.selClosed.split(':'); closed = CX.equity?.points.find((x) => x.mint === mint && String(x.t) === t) || null; }
+  if (!p && !closed) { p = view.positions[0] || null; if (p) CX.sel = p.key; }
+  if (!p && !closed) { $('#cxChHead').innerHTML = '<div class="cx-ch-empty">Flat · nothing to chart. Pick a closed trade from the blotter to review it.</div>'; CX.lwMain?.setData([]); CX.lwVol?.setData([]); $('#cxChLegend').innerHTML = ''; return; }
+  const mint = p ? p.mint : closed.mint, venue = p ? p.venue : (CX.equity?.byBook[closed.book]?.label || '').startsWith('Grad') ? 'pumpswap' : 'curve';
+  const to = CX.moment != null ? CX.moment : (p ? Date.now() : closed.t + 10 * 60000), from = p ? Math.min(p.entryTs - 10 * 60000, to - 20 * 60000) : closed.t - 2 * 3600000;
+  const key = CX.moment == null && p ? `${mint}:${venue}:${CX.tf}:live:${Math.floor(Date.now() / 60000)}` : `${mint}:${venue}:${CX.tf}:${Math.floor(to / 5000)}:${Math.floor(from / 60000)}`;
+  if (!force && key === CX.chartKey) return;
+  CX.chartKey = key;
+  try { CX.chartData = await get(`/api/codex/chart?mint=${mint}&venue=${venue}&from=${Math.floor(from)}&to=${Math.floor(to)}&bucket=${CX.tf}`); } catch (e) { console.warn(e); return; }
+  cxDrawChart(p, closed);
+}
+function cxDrawChart(p, closed) {
+  cxEnsureChart(); const D = CX.chartData, T = cxTheme(); if (!D) return;
+  const px = D.unit === 'sol' ? (D.solUsd || cxSolUsd() || 1) : 1, inUsd = D.unit === 'usd' || !!(D.solUsd || cxSolUsd());
+  const kind = D.kind === 'ohlc' && CX.kind === 'candles' ? 'candles' : 'line';
+  if (CX.lwMain && CX.lwMainKind !== kind) { CX.lw.removeSeries(CX.lwMain); CX.lwMain = null; }
+  if (!CX.lwMain) {
+    CX.lwMain = kind === 'candles' ? CX.lw.addSeries(LW.CandlestickSeries, { upColor: T.up, downColor: T.down, borderVisible: false, wickUpColor: T.up, wickDownColor: T.down, priceLineVisible: false })
+      : CX.lw.addSeries(LW.AreaSeries, { lineColor: T.accent, topColor: 'rgba(242,178,62,.28)', bottomColor: 'rgba(242,178,62,.02)', lineWidth: 2, priceLineVisible: false });
+    CX.lwMainKind = kind;
+  }
+  CX.lw.applyOptions({ rightPriceScale: { mode: CX.log ? 1 : 0 }, localization: { priceFormatter: (v) => (inUsd ? usd(v) : `${n(v, 1)} SOL`) } });
+  let data, vol = [];
+  if (D.kind === 'ohlc') {
+    data = kind === 'candles' ? D.candles.map((c) => ({ time: cxTzSec(c.t), open: c.o * px, high: c.h * px, low: c.l * px, close: c.c * px })) : D.candles.map((c) => ({ time: cxTzSec(c.t), value: c.c * px }));
+    vol = D.candles.map((c) => ({ time: cxTzSec(c.t), value: c.v, color: c.buys >= c.sells ? 'rgba(39,209,127,.35)' : 'rgba(255,84,104,.35)' }));
+  } else data = D.points.map((x) => ({ time: cxTzSec(x.t), value: x.v }));
+  CX.lwMain.setData(data); CX.lwVol.setData(vol);
+  $('#cxLw').querySelector('.cx-lw-empty')?.remove();
+  if (!data.length) $('#cxLw').insertAdjacentHTML('beforeend', '<div class="cx-lw-empty">No recorded ticks in this window yet</div>');
+  // levels: entry, stop, target for the selected book
+  for (const l of CX.lwLines || []) CX.lwMain.removePriceLine(l); CX.lwLines = [];
+  const legend = [];
+  if (CX.levels && p) {
+    const entry = p.venue === 'curve' ? p.entryMcapSol * px : p.entryMcapUsd;
+    if (entry) {
+      const add = (price, color, title, style) => { CX.lwLines.push(CX.lwMain.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title })); };
+      add(entry, T.accent, `entry ${esc(p.bookLabel)}`, 2); legend.push(`<span><i class="dash" style="--c:${T.accent}"></i>entry ${usd(entry)}</span>`);
+      if (p.stopMult && p.stopMult > 0.02) { add(entry * p.stopMult, T.down, `stop ${n((p.stopMult - 1) * 100, 0)}%`, 0); legend.push(`<span><i style="--c:${T.down}"></i>stop ${usd(entry * p.stopMult)}</span>`); }
+      if (p.tpMult) { add(entry * p.tpMult, T.up, `target +${n((p.tpMult - 1) * 100, 0)}%`, 0); legend.push(`<span><i style="--c:${T.up}"></i>target ${usd(entry * p.tpMult)}</span>`); }
+      if (p.rule?.trailPct && p.peakPct != null && p.peakPct > 0 && (p.tp1Done || !p.tpMult)) { const trail = entry * (1 + p.peakPct / 100) * (1 - p.rule.trailPct / 100); add(trail, '#6aa5e0', `trail ${p.rule.trailPct}%`, 3); legend.push(`<span><i class="dash" style="--c:#6aa5e0"></i>trail ${usd(trail)}</span>`); }
+    }
+  }
+  // markers: entries, partials, exits for every book on this coin
+  const mk = (D.markers || []).filter((m) => m.t >= D.from && m.t <= D.to).map((m) => ({ time: cxTzSec(m.t), position: m.kind === 'exit' ? 'aboveBar' : 'belowBar', shape: m.kind === 'exit' ? 'arrowDown' : m.kind === 'partial' ? 'circle' : 'arrowUp', color: m.kind === 'exit' ? (m.pnlPct > 0 ? T.up : T.down) : m.kind === 'partial' ? '#6aa5e0' : T.accent, text: m.label, size: 1 }));
+  if (CX.lwMarkers) CX.lwMarkers.setMarkers(mk); else if (LW.createSeriesMarkers) CX.lwMarkers = LW.createSeriesMarkers(CX.lwMain, mk);
+  if (CX.lwMarkersFor !== CX.lwMain && LW.createSeriesMarkers) { CX.lwMarkers?.detach?.(); CX.lwMarkers = LW.createSeriesMarkers(CX.lwMain, mk); CX.lwMarkersFor = CX.lwMain; }
+  CX.lw.timeScale().fitContent();
+  legend.push(`<span><i style="--c:${T.accent}"></i>▲ entry</span><span><i style="--c:#6aa5e0"></i>● partial</span><span><i style="--c:${T.down}"></i>▼ exit</span>`);
+  if (D.kind === 'ohlc') legend.push(`<span>volume: SOL per candle, green when buys dominate</span>`);
+  $('#cxChLegend').innerHTML = legend.join('');
+  $('#cxChNote').textContent = `${D.trades ?? D.points?.length ?? 0} ticks · ${D.kind === 'ohlc' ? `${CX.tf / 1000}s candles` : 'snapshots'}${D.kind === 'ohlc' && !D.solUsd && !cxSolUsd() ? ' · SOL (no USD price yet)' : ''}`;
+  // header
+  const H = $('#cxChHead');
+  if (p) {
+    H.innerHTML = `${cxAvatar(p)}<div class="cx-ch-id"><div class="cx-sym">${esc(p.symbol || '?')}<small title="${esc(p.name || '')}">${esc(p.name || '')}</small></div><div class="cx-tags"><span class="cx-tag book" style="--bc:${cxBookColor(p.book)}">${esc(p.bookLabel)}</span>${cxTags(p, CX.moment != null)}<span class="cx-tag">held ${age(p.heldSec)}</span>${p.tp1Done ? '<span class="cx-tag" style="color:var(--up);border-color:var(--up)">profit banked</span>' : ''}</div></div>
+      <div class="cx-ch-mark"><div class="big ${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</div><div class="sub">${p.markUsd != null ? usd(p.markUsd) : `${n(p.markSol, 3)} SOL`} of ${p.sizeUsd != null ? usd(p.sizeUsd) : `${n(p.sizeSol, 2)} SOL`} · mcap ${p.mcapUsd != null ? usd(p.mcapUsd) : '–'}${p.progressPct != null ? ` · curve ${pct(p.progressPct, 0)}` : ''}</div></div>
+      <button type="button" class="cx-btn" data-open="${esc(p.mint)}" data-venue="${p.venue}">Token record</button>`;
+  } else if (closed) {
+    H.innerHTML = `<div class="cx-ch-id"><div class="cx-sym">${esc(closed.symbol)}<small>closed ${cxClock(closed.t)}</small></div><div class="cx-tags"><span class="cx-tag book" style="--bc:${cxBookColor(closed.book)}">${esc(CX.equity?.byBook[closed.book]?.label || closed.book)}</span><span class="cx-tag">review</span></div></div>
+      <div class="cx-ch-mark"><div class="big ${cls(closed.pnlPct)}">${signed(closed.pnlPct, 1, '%')}</div><div class="sub">${cxSolUsd() ? usd(closed.pnlSol * cxSolUsd(), { sign: true }) : `${n(closed.pnlSol, 3)} SOL`} realised</div></div>
+      <button type="button" class="cx-btn" data-open="${esc(closed.mint)}" data-venue="${venueOfBook(closed.book)}">Token record</button>`;
+  }
+}
+const venueOfBook = (b) => (b === 'fixed' || b === 'trail' ? 'pumpswap' : 'curve');
+function cxLiveTick(view) {
+  // update the last candle with the live mark without refetching
+  if (!CX.lwMain || !CX.chartData || CX.chartData.kind !== 'ohlc' || CX.moment != null) return;
+  const p = cxSelected(view); if (!p || p.mcapSol == null) return;
+  const px = CX.chartData.solUsd || cxSolUsd() || 1, now = Date.now(), b = Math.floor(now / CX.tf) * CX.tf, v = p.mcapSol * px, last = CX.chartData.candles[CX.chartData.candles.length - 1];
+  if (last && last.t === b) { last.h = Math.max(last.h, p.mcapSol); last.l = Math.min(last.l, p.mcapSol); last.c = p.mcapSol; }
+  else CX.chartData.candles.push({ t: b, o: p.mcapSol, h: p.mcapSol, l: p.mcapSol, c: p.mcapSol, v: 0, buys: 0, sells: 0, n: 0 });
+  const c = CX.chartData.candles[CX.chartData.candles.length - 1];
+  try { CX.lwMain.update(CX.lwMainKind === 'candles' ? { time: cxTzSec(c.t), open: c.o * px, high: c.h * px, low: c.l * px, close: c.c * px } : { time: cxTzSec(c.t), value: v }); } catch { /* out-of-order tick */ }
+}
+// ---- equity / account ----
+async function cxLoadEquity() { try { CX.equity = await get('/api/codex/equity?hours=24'); } catch (e) { console.warn(e); } }
+function cxAccount() {
+  const eq = CX.equity; if (!eq) return; cxEnsureChart(); if (!CX.eqSeries) return;
+  const px = eq.solUsd || cxSolUsd();
+  const pts = []; for (const x of eq.points) { const time = cxTzSec(x.t), value = px ? x.v * px : x.v; if (!Number.isFinite(value)) continue; if (pts.length && pts[pts.length - 1].time === time) pts[pts.length - 1].value = value; else pts.push({ time, value }); }
+  if (pts.length) { const nowT = cxTzSec(Date.now()); if (pts[pts.length - 1].time < nowT) pts.push({ time: nowT, value: pts[pts.length - 1].value }); }
+  CX.eqSeries.setData(pts);
+  CX.eqLw.applyOptions({ localization: { priceFormatter: (v) => (px ? usd(v) : `${n(v, 2)} SOL`) } }); CX.eqLw.timeScale().fitContent();
+  $('#cxEqVal').innerHTML = `<span class="${cls(eq.pnlSol)}">${eq.pnlUsd != null ? usd(eq.pnlUsd, { sign: true }) : `${n(eq.pnlSol, 3)} SOL`}</span>`;
+  const g = [['Closed', n(eq.trades, 0), `${eq.wins} above zero`, 'codex_equity'], ['Win rate', eq.winRatePct != null ? pct(eq.winRatePct, 0) : '–', 'all books · 24h', 'codex_equity'],
+    ['Best', eq.best ? signed(eq.best.pnlPct, 0, '%') : '–', eq.best ? `${eq.best.symbol} · ${eq.byBook[eq.best.book]?.label || eq.best.book}` : '', 'codex_equity'], ['Worst', eq.worst ? signed(eq.worst.pnlPct, 0, '%') : '–', eq.worst ? `${eq.worst.symbol} · ${eq.byBook[eq.worst.book]?.label || eq.worst.book}` : '', 'codex_equity'],
+    ['Today', CX.data?.day ? `${n(CX.data.day.trades, 0)} closed` : '–', CX.data?.day ? `${CX.data.day.pnlUsd != null ? usd(CX.data.day.pnlUsd, { sign: true }) : ''} since midnight` : '', 'codex_day'], ['Time in market', CX.data?.series ? pct(CX.data.series.timeInMarketPct, 0) : '–', 'last 24h', 'codex_market']];
+  $('#cxAcct').innerHTML = g.map(([l, v, s, key]) => `<div data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0"><div class="l">${l}</div><div class="v ${l === 'Best' ? 'up' : l === 'Worst' ? cls(eq.worst?.pnlPct) : ''}">${v}</div><div class="s">${esc(s)}</div></div>`).join('');
+  const books = Object.entries(eq.byBook).sort((a, b) => b[1].pnlSol - a[1].pnlSol), max = Math.max(1e-9, ...books.map(([, x]) => Math.abs(x.pnlSol)));
+  $('#cxBookBars').innerHTML = books.length ? books.map(([b, x]) => { const w = (Math.abs(x.pnlSol) / max) * 50; return `<div class="cx-bb" data-b="${esc(b)}" style="--bc:${cxBookColor(b)}" title="${x.n} closed · ${x.wins} above zero"><span class="lb">${esc(x.label)}</span><span class="bar"><i class="${x.pnlSol >= 0 ? 'up' : 'down'}" style="left:${x.pnlSol >= 0 ? 50 : 50 - w}%;width:${w}%"></i></span><span class="v ${cls(x.pnlSol)}">${x.pnlUsd != null ? usd(x.pnlUsd, { sign: true }) : n(x.pnlSol, 3)}</span></div>`; }).join('') : '<div class="hint">no closed trades in 24 h</div>';
+}
+// ---- wiring ----
+$('#tab-codex').dataset.view = CX.view; cxSetView(CX.view);
+document.querySelector('.cx-view').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) cxSetView(b.dataset.view); });
+$('#cxBlotter').addEventListener('click', (e) => { const t = e.target.closest('[data-bl]'); if (t) { for (const b of $('#cxBlotter').querySelectorAll('[data-bl]')) b.setAttribute('aria-selected', String(b === t)); CX.blTab = t.dataset.bl; renderCodex(); return; }
+  const th = e.target.closest('th[data-k]'); if (th) { CX.sort = CX.sort.k === th.dataset.k ? { k: th.dataset.k, d: -CX.sort.d } : { k: th.dataset.k, d: th.dataset.k === 'symbol' || th.dataset.k === 'book' ? 1 : -1 }; renderCodex(); return; }
+  const tr = e.target.closest('tr[data-key], tr[data-closed]'); if (!tr) return;
+  if (tr.dataset.closed) cxSelect(null, { closed: `${tr.dataset.mint}:${tr.dataset.t}` }); else cxSelect(tr.dataset.key); });
+$('#cxBlotter').addEventListener('keydown', (e) => { if (e.key !== 'Enter') return; const tr = e.target.closest('tr'); if (tr) tr.click(); });
+$('#cxChHead').addEventListener('click', (e) => { const b = e.target.closest('[data-open]'); if (!b) return; b.dataset.venue === 'curve' ? openDrawer(b.dataset.open) : openGradDrawer(b.dataset.open); });
+$('#cxTf').addEventListener('click', (e) => { const b = e.target.closest('button[data-tf]'); if (!b) return; CX.tf = Number(b.dataset.tf); localStorage.setItem('cx.tf', CX.tf); for (const x of $('#cxTf').children) x.setAttribute('aria-pressed', String(x === b)); cxLoadChart(true); });
+$('#cxKind').addEventListener('click', (e) => { const b = e.target.closest('button[data-kind]'); if (!b) return; CX.kind = b.dataset.kind; localStorage.setItem('cx.kind', CX.kind); for (const x of $('#cxKind').children) x.setAttribute('aria-pressed', String(x === b)); if (CX.chartData) cxDrawChart(cxSelected(CX.moment != null && CX.momentData ? CX.momentData : CX.data), null); });
+$('#cxLog').onclick = () => { CX.log = !CX.log; $('#cxLog').setAttribute('aria-pressed', String(CX.log)); CX.lw?.applyOptions({ rightPriceScale: { mode: CX.log ? 1 : 0 } }); };
+$('#cxLevels').onclick = () => { CX.levels = !CX.levels; $('#cxLevels').setAttribute('aria-pressed', String(CX.levels)); if (CX.chartData) cxDrawChart(cxSelected(CX.moment != null && CX.momentData ? CX.momentData : CX.data), null); };
+$('#cxBookBars').addEventListener('click', (e) => { const r = e.target.closest('.cx-bb'); if (!r) return; CX.filter = CX.filter === r.dataset.b ? null : r.dataset.b; renderCodex(); });
+for (const k of ['cxTf', 'cxKind']) for (const b of $(`#${k}`).children) b.setAttribute('aria-pressed', String(k === 'cxTf' ? Number(b.dataset.tf) === CX.tf : b.dataset.kind === CX.kind));

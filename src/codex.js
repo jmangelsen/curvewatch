@@ -41,6 +41,12 @@ const SQL = {
   curvePeakAt: 'SELECT vsol, vtok FROM trades WHERE mint = ? AND ts >= ? AND ts <= ? AND vtok > 0 ORDER BY vsol / vtok DESC LIMIT 1',
   curveBuyersAt: 'SELECT COUNT(DISTINCT wallet) n FROM trades WHERE mint = ? AND ts <= ? AND is_buy = 1',
   gradPeakAt: 'SELECT MAX(mcap) m FROM grad_snapshots WHERE mint = ? AND ts >= ? AND ts <= ?',
+  curveChart: 'SELECT ts, is_buy, sol, vsol, vtok FROM trades WHERE mint = ? AND ts >= ? AND ts <= ? AND vtok > 0 ORDER BY ts',
+  gradChart: 'SELECT ts, mcap, liq FROM grad_snapshots WHERE mint = ? AND ts >= ? AND ts <= ? ORDER BY ts',
+  posEvents: `SELECT id, book, entry_ts, exit_ts, exit_reason, pnl_pct, events, entry_mcap, 'curve' venue FROM paper_trades WHERE mint = ? AND status IN ('open','closed') AND COALESCE(gap,0) = 0 AND (exit_ts IS NULL OR exit_ts >= ?)
+    UNION ALL SELECT id, COALESCE(book,'fixed') book, entry_ts, exit_ts, exit_reason, pnl_pct, events, entry_mcap, 'pumpswap' venue FROM grad_paper WHERE mint = ? AND status IN ('open','closed') AND (exit_ts IS NULL OR exit_ts >= ?)`,
+  equity: `SELECT exit_ts t, pnl_sol, pnl_pct, book, symbol, mint FROM paper_trades WHERE status = 'closed' AND COALESCE(gap,0) = 0 AND COALESCE(gated,0) = 0 AND exit_ts > ?
+    UNION ALL SELECT exit_ts t, pnl_sol, pnl_pct, COALESCE(book,'fixed') book, symbol, mint FROM grad_paper WHERE status = 'closed' AND exit_ts > ? ORDER BY t`,
 };
 const Q = new Proxy({}, { get: (c, k) => (c[k] ||= db.prepare(SQL[k])) });
 
@@ -203,8 +209,57 @@ export function makeCodex({ engine, grads }) {
       note: 'Marks at a past moment are reconstructed from the recorded tape (last curve trade or nearest graduate snapshot before that instant) and are approximate.' };
   }
 
+  /** Price chart for one coin: OHLC candles built from the curve trade tape (mcap in SOL), or the graduate snapshot line (mcap in USD). */
+  function chart({ mint, venue = 'curve', from, to, bucketMs }) {
+    const now = Date.now(); to = Math.min(Number(to) || now, now); from = Number(from) || to - 2 * 3600000;
+    const events = Q.posEvents.all(mint, from, mint, from).map((r) => ({ ...r, events: parseEvents(r.events) }));
+    const markers = [];
+    for (const r of events) {
+      markers.push({ t: r.entry_ts, kind: 'entry', book: r.book, label: `${bookLabel(r.book, r.venue === 'curve' ? 'curve' : 'grad')} in` });
+      for (const e of r.events) if (e.type === 'tp1') markers.push({ t: e.t, kind: 'partial', book: r.book, label: `partial +${Math.round(e.trigger || 0)}%` });
+      if (r.exit_ts) markers.push({ t: r.exit_ts, kind: 'exit', book: r.book, label: `${bookLabel(r.book, r.venue === 'curve' ? 'curve' : 'grad')} out ${r.pnl_pct != null ? `${r.pnl_pct > 0 ? '+' : ''}${r.pnl_pct.toFixed(0)}%` : ''}`, pnlPct: r.pnl_pct, reason: r.exit_reason });
+    }
+    markers.sort((a, b) => a.t - b.t);
+    if (venue !== 'curve') {
+      const pts = Q.gradChart.all(mint, from, to).map((r) => ({ t: r.ts, v: r.mcap, liq: r.liq }));
+      const st = grads.watch.get(mint); if (st?.last?.mcap != null && st.last.t > (pts[pts.length - 1]?.t || 0)) pts.push({ t: st.last.t, v: st.last.mcap, liq: st.last.liq });
+      return { kind: 'line', unit: 'usd', mint, venue, from, to, points: pts, markers, positions: events.map(({ events: ev, ...r }) => ({ ...r, partials: ev.filter((e) => e.type === 'tp1').length })) };
+    }
+    const rows = Q.curveChart.all(mint, from, to);
+    const span = to - from, bucket = Number(bucketMs) || (span <= 15 * MIN ? 5000 : span <= 2 * 3600000 ? 15000 : span <= 8 * 3600000 ? 60000 : 300000);
+    const candles = []; let c = null;
+    for (const r of rows) {
+      const m = mcapOf(r.vsol, r.vtok), b = Math.floor(r.ts / bucket) * bucket;
+      if (!c || c.t !== b) { if (c) candles.push(c); c = { t: b, o: m, h: m, l: m, c: m, v: 0, buys: 0, sells: 0, n: 0 }; }
+      c.h = Math.max(c.h, m); c.l = Math.min(c.l, m); c.c = m; c.v += r.sol || 0; c.n++; if (r.is_buy) c.buys += r.sol || 0; else c.sells += r.sol || 0;
+    }
+    if (c) candles.push(c);
+    const t = engine.getToken(mint);
+    return { kind: 'ohlc', unit: 'sol', mint, venue, from, to, bucket, candles, trades: rows.length, markers, live: t ? { mcap: t.mcap, progress: t.progress, lastTradeAt: t.lastTradeAt } : null, solUsd: market.solUsd || null,
+      positions: events.map(({ events: ev, ...r }) => ({ ...r, partials: ev.filter((e) => e.type === 'tp1').length })) };
+  }
+
+  /** Realised P&L curve over the last `hours`, all books, by exit time (cumulative SOL and USD), with per-book totals. */
+  function equity(hours = 24) {
+    const since = Date.now() - hours * 3600000, rows = Q.equity.all(since, since);
+    let cum = 0; const points = [{ t: since, v: 0 }], byBook = {};
+    let wins = 0, best = null, worst = null, streak = 0, maxStreakLoss = 0, peak = 0, maxDd = 0;
+    for (const r of rows) {
+      cum += r.pnl_sol || 0; points.push({ t: r.t, v: cum, pnlSol: r.pnl_sol, pnlPct: r.pnl_pct, symbol: r.symbol, book: r.book, mint: r.mint });
+      byBook[r.book] ||= { n: 0, pnlSol: 0, wins: 0 }; byBook[r.book].n++; byBook[r.book].pnlSol += r.pnl_sol || 0;
+      if ((r.pnl_pct || 0) > 0) { wins++; byBook[r.book].wins++; streak = 0; } else { streak++; maxStreakLoss = Math.max(maxStreakLoss, streak); }
+      if (best == null || r.pnl_pct > best.pnl_pct) best = r; if (worst == null || r.pnl_pct < worst.pnl_pct) worst = r;
+      peak = Math.max(peak, cum); maxDd = Math.max(maxDd, peak - cum);
+    }
+    const gains = rows.filter((r) => r.pnl_sol > 0).reduce((s, r) => s + r.pnl_sol, 0), losses = rows.filter((r) => r.pnl_sol < 0).reduce((s, r) => s - r.pnl_sol, 0);
+    return { hours, since, points, trades: rows.length, wins, winRatePct: rows.length ? (wins / rows.length) * 100 : null, pnlSol: cum, pnlUsd: usd(cum), profitFactor: losses > 0 ? gains / losses : gains > 0 ? Infinity : null,
+      avgWinPct: wins ? rows.filter((r) => r.pnl_pct > 0).reduce((s, r) => s + r.pnl_pct, 0) / wins : null, avgLossPct: rows.length - wins ? rows.filter((r) => !(r.pnl_pct > 0)).reduce((s, r) => s + (r.pnl_pct || 0), 0) / (rows.length - wins) : null,
+      maxDrawdownSol: maxDd, maxDrawdownUsd: usd(maxDd), maxLossStreak: maxStreakLoss, best: best ? { symbol: best.symbol, pnlPct: best.pnl_pct, book: best.book, mint: best.mint } : null, worst: worst ? { symbol: worst.symbol, pnlPct: worst.pnl_pct, book: worst.book, mint: worst.mint } : null,
+      byBook: Object.fromEntries(Object.entries(byBook).map(([b, x]) => [b, { ...x, label: bookLabel(b, GRAD_LABEL[b] ? 'grad' : 'curve'), pnlUsd: usd(x.pnlSol) }])), solUsd: market.solUsd || null };
+  }
+
   /** Compact payload for the live stream: positions and totals only. */
   function pulse() { const n = now(); return { ts: n.ts, inTrade: n.inTrade, positions: n.positions, coins: n.coins, books: n.books, exposure: n.exposure, watching: n.watching, solUsd: n.solUsd }; }
 
-  return { now, at, tape, series, day, pulse };
+  return { now, at, tape, series, day, pulse, chart, equity };
 }

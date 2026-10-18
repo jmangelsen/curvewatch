@@ -110,22 +110,49 @@
       </article>
     </div>
   </section>
-  <section id="tab-codex" class="tab-panel" hidden>
-    <div class="cx-hero" id="cxHero">
+  <section id="tab-codex" class="tab-panel cx-term" hidden>
+    <header class="cx-bar" id="cxBar">
       <div class="cx-state tile-drill" data-drill="codex_market" data-label="Time in market" role="button" tabindex="0" aria-label="Bot state: open time-in-market detail">
         <div class="cx-orb" id="cxOrb"><i></i></div>
         <div class="cx-state-text"><div class="cx-state-word" id="cxWord">—</div><div class="cx-state-sub" id="cxSub">connecting to the collector</div></div>
       </div>
-      <div class="cx-kpis" id="cxKpis"></div>
-    </div>
-    <div class="cx-moment card" id="cxMoment">
-      <div class="cx-moment-head">
-        <div class="cx-moment-title"><span class="cx-live-badge" id="cxLiveBadge"><i></i>LIVE</span><span id="cxMomentLabel">any moment in the last 24 hours</span></div>
-        <div class="cx-moment-ctl"><span class="hint" id="cxMomentHint">drag the strip, or step between trades</span><button type="button" class="cx-btn icon" id="cxPrev" aria-label="Previous trade event" title="Previous entry or exit  [">‹</button><button type="button" class="cx-btn icon" id="cxNext" aria-label="Next trade event" title="Next entry or exit  ]">›</button><button type="button" class="cx-btn" id="cxBackLive" hidden>Back to live</button></div>
-      </div>
-      <div class="cx-stripwrap"><div class="cx-readout" id="cxReadout" hidden></div><div class="cx-strip" id="cxStrip" role="img" aria-label="Open positions over the last 24 hours; bars are tinted by the realised result of exits in that five-minute window"></div></div>
-      <input type="range" id="cxRange" class="cx-range" min="0" max="1000" value="1000" step="1" aria-label="Moment in the last 24 hours">
-      <div class="cx-axis"><span id="cxAx0"></span><span id="cxAx1"></span><span id="cxAx2"></span><span id="cxAx3"></span><span>now</span></div>
+      <div class="cx-cells" id="cxCells"></div>
+      <div class="cx-view" role="group" aria-label="Codex layout"><button type="button" data-view="term" aria-pressed="true">Terminal</button><button type="button" data-view="cards" aria-pressed="false">Cards</button></div>
+    </header>
+    <div class="cx-kpis" id="cxKpis"></div>
+    <div class="cx-main" id="cxMain">
+      <aside class="cx-panel cx-blotter" id="cxBlotter">
+        <div class="cx-ph"><div class="cx-ptabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-bl="open">Positions <b id="cxBlOpen">0</b></button><button type="button" role="tab" aria-selected="false" data-bl="closed">Closed 24h <b id="cxBlClosed">0</b></button><button type="button" role="tab" aria-selected="false" data-bl="tape">Tape</button></div></div>
+        <div class="cx-blwrap"><table class="cx-tbl" id="cxBlTable"><thead></thead><tbody></tbody></table></div>
+      </aside>
+      <section class="cx-panel cx-chartp" id="cxChartP">
+        <div class="cx-ch-head" id="cxChHead"><div class="cx-ch-empty">Select a position to chart it</div></div>
+        <div class="cx-ch-tools">
+          <div class="cx-seg sm" id="cxTf"><button type="button" data-tf="5000">5s</button><button type="button" data-tf="15000" aria-pressed="true">15s</button><button type="button" data-tf="60000">1m</button><button type="button" data-tf="300000">5m</button></div>
+          <div class="cx-seg sm" id="cxKind"><button type="button" data-kind="candles" aria-pressed="true">Candles</button><button type="button" data-kind="line">Line</button></div>
+          <button type="button" class="cx-tog" id="cxLog" aria-pressed="false">Log</button>
+          <button type="button" class="cx-tog" id="cxLevels" aria-pressed="true">Levels</button>
+          <span class="cx-ch-note" id="cxChNote"></span>
+        </div>
+        <div class="cx-lw" id="cxLw"></div>
+        <div class="cx-ch-legend" id="cxChLegend"></div>
+        <div class="cx-moment" id="cxMoment">
+          <div class="cx-moment-head">
+            <div class="cx-moment-title"><span class="cx-live-badge" id="cxLiveBadge"><i></i>LIVE</span><span id="cxMomentLabel">replay any moment in the last 24 hours</span></div>
+            <div class="cx-moment-ctl"><span class="hint" id="cxMomentHint">drag the strip, or step between trades</span><button type="button" class="cx-btn icon" id="cxPrev" aria-label="Previous trade event" title="Previous entry or exit  [">‹</button><button type="button" class="cx-btn icon" id="cxNext" aria-label="Next trade event" title="Next entry or exit  ]">›</button><button type="button" class="cx-btn" id="cxBackLive" hidden>Back to live</button></div>
+          </div>
+          <div class="cx-stripwrap"><div class="cx-readout" id="cxReadout" hidden></div><div class="cx-strip" id="cxStrip" role="img" aria-label="Open positions over the last 24 hours; bars are tinted by the realised result of exits in that five-minute window"></div></div>
+          <input type="range" id="cxRange" class="cx-range" min="0" max="1000" value="1000" step="1" aria-label="Moment in the last 24 hours">
+          <div class="cx-axis"><span id="cxAx0"></span><span id="cxAx1"></span><span id="cxAx2"></span><span id="cxAx3"></span><span>now</span></div>
+        </div>
+      </section>
+      <aside class="cx-panel cx-account" id="cxAccount">
+        <div class="cx-ph"><span>Realised P&amp;L · 24h</span><span class="cx-ph-val" id="cxEqVal">–</span></div>
+        <div class="cx-eq" id="cxEq"></div>
+        <div class="cx-acct-grid" id="cxAcct"></div>
+        <div class="cx-ph sub"><span>By book · 24h</span></div>
+        <div class="cx-bookbars" id="cxBookBars"></div>
+      </aside>
     </div>
     <div class="cx-books" id="cxBooks" role="group" aria-label="Filter by book"></div>
     <div class="cx-grid" id="cxGrid"></div>
@@ -139,7 +166,7 @@
         <div class="cx-day" id="cxDay"></div>
       </article>
     </div>
-    <p class="small-note">Paper positions across every book, marked live from the curve or pool. Travelling back in time rebuilds marks from the recorded tape and is approximate. No order has ever been sent by this system.</p>
+    <p class="small-note">Paper positions across every book, marked live from the curve or pool. Replaying a past moment rebuilds marks from the recorded tape and is approximate. Chart candles are built from the recorded trade tape (market cap in USD at the current SOL price). No order has ever been sent by this system.</p>
   </section>
   <section id="tab-grads" class="tab-panel" hidden>
     <div class="kpis" id="gKpis"></div>
@@ -402,6 +429,7 @@
 </aside>
 <div id="scrim" class="scrim"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="vendor/lightweight-charts.js"></script>
 <script src="app.js" type="module"></script>
 </body>
 </html>
