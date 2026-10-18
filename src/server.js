@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { tapeMarks } from './drill.js';
+import { studioCall } from './studioWorker.js';
 import { runGradBacktest } from './engine/gradBacktest.js';
 import { API_NOTICE, SHORT, SECTIONS, simulationParams, markdownBlock } from './compliance.js';
 import { q } from './db.js';
@@ -71,6 +72,18 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     if (!mint || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(mint)) return res.status(400).json({ error: 'mint required' });
     res.json({ ...codex.chart({ mint, venue: venue === 'pumpswap' ? 'pumpswap' : 'curve', from, to, bucketMs: bucket }), notice: API_NOTICE });
   });
+  // ---- Curve Studio (read-only research; computed on a worker thread) ----
+  const sq = (req) => ({ days: Math.max(1, Math.min(90, Number(req.query.days) || 14)), cp: [30, 60, 120, 180, 300, 600].includes(Number(req.query.cp)) ? Number(req.query.cp) : 60, lines: Math.max(0, Math.min(600, Number(req.query.lines ?? 300))), outcome: ['grad', 'x2', 'x3'].includes(req.query.outcome) ? req.query.outcome : 'grad' });
+  const sj = (fn) => async (req, res) => { try { res.json(await studioCall(fn, { ...sq(req), ...(req.body || {}), ...(req.query.feature ? { feature: req.query.feature, op: req.query.op, threshold: req.query.threshold } : {}) })); } catch (e) { log.warn('studio', e.message); res.status(400).json({ error: e.message }); } };
+  // keep the default view warm so a visitor never waits on the cold scan (memo TTL is 5 min; refresh just under it)
+  const warm = () => Promise.all([studioCall('overview', { days: 14 }), studioCall('features', { days: 14, cp: 60 }), studioCall('postgrad', { days: 14, lines: 300 })]).catch((e) => log.warn('studio warm', e.message));
+  setTimeout(warm, 20000).unref?.(); setInterval(warm, 270000).unref?.();
+  app.get('/api/studio', sj('overview'));
+  app.get('/api/studio/curves', sj('curves'));
+  app.get('/api/studio/postgrad', sj('postgrad'));
+  app.get('/api/studio/features', sj('features'));
+  app.get('/api/studio/rule', sj('testRule'));
+  app.post('/api/studio/rule', express.json(), sj('testRule'));
   app.get('/api/codex/equity', (req, res) => res.json({ ...codex.equity(Math.min(168, Math.max(1, Number(req.query.hours) || 24))), notice: API_NOTICE }));
   app.get('/api/paper', (req, res) => {
     res.json({ notice: API_NOTICE, config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
@@ -112,7 +125,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/rejects', (req, res) => { try { res.json(rejectsView({ windowH: Math.min(168, Math.max(1, Number(req.query.h) || 24)) })); } catch (e) { log.warn('rejects', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/tracker', (req, res) => { try { res.json(trackerView()); } catch (e) { log.warn('tracker', e.stack); res.status(500).json({ error: e.message }); } });
   app.get('/api/tape/marks', (req, res) => { const mins = Math.min(1440, Math.max(10, Number(req.query.mins) || 1440)); res.json({ since: Date.now() - mins * 60000, marks: tapeMarks(Date.now() - mins * 60000) }); });
-  app.get('/api/drill/:key', (req, res) => { try { const d = drill(req.params.key); if (!d) return res.status(404).json({ error: 'unknown tile' }); res.json(d); } catch (e) { log.warn('drill', req.params.key, e.stack); res.status(500).json({ error: e.message }); } });
+  app.get('/api/drill/:key', async (req, res) => { try { if (req.params.key.startsWith('studio_')) { const d = await studioCall('drill', { key: req.params.key }); return d ? res.json({ key: req.params.key, generatedAt: Date.now(), ...d }) : res.status(404).json({ error: 'unknown tile' }); } const d = drill(req.params.key); if (!d) return res.status(404).json({ error: 'unknown tile' }); res.json(d); } catch (e) { log.warn('drill', req.params.key, e.stack); res.status(500).json({ error: e.message }); } });
 
   // Trade terminal
   const safe = (fn) => (req, res) => { try { const r = fn(req); if (r == null) return res.status(404).json({ error: 'not found' }); res.json(r); } catch (e) { log.warn('terminal', e.message); res.status(500).json({ error: e.message }); } };

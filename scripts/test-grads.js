@@ -5,6 +5,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cwgr-'));
 process.env.GRAD_TRAIL_ENABLED = 'true'; process.env.GRAD_TRAIL_ARM_MULT = '1.2'; process.env.GRAD_TRAIL_BOOK_PCT = '30'; process.env.GRAD_PAPER_STOP_PCT = '38.5';
 process.env.GRAD_MAX_AGE_H = '72'; process.env.GRAD_EXT_MAX_AGE_H = '336'; process.env.GRAD_MIN_LIQ_USD = '12000'; process.env.GRAD_ALIVE_VOL24_USD = '25000';
 const { Graduates } = await import('../src/engine/graduates.js');
+const dbmod = await import('../src/db.js');
 const { config } = await import('../src/config.js');
 const { initRejects } = await import('../src/engine/rejects.js');
 initRejects();
@@ -55,5 +56,16 @@ t('bookView lists both books with their rules', () => {
   const v = g.bookView();
   assert.deepEqual(Object.keys(v.books), ['fixed', 'trail']);
   assert.match(v.books.trail.rule, /trailing stop from the peak/); assert.equal(v.books.fixed.kill.status, 'COLLECTING'); assert.equal(v.paired, null);
+});
+t('restart: series rebuilt from stored snapshots so the 6 h labeler does not censor live tokens', () => {
+  const { db } = dbmod; const now = Date.now(), mint = 'RESTOREMINT111';
+  db.prepare(`INSERT INTO grad_watch (mint,symbol,name,source,added_at,active) VALUES (?,?,?,?,?,1)`).run(mint, 'RST', 'Restore', 'migration', now - 7 * 3600000);
+  const ins = db.prepare(`INSERT INTO grad_snapshots (mint,ts,price,mcap,liq) VALUES (?,?,?,?,?)`);
+  for (let i = 0; i < 40; i++) ins.run(mint, now - 6.5 * 3600000 + i * 600000, 1 + i * 0.01, 1000 + i, 500);
+  const g2 = new Graduates(); g2.solUsd = 100; g2.restore();
+  const st = g2.watch.get(mint); assert.ok(st, 'watch restored');
+  assert.ok(st.series.length >= 35 && st.series.length <= 37, `last 6 h of points restored (${st.series.length})`);
+  assert.equal(st.last, null, 'last reading stays unknown until the next real poll');
+  assert.ok(st.series.every((p) => p.restored && p.price > 0 && p.t >= now - 6 * 3600000));
 });
 console.log(`${n} graduates tests passed`);

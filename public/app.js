@@ -43,8 +43,8 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'codex') loadCodex(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
-  scrollTo({ top: 0, behavior: 'instant' });
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'codex') loadCodex(); if (S.tab === 'studio') loadStudio(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
+  scrollTo({ top: 0, behavior: 'instant' }); b.scrollIntoView?.({ block: 'nearest', inline: 'center', behavior: 'smooth' });
 });
 
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200); }
@@ -1440,7 +1440,7 @@ function tileKey(label, el) {
   for (const [k, v] of Object.entries(M)) if (L.startsWith(k)) return v;
   return { live: 'launches', grads: 'g_watch', perf: 'paper_exp', report: 'rep_trades', intel: 'ds_launches', health: 'h_cov' }[tab] || null;
 }
-const TAB_NAME = { live: 'Live', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health', edge: 'Edge Lab' };
+const TAB_NAME = { live: 'Live', codex: 'Codex', studio: 'Studio', grads: 'Graduates', perf: 'Performance', report: 'Report', intel: 'Intel', health: 'Health', edge: 'Edge Lab' };
 function tileFrom(el) {
   if (el.dataset.drill) return { key: el.dataset.drill, label: el.dataset.label || el.querySelector('h3, .label, td')?.textContent?.trim(), value: el.dataset.value || el.querySelector(':scope > .value')?.textContent?.trim() || '', sub: el.dataset.sub || el.querySelector(':scope > .sub')?.textContent?.trim() || '' };
   if (el.matches('.verdict')) { const q = el.querySelector('.vq')?.textContent || '', Q = q.toLowerCase();
@@ -2278,3 +2278,177 @@ $('#cxLog').onclick = () => { CX.log = !CX.log; $('#cxLog').setAttribute('aria-p
 $('#cxLevels').onclick = () => { CX.levels = !CX.levels; $('#cxLevels').setAttribute('aria-pressed', String(CX.levels)); if (CX.chartData) cxDrawChart(cxSelected(CX.moment != null && CX.momentData ? CX.momentData : CX.data), null); };
 $('#cxBookBars').addEventListener('click', (e) => { const r = e.target.closest('.cx-bb'); if (!r) return; CX.filter = CX.filter === r.dataset.b ? null : r.dataset.b; renderCodex(); });
 for (const k of ['cxTf', 'cxKind']) for (const b of $(`#${k}`).children) b.setAttribute('aria-pressed', String(k === 'cxTf' ? Number(b.dataset.tf) === CX.tf : b.dataset.kind === CX.kind));
+
+// ---------- Curve Studio ----------
+const ST = { days: 14, cp: 60, outcome: 'grad', stage: 'curve', lines: 100, log: true, usd: false, over: null, curves: null, post: null, feats: null, feat: null, hidden: new Set(), hover: null, paths: [], busy: 0, rule: null };
+const stCss = (v, fb) => getComputedStyle(document.documentElement).getPropertyValue(v).trim() || fb;
+const stPal = () => ({ grad: stCss('--up', '#1fbf8f'), x2: '#e2a93b', non: stCss('--text-faint', '#8a8f98'), runner: stCss('--up', '#1fbf8f'), held: '#4c8dff', faded: '#e2a93b', dead: stCss('--down', '#e5484d') });
+const stQ = () => `days=${ST.days}&cp=${ST.cp}&outcome=${ST.outcome}`;
+async function loadStudio() {
+  const id = ++ST.busy;
+  if (!ST.over) { $('#stKpis').innerHTML = '<div class="empty"><strong>Scanning every labeled token</strong>first load after a restart takes about ten seconds; results stay warm for five minutes</div>'; $('#stLegend').innerHTML = '<span class="st-lgnote">building cohort bands…</span>'; }
+  try {
+    const [over, feats, stage] = await Promise.all([get(`/api/studio?${stQ()}`), get(`/api/studio/features?${stQ()}`), ST.stage === 'curve' ? get(`/api/studio/curves?${stQ()}&lines=300`) : get(`/api/studio/postgrad?${stQ()}&lines=300`)]);
+    if (id !== ST.busy) return;
+    ST.over = over; ST.feats = feats; if (ST.stage === 'curve') ST.curves = stage; else ST.post = stage;
+    stKpis(); stFeats(); stRej(); stLegend(); stDraw(); if (!ST.feat && feats.ranked[0]) stPickFeat(feats.ranked[0].feature, false); else stDeciles();
+  } catch (e) { if (id === ST.busy) $('#stKpis').innerHTML = `<div class="empty"><strong>Studio unavailable</strong>${esc(e.message)}</div>`; }
+}
+function stKpis() {
+  const o = ST.over, f = ST.feats; if (!o) return;
+  const d = `:d${ST.days}`;
+  const tiles = [
+    ['Tokens analysed', n(o.tokens, 0), `${ST.days} d · finalized, SOL-quoted, gap-free`, `studio_field${d}`],
+    ['Graduated', n(o.grads, 0), `${o.gradRatePct != null ? o.gradRatePct.toFixed(2) : '–'}% of the field`, `studio_grads${d}`],
+    ['Doubled, no graduation', n(o.x2, 0), 'reached 2× the 60 s cap', `studio_x2${d}`],
+    ['Median time to graduate', o.timeToGrad?.p50 != null ? `${n(o.timeToGrad.p50, 1)} m` : '–', `p25 ${n(o.timeToGrad?.p25, 1)} · p75 ${n(o.timeToGrad?.p75, 1)} min`, `studio_ttg${d}`],
+    ['Graduates lost to rejects', o.gradsLostToRejectsPct != null ? `${n(o.gradsLostToRejectsPct, 0)}%` : '–', `at ${ST.cp} s · tap for which rules`, `studio_rejects:${ST.cp}${d}`],
+    ['Best separator', f?.ranked?.[0] ? f.ranked[0].label : '–', f?.ranked?.[0] ? `decile ${f.ranked[0].bestDecile} · ${f.ranked[0].bestLift}× lift · ${f.ranked[0].direction}` : 'need ≥ 50 tokens', f?.ranked?.[0] ? `studio_feature:${f.ranked[0].feature}:${ST.cp}:${ST.outcome}${d}` : null],
+  ];
+  $('#stKpis').innerHTML = tiles.map(([l, v, s, k]) => `<div class="st-kpi" ${k ? `data-drill="${esc(k)}" data-label="${esc(l)}" data-value="${esc(String(v))}" data-sub="${esc(s)}"` : ''}><span class="l">${esc(l)}</span><span class="v ${String(v).length > 9 ? 'txt' : ''}">${esc(String(v))}</span><span class="s">${esc(s)}</span></div>`).join('');
+  if (typeof markTiles === 'function') markTiles();
+}
+const stCohorts = () => (ST.stage === 'curve' ? ['grad', 'x2', 'non'] : ['runner', 'held', 'faded', 'dead']);
+function stLegend() {
+  const d = ST.stage === 'curve' ? ST.curves : ST.post; if (!d) return; const pal = stPal();
+  $('#stLegend').innerHTML = stCohorts().map((k) => { const c = d.cohorts[k]; return `<button type="button" class="st-lg ${ST.hidden.has(k) ? 'off' : ''}" data-k="${k}" style="--c:${pal[k]}"><i></i>${esc(c.label)} <b>${n(c.n, 0)}</b></button>`; }).join('')
+    + `<span class="st-lgnote">${ST.stage === 'curve' ? 'y = market cap in SOL (log) · x = seconds since launch' : 'y = price ÷ first post-pool snapshot (log) · x = minutes after that snapshot'} · shaded = p10–p90 and p25–p75 · line = median</span>`;
+  $('#stChartTitle').textContent = ST.stage === 'curve' ? 'Curve comparison · every token, first 10 minutes' : 'After graduation · watched pools, first 6 hours';
+  $('#stChartNote').textContent = (d.notes || []).join(' ');
+  $('#stUsd').hidden = ST.stage !== 'curve';
+}
+$('#stLegend').addEventListener('click', (e) => { const b = e.target.closest('.st-lg'); if (!b) return; const k = b.dataset.k; ST.hidden.has(k) ? ST.hidden.delete(k) : ST.hidden.add(k); stLegend(); stDraw(); });
+function stDraw() {
+  const cv = $('#stCanvas'), wrap = cv.parentElement, d = ST.stage === 'curve' ? ST.curves : ST.post; if (!cv || !d) return;
+  const dpr = Math.min(2, devicePixelRatio || 1), W = wrap.clientWidth, H = wrap.clientHeight; if (!W || !H) return;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const pal = stPal(), pad = { l: 58, r: 14, t: 12, b: 28 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const curve = ST.stage === 'curve', px = curve && ST.usd ? solPx() || 0 : 0, yv = (v) => (px ? v * px : v);
+  const xs = curve ? d.cps : d.offsets; const x0 = curve ? Math.log(30) : 0, x1 = curve ? Math.log(600) : 360;
+  const X = (x) => pad.l + ((curve ? Math.log(x) : x) - x0) / (x1 - x0) * iw;
+  let lo = Infinity, hi = -Infinity; const vis = stCohorts().filter((k) => !ST.hidden.has(k));
+  for (const k of vis) for (const b of d.cohorts[k].band) { if (b.p10 > 0) lo = Math.min(lo, yv(b.p10)); if (b.p90 > 0) hi = Math.max(hi, yv(b.p90)); }
+  for (const k of vis) for (const t of (d.lines[k] || []).slice(0, k === 'grad' || k === 'runner' ? ST.lines : Math.ceil(ST.lines / 3))) for (const p of t.path) if (p[1] > 0) { lo = Math.min(lo, yv(p[1])); hi = Math.max(hi, yv(p[1])); }
+  if (!Number.isFinite(lo)) { lo = 1; hi = 10; }
+  if (ST.log) { lo = Math.max(lo, curve ? 5 : 0.02) / 1.15; hi *= 1.15; } else { lo = 0; hi *= 1.05; }
+  const Y = (v) => { const t = ST.log ? (Math.log(Math.max(v, lo)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)) : (v - lo) / (hi - lo); return pad.t + ih - t * ih; };
+  // grid + axes
+  g.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace'; g.fillStyle = stCss('--text-faint', '#888'); g.strokeStyle = stCss('--border', '#333'); g.lineWidth = 1;
+  const ticks = []; if (ST.log) { for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v >= lo && v <= hi) ticks.push(v); } } else { const step = Math.pow(10, Math.floor(Math.log10(hi / 5))); for (let v = 0; v <= hi; v += step) ticks.push(v); }
+  for (const v of ticks) { const y = Y(v); g.globalAlpha = 0.5; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.globalAlpha = 1; g.textAlign = 'right'; g.fillText(curve ? (px ? usd(v) : n(v, v < 10 ? 1 : 0)) : `${n(v, v < 1 ? 2 : v < 10 ? 1 : 0)}×`, pad.l - 6, y + 4); }
+  g.textAlign = 'center'; for (const x of xs) { if (!curve && x % 60) continue; const xx = X(x); g.globalAlpha = 0.35; g.beginPath(); g.moveTo(xx, pad.t); g.lineTo(xx, pad.t + ih); g.stroke(); g.globalAlpha = 1; g.fillText(curve ? (x >= 60 ? `${x / 60}m` : `${x}s`) : x ? `${x / 60}h` : '0', xx, H - 10); }
+  if (!curve) { const y1 = Y(1); g.setLineDash([4, 4]); g.strokeStyle = stCss('--text-muted', '#999'); g.beginPath(); g.moveTo(pad.l, y1); g.lineTo(W - pad.r, y1); g.stroke(); g.setLineDash([]); }
+  // bands
+  const order = curve ? ['non', 'x2', 'grad'] : ['dead', 'faded', 'held', 'runner'];
+  const band = (k) => { const b = d.cohorts[k].band.filter((x) => x.n >= 5 && x.p10 > 0); if (b.length < 2) return; const c = pal[k];
+    const fill = (a, bq, alpha) => { g.beginPath(); b.forEach((x, i) => { const xx = X(x[curve ? 'cp' : 't']); i ? g.lineTo(xx, Y(yv(x[a]))) : g.moveTo(xx, Y(yv(x[a]))); }); [...b].reverse().forEach((x) => g.lineTo(X(x[curve ? 'cp' : 't']), Y(yv(x[bq])))); g.closePath(); g.globalAlpha = alpha; g.fillStyle = c; g.fill(); g.globalAlpha = 1; };
+    fill('p10', 'p90', 0.10); fill('p25', 'p75', 0.18);
+    g.beginPath(); b.forEach((x, i) => { const xx = X(x[curve ? 'cp' : 't']), yy = Y(yv(x.p50)); i ? g.lineTo(xx, yy) : g.moveTo(xx, yy); }); g.strokeStyle = c; g.lineWidth = 2.2; g.stroke(); };
+  for (const k of order) if (vis.includes(k)) band(k);
+  // individual paths
+  ST.paths = [];
+  for (const k of order) {
+    if (!vis.includes(k) || !ST.lines) continue;
+    const quota = k === 'grad' || k === 'runner' ? ST.lines : k === 'non' || k === 'dead' ? Math.ceil(ST.lines / 5) : Math.ceil(ST.lines / 3);
+    for (const t of (d.lines[k] || []).slice(0, quota)) {
+      const pts = t.path.filter((p) => p[1] > 0).map((p) => [X(p[0]), Y(yv(p[1])), p[0], p[1]]); if (pts.length < 2) continue;
+      ST.paths.push({ k, t, pts });
+      const hot = ST.hover && ST.hover.t.mint === t.mint && ST.hover.k === k;
+      g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.strokeStyle = pal[k]; g.lineWidth = hot ? 2.6 : 1; g.globalAlpha = hot ? 1 : k === 'non' || k === 'dead' ? 0.22 : 0.38; g.stroke(); g.globalAlpha = 1;
+      if (curve && t.g) { const e = pts[pts.length - 1]; g.beginPath(); g.arc(e[0], e[1], hot ? 4 : 2.2, 0, 7); g.fillStyle = pal[k]; g.fill(); }
+    }
+  }
+  if (ST.hover) { const h = ST.hover; g.beginPath(); h.pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.strokeStyle = stCss('--text', '#fff'); g.lineWidth = 1; g.globalAlpha = 0.9; g.stroke(); g.globalAlpha = 1; }
+}
+function stNearest(mx, my) {
+  let best = null, bd = 10;
+  for (const p of ST.paths) for (let i = 1; i < p.pts.length; i++) {
+    const [x1, y1] = p.pts[i - 1], [x2, y2] = p.pts[i]; const L2 = (x2 - x1) ** 2 + (y2 - y1) ** 2; const tt = L2 ? Math.max(0, Math.min(1, ((mx - x1) * (x2 - x1) + (my - y1) * (y2 - y1)) / L2)) : 0;
+    const dd = Math.hypot(mx - (x1 + tt * (x2 - x1)), my - (y1 + tt * (y2 - y1))); if (dd < bd) { bd = dd; best = { ...p, seg: i }; }
+  }
+  return best;
+}
+{
+  const cv = $('#stCanvas'), tip = $('#stTip');
+  const move = (e) => { const r = cv.getBoundingClientRect(); const h = stNearest(e.clientX - r.left, e.clientY - r.top);
+    if ((h && ST.hover && h.t.mint === ST.hover.t.mint && h.k === ST.hover.k) || (!h && !ST.hover)) return;
+    ST.hover = h; stDraw(); if (!h) { tip.hidden = true; cv.style.cursor = ''; return; }
+    cv.style.cursor = 'pointer'; const t = h.t, pal = stPal(), curve = ST.stage === 'curve';
+    const last = t.path.filter((p) => p[1] > 0).slice(-1)[0];
+    tip.innerHTML = `<b style="color:${pal[h.k]}">${esc(t.symbol || t.mint.slice(0, 6))}</b> <span>${esc((curve ? ST.curves : ST.post).cohorts[h.k].label)}</span><br>${curve
+      ? `${t.g ? `graduated after ${t.tGradSec != null ? age(t.tGradSec) : '?'}` : `peak ${n(t.peak, 0)} SOL`} · ${last ? `${n(last[1], 0)} SOL at ${last[0] >= 60 ? `${last[0] / 60}m` : `${last[0]}s`}` : ''}${t.firstReject && t.firstReject !== '(pass)' ? ` · rejected: ${esc(t.firstReject)}` : ''}`
+      : `best ${t.mx6 != null ? `${n(t.mx6, 2)}×` : '–'} · at 6 h ${t.out6 != null ? `${n(t.out6, 2)}×` : '–'}${t.mcap0 ? ` · first mcap ${usd(t.mcap0)}` : ''}`}<br><small>tap to open the token record</small>`;
+    tip.hidden = false; const x = e.clientX - r.left, y = e.clientY - r.top; tip.style.left = `${Math.min(x + 14, r.width - tip.offsetWidth - 6)}px`; tip.style.top = `${Math.max(6, y - tip.offsetHeight - 10)}px`; };
+  cv.addEventListener('mousemove', move); cv.addEventListener('mouseleave', () => { ST.hover = null; tip.hidden = true; stDraw(); });
+  cv.addEventListener('click', (e) => { const r = cv.getBoundingClientRect(); const h = stNearest(e.clientX - r.left, e.clientY - r.top) || ST.hover; if (!h) return; if (ST.stage === 'post') { if (typeof openGradDrawer === 'function') openGradDrawer(h.t.mint); } else openDrawer(h.t.mint); });
+  cv.addEventListener('touchstart', (e) => { const t = e.touches[0]; move({ clientX: t.clientX, clientY: t.clientY }); }, { passive: true });
+  new ResizeObserver(() => { if (S.tab === 'studio') { stDraw(); stDeciles(); } }).observe(cv.parentElement);
+}
+$('#stStage').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; ST.stage = b.dataset.s; ST.hidden.clear(); ST.hover = null; document.querySelectorAll('#stStage button').forEach((x) => x.setAttribute('aria-selected', x === b)); if ((ST.stage === 'curve' && ST.curves) || (ST.stage === 'post' && ST.post)) { stLegend(); stDraw(); } else loadStudio(); });
+$('#stLines').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; ST.lines = +b.dataset.n; document.querySelectorAll('#stLines button').forEach((x) => x.setAttribute('aria-selected', x === b)); stDraw(); });
+$('#stLog').addEventListener('click', () => { ST.log = !ST.log; $('#stLog').setAttribute('aria-pressed', ST.log); stDraw(); });
+$('#stUsd').addEventListener('click', () => { ST.usd = !ST.usd; $('#stUsd').setAttribute('aria-pressed', ST.usd); stDraw(); });
+for (const id of ['stDays', 'stCp', 'stOutcome']) $(`#${id}`).addEventListener('change', () => { ST.days = +$('#stDays').value; ST.cp = +$('#stCp').value; ST.outcome = $('#stOutcome').value; ST.curves = ST.post = null; ST.rule = null; $('#stRuleOut').innerHTML = '<div class="empty">Settings changed: test again.</div>'; loadStudio(); });
+function stFeats() {
+  const f = ST.feats; if (!f) return;
+  $('#stFeatHint').textContent = `${n(f.n, 0)} unrejected tokens at ${ST.cp} s · base ${f.baseRatePct != null ? f.baseRatePct.toFixed(2) : '–'}% · tap a feature`;
+  const maxL = Math.max(1, ...f.ranked.map((x) => x.bestLift || 0));
+  $('#stFeats').innerHTML = f.ranked.length ? f.ranked.map((x) => `<button type="button" class="st-feat ${ST.feat === x.feature ? 'is-sel' : ''}" data-f="${esc(x.feature)}">
+    <span class="nm">${esc(x.label)}<small>${esc(x.direction)} · best decile ${x.bestDecile}</small></span>
+    <span class="bar"><i style="--w:${Math.min(100, ((x.bestLift || 0) / maxL) * 100)}%;--c:${x.bestLo != null && x.bestLo > f.baseRatePct ? 'var(--up)' : 'var(--text-faint)'}"></i></span>
+    <span class="lf ${x.bestLo != null && x.bestLo > f.baseRatePct ? 'up' : ''}">${x.bestLift != null ? `${n(x.bestLift, 1)}×` : '–'}<small>${x.bestRate != null ? `${x.bestRate.toFixed(2)}%` : ''}</small></span></button>`).join('')
+    : '<div class="empty">Not enough unrejected tokens at this checkpoint yet.</div>';
+}
+$('#stFeats').addEventListener('click', (e) => { const b = e.target.closest('.st-feat'); if (b) stPickFeat(b.dataset.f, true); });
+function stPickFeat(feature, scroll) {
+  ST.feat = feature; stFeats(); stDeciles();
+  const x = ST.feats?.ranked.find((y) => y.feature === feature); if (!x) return;
+  const sel = $('#stRuleFeat'); sel.innerHTML = ST.feats.ranked.map((y) => `<option value="${esc(y.feature)}" ${y.feature === feature ? 'selected' : ''}>${esc(y.label)}</option>`).join('');
+  const best = x.deciles[x.bestDecile - 1]; const up = x.direction !== 'lower is better';
+  const sig = (v) => (v == null ? '' : Number(Number(v).toPrecision(3)));
+  $('#stRuleOp').value = up ? 'gte' : 'lte'; $('#stRuleThr').value = sig(up ? best.lo : best.hi);
+  if (scroll && innerWidth < 900) $('#stDec').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function stDeciles() {
+  const cv = $('#stDec'), x = ST.feats?.ranked.find((y) => y.feature === ST.feat); const wrap = cv?.parentElement; if (!cv || !wrap) return;
+  $('#stDecTitle').textContent = x ? `${x.label} · ${ST.cp} s` : 'Decile view';
+  $('#stDecMeta').innerHTML = x ? `<span>base <b>${ST.feats.baseRatePct.toFixed(2)}%</b></span><span>best decile <b>${x.bestDecile}</b> · <b>${x.bestRate.toFixed(2)}%</b> · lift <b>${n(x.bestLift, 1)}×</b></span><span>lower bound <b>${x.bestLo != null ? x.bestLo.toFixed(2) : '–'}%</b></span><span>monotone ρ <b>${n(x.monotone, 2)}</b></span><button type="button" class="st-mini" data-drill="studio_feature:${esc(x.feature)}:${ST.cp}:${ST.outcome}:d${ST.days}" data-label="${esc(x.label)} · deciles" data-value="${n(x.bestLift, 1)}× lift" data-sub="best decile ${x.bestDecile}">full table</button>` : '';
+  if (typeof markTiles === 'function') markTiles();
+  const dpr = Math.min(2, devicePixelRatio || 1), W = wrap.clientWidth, H = wrap.clientHeight; if (!W || !H) return;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = `${W}px`; cv.style.height = `${H}px`; const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  if (!x) { g.fillStyle = stCss('--text-faint', '#888'); g.font = '12px system-ui'; g.textAlign = 'center'; g.fillText('pick a feature', W / 2, H / 2); return; }
+  const pad = { l: 44, r: 10, t: 10, b: 34 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b, base = ST.feats.baseRatePct;
+  const top = Math.max(base * 1.2, ...x.deciles.map((d) => d.hi || d.rate)) * 1.08 || 1; const Y = (v) => pad.t + ih - (v / top) * ih; const bw = iw / x.deciles.length;
+  g.font = '10.5px ui-monospace, Menlo, monospace'; g.fillStyle = stCss('--text-faint', '#888'); g.strokeStyle = stCss('--border', '#333');
+  for (let i = 0; i <= 4; i++) { const v = (top / 4) * i, y = Y(v); g.globalAlpha = 0.5; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.globalAlpha = 1; g.textAlign = 'right'; g.fillText(`${v.toFixed(v < 1 ? 2 : 1)}%`, pad.l - 5, y + 3); }
+  x.deciles.forEach((d, i) => { const x0 = pad.l + i * bw + bw * 0.18, w = bw * 0.64, y = Y(d.rate); const hot = d.d === x.bestDecile;
+    g.fillStyle = hot ? stCss('--up', '#1fbf8f') : stCss('--accent', '#7c9cff'); g.globalAlpha = hot ? 0.95 : 0.55; g.fillRect(x0, y, w, pad.t + ih - y); g.globalAlpha = 1;
+    if (d.lo != null) { g.strokeStyle = stCss('--text-muted', '#aaa'); g.beginPath(); g.moveTo(x0 + w / 2, Y(d.lo)); g.lineTo(x0 + w / 2, Y(d.hi)); g.stroke(); }
+    g.fillStyle = stCss('--text-muted', '#aaa'); g.textAlign = 'center'; g.fillText(`D${d.d}`, x0 + w / 2, H - 20); g.fillStyle = stCss('--text-faint', '#888'); g.fillText(`${sFmt(d.lo === d.hi ? d.lo : d.lo)}`, x0 + w / 2, H - 8); });
+  const yb = Y(base); g.setLineDash([4, 3]); g.strokeStyle = stCss('--down', '#e5484d'); g.lineWidth = 1.2; g.beginPath(); g.moveTo(pad.l, yb); g.lineTo(W - pad.r, yb); g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+}
+const sFmt = (v) => (v == null ? '' : Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2));
+$('#stRule').addEventListener('submit', async (e) => {
+  e.preventDefault(); const feature = $('#stRuleFeat').value, op = $('#stRuleOp').value, thr = $('#stRuleThr').value; if (!feature || thr === '') return;
+  $('#stRuleOut').innerHTML = '<div class="empty">Testing on both halves of the window…</div>';
+  try {
+    const t = await get(`/api/studio/rule?${stQ()}&feature=${encodeURIComponent(feature)}&op=${op}&threshold=${encodeURIComponent(thr)}`); ST.rule = t;
+    const h = (x) => `<div class="st-half"><span class="hl">${esc(x.half)}</span><span>${n(x.selected.n, 0)} matched</span><span class="${x.lift > 1 ? 'up' : 'down'}">${x.selected.ratePct != null ? x.selected.ratePct.toFixed(2) : '–'}% vs ${x.base.ratePct != null ? x.base.ratePct.toFixed(2) : '–'}%</span><span class="${x.lift > 1 ? 'up' : 'down'}">${x.lift != null ? `${n(x.lift, 2)}× lift` : '–'}</span></div>`;
+    $('#stRuleOut').innerHTML = `<div class="st-verdict ${t.holdsUp ? 'ok' : t.lift > 1 ? 'meh' : 'no'}" data-drill="studio_rule:${esc(feature)}:${op}:${esc(thr)}:${ST.cp}:${ST.outcome}:d${ST.days}" data-label="Rule · ${esc(t.rule)}" data-value="${t.lift != null ? `${n(t.lift, 2)}× lift` : '–'}" data-sub="${n(t.selected.n, 0)} matched">
+        <div class="st-vrow"><b>${esc(t.rule)}</b><span class="tag">${t.holdsUp ? 'holds in both halves' : t.lift > 1 ? 'pooled only' : 'no lift'}</span></div>
+        <div class="st-vnums"><span><b>${n(t.selected.n, 0)}</b><small>matched of ${n(t.base.n, 0)}</small></span><span class="${t.lift > 1 ? 'up' : 'down'}"><b>${t.selected.ratePct != null ? t.selected.ratePct.toFixed(2) : '–'}%</b><small>vs base ${t.base.ratePct != null ? t.base.ratePct.toFixed(2) : '–'}%</small></span><span class="${t.lift > 1 ? 'up' : 'down'}"><b>${t.lift != null ? `${n(t.lift, 2)}×` : '–'}</b><small>lift · CI ${t.selected.lo != null ? t.selected.lo.toFixed(2) : '–'}–${t.selected.hi != null ? t.selected.hi.toFixed(2) : '–'}%</small></span><span><b>${t.selected.avgCappedMult != null ? `${n(t.selected.avgCappedMult, 2)}×` : '–'}</b><small>avg max multiple (cap 5×) vs ${t.base.avgCappedMult != null ? `${n(t.base.avgCappedMult, 2)}×` : '–'}</small></span></div>
+        ${t.halves.map(h).join('')}
+        <p class="st-vtext">${esc(t.verdict)}</p>
+        <pre class="st-snippet">${esc(t.snippet)}</pre>
+        <small class="st-vfoot">tap for the matched tokens · ${esc(t.notes[0])}</small></div>`;
+    if (typeof markTiles === 'function') markTiles();
+  } catch (err) { $('#stRuleOut').innerHTML = `<div class="empty"><strong>Could not test</strong>${esc(err.message)}</div>`; }
+});
+function stRej() {
+  const f = ST.feats; if (!f) return; const pass = f.rejectFamilies.find((x) => x.family === '(pass)');
+  $('#stRej').innerHTML = `<div class="st-rejsum" data-drill="studio_rejects:${ST.cp}:d${ST.days}" data-label="Reject rules versus graduation" data-value="${f.gradsLostToRejectsPct != null ? `${n(f.gradsLostToRejectsPct, 0)}%` : '–'}" data-sub="of graduates were rejected at ${ST.cp} s"><b>${f.gradsLostToRejectsPct != null ? `${n(f.gradsLostToRejectsPct, 0)}%` : '–'}</b> of the ${n(f.totalGrads, 0)} graduates were in a rejected group at ${ST.cp} s · pass-group grad rate ${pass ? `${pass.gradRate.toFixed(2)}%` : '–'}</div>
+    <table class="st-tbl"><thead><tr><th>Family</th><th>Tokens</th><th>Grads</th><th>Grad rate</th><th>2× rate</th></tr></thead><tbody>${f.rejectFamilies.slice(0, 9).map((x) => `<tr class="${x.family === '(pass)' ? 'is-pass' : pass && x.lo > pass.gradRate ? 'is-hot' : ''}"><td>${esc(x.family)}</td><td>${n(x.n, 0)}</td><td>${n(x.g, 0)}</td><td><span class="st-rate" style="--w:${Math.min(100, (x.gradRate / Math.max(0.01, Math.max(...f.rejectFamilies.map((y) => y.gradRate)))) * 100)}%">${x.gradRate.toFixed(2)}%</span></td><td>${x.x2Rate.toFixed(1)}%</td></tr>`).join('')}</tbody></table>
+    <p class="st-note">A family shaded green has a graduation rate whose lower bound beats the pass group: that rule is discarding graduates. Whether those were tradeable is the paper books' question, not this table's.</p>`;
+  if (typeof markTiles === 'function') markTiles();
+}

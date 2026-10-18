@@ -108,9 +108,15 @@ export class Graduates extends EventEmitter {
 
   // ---- watchlist ----
   restore() {
+    // Rebuild the last 6 h of each series from stored snapshots. Without this, every restart emptied the in-memory
+    // path and the outcome labeler (which reads that path) censored or truncated every snapshot due in the next 6 h.
+    const hist = db.prepare('SELECT ts, price, mcap, liq FROM grad_snapshots WHERE mint=? AND ts >= ? AND price > 0 ORDER BY ts');
+    let pts = 0;
     for (const r of Q.activeWatch.all(Date.now() - G.extMaxAgeHours * HOUR)) {
       const st = this.blank(r.mint, { symbol: r.symbol, name: r.name, source: r.source, addedAt: r.added_at, migPrice: r.mig_price, migMcap: r.mig_mcap, peakPrice: r.peak_price, pairCreatedAt: r.pair_created_at }); st.extended = !!r.extended; this.watch.set(r.mint, st);
+      for (const h of hist.all(r.mint, Date.now() - 6 * HOUR)) { st.series.push({ t: h.ts, price: h.price, liq: h.liq || 0, mcap: h.mcap || 0, fdv: 0, v5: 0, v1h: 0, v6h: 0, v24: 0, b5: 0, s5: 0, b1h: 0, s1h: 0, c5: null, c1h: null, c6h: null, c24: null, restored: true }); pts++; }
     }
+    if (pts) log.info(`rebuilt ${pts} series points from stored snapshots`);
     // Restored paper positions are marked at the next poll (DexScreener prices are stateless, so this is honest).
     for (const r of Q.openPapers.all()) this.open.set(`${r.book || 'fixed'}:${r.mint}`, { id: r.id, book: r.book || 'fixed', alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryPrice: r.entry_price, entryMcap: r.entry_mcap, sizeSol: r.size_sol, units: r.units, unitsLeft: r.units_left, realized: r.realized_sol || 0, peak: r.peak_value || r.size_sol, tp1Done: r.units_left < r.units - 1e-12, events: JSON.parse(r.events || '[]') });
     log.info(`restored ${this.watch.size} watched graduates, ${this.open.size} open paper positions`);

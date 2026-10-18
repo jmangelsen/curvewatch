@@ -26,6 +26,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="live" data-short="Live">Live</button>
     <button role="tab" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
+    <button role="tab" aria-selected="false" data-tab="studio" data-short="Studio">Studio</button>
     <button role="tab" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
@@ -107,6 +108,56 @@
       <article class="card rn-days-card">
         <div class="card-head"><h2>History</h2><span class="hint" id="rnDaysHint"></span></div>
         <div class="table-wrap"><table class="board responsive" id="rnDays"><thead><tr><th>Day</th><th class="num">Picks</th><th class="num">Scored</th><th class="num">Hits</th><th class="num">2×</th><th class="num">Random hits</th><th class="num">Random 2×</th></tr></thead><tbody></tbody></table></div>
+      </article>
+    </div>
+  </section>
+  <section id="tab-studio" class="tab-panel studio" hidden>
+    <div class="st-head">
+      <div class="st-title"><h1>Curve Studio</h1><p>Every graduated coin against the field. Compare paths, find what separates them, test a rule on held-out time before it touches the rules. Research view: nothing here trades or changes a setting.</p></div>
+      <div class="st-ctl">
+        <label>Window <select id="stDays"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">all</option></select></label>
+        <label>Checkpoint <select id="stCp"><option value="30">30 s</option><option value="60" selected>60 s</option><option value="120">2 min</option><option value="180">3 min</option><option value="300">5 min</option><option value="600">10 min</option></select></label>
+        <label>Outcome <select id="stOutcome"><option value="grad" selected>graduated</option><option value="x2">doubled (2×)</option><option value="x3">tripled (3×)</option></select></label>
+      </div>
+    </div>
+    <div class="st-kpis" id="stKpis"></div>
+    <article class="card st-chart-card">
+      <div class="card-head">
+        <h2 id="stChartTitle">Curve comparison</h2>
+        <div class="seg" id="stStage"><button data-s="curve" aria-selected="true">Curve · 0–10 min</button><button data-s="post" aria-selected="false">After graduation · 0–6 h</button></div>
+        <div class="st-tools">
+          <div class="seg" id="stLines"><button data-n="0">bands</button><button data-n="100" aria-selected="true">+100 lines</button><button data-n="300">+300 lines</button></div>
+          <button type="button" class="st-tog" id="stLog" aria-pressed="true">log</button>
+          <button type="button" class="st-tog" id="stUsd" aria-pressed="false">USD</button>
+        </div>
+      </div>
+      <div class="st-legend" id="stLegend"></div>
+      <div class="st-plot"><canvas id="stCanvas" role="img" aria-label="Cohort bands and individual token paths"></canvas><div class="st-tip" id="stTip" hidden></div></div>
+      <p class="st-note" id="stChartNote"></p>
+    </article>
+    <div class="st-grid">
+      <article class="card st-feat-card">
+        <div class="card-head"><h2>What separates graduates</h2><span class="hint" id="stFeatHint">unrejected tokens at the checkpoint · tap a feature</span></div>
+        <div class="st-feats" id="stFeats"><div class="empty">Loading…</div></div>
+      </article>
+      <article class="card st-decile-card">
+        <div class="card-head"><h2 id="stDecTitle">Decile view</h2><span class="hint">equal-count bins · bar = outcome rate · line = base rate · whisker = Wilson 95%</span></div>
+        <div class="st-plot sm"><canvas id="stDec"></canvas></div>
+        <div class="st-dec-meta" id="stDecMeta"></div>
+      </article>
+      <article class="card st-rule-card">
+        <div class="card-head"><h2>Rule tester</h2><span class="hint">a rule must hold in both halves of the window before it earns a paper book</span></div>
+        <form class="st-rule" id="stRule">
+          <select id="stRuleFeat" aria-label="feature"></select>
+          <select id="stRuleOp" aria-label="operator"><option value="gte">≥</option><option value="gt">&gt;</option><option value="lte">≤</option><option value="lt">&lt;</option></select>
+          <input id="stRuleThr" type="number" step="any" inputmode="decimal" placeholder="threshold" aria-label="threshold" required>
+          <button type="submit" class="btn">Test</button>
+        </form>
+        <div id="stRuleOut"><div class="empty">Pick a feature on the left (the best decile boundary is filled in) and press Test.</div></div>
+      </article>
+      <article class="card st-rej-card">
+        <div class="card-head"><h2>Reject rules versus graduation</h2><span class="hint">which rules throw away graduates</span></div>
+        <div id="stRej"><div class="empty">Loading…</div></div>
       </article>
     </div>
   </section>
