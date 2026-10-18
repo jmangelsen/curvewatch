@@ -546,8 +546,18 @@ function renderPerf() {
 $('#positions').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-mint]'); if (tr) openDrawer(tr.dataset.mint); });
 
 // ---------- intel ----------
+// A table rebuilt under a finger swallows the tap (the touched node is detached before the click lands). Intel refreshes
+// are therefore skipped while a touch is recent, and skipped entirely when the data did not change.
+let lastTouchAt = 0; document.addEventListener('touchstart', () => { lastTouchAt = Date.now(); }, { passive: true, capture: true });
+const quietForTouch = () => Date.now() - lastTouchAt > 1500;
 async function loadIntel() {
-  try { [S.dataset, S.intel, S.cfg] = await Promise.all([get('/api/dataset'), get('/api/intel'), S.cfg ? Promise.resolve(S.cfg) : get('/api/config')]); renderIntel(); } catch (e) { console.warn(e); }
+  try {
+    const [ds, intel, cfg] = await Promise.all([get('/api/dataset'), get('/api/intel'), S.cfg ? Promise.resolve(S.cfg) : get('/api/config')]);
+    const sig = JSON.stringify([ds, intel]); const changed = sig !== loadIntel.sig;
+    if (!changed && S.intel) return;
+    if (!quietForTouch()) { setTimeout(loadIntel, 1600); return; }
+    loadIntel.sig = sig; [S.dataset, S.intel, S.cfg] = [ds, intel, cfg]; renderIntel();
+  } catch (e) { console.warn(e); }
 }
 function renderIntel() {
   const d = S.dataset; if (!d) return;
@@ -1601,6 +1611,7 @@ function drillChart(sr) {
 function renderDrill() {
   const d = DR.data, t = DR.tile; if (!d) return;
   $('#drillTitle').textContent = d.title || t.label;
+  const key = String(t.key || ''), ext = key.startsWith('wallet:') ? walletActions(key.slice(7)) : key.startsWith('tok:') ? tokenActions(key.slice(4)) : '';
   const stats = (d.stats || []).map(([l, v, f]) => `<div><div class="label">${esc(l)}</div><div class="value ${colorOf(v, f)}">${f === 'text' ? esc(v) : dfx(v, f)}</div></div>`).join('');
   const tables = (d.tables || []).map((tb, ti) => {
     let rows = [...tb.rows]; const so = DR.sort[ti];
@@ -1611,7 +1622,7 @@ function renderDrill() {
       <tbody>${rows.slice(0, lim).map((r) => `<tr ${r.drill ? `data-drill="${esc(r.drill)}" data-label="${esc(r.label || '')}" data-value="${esc(r.loPct == null ? '' : signed(r.loPct, 1, '%') + ' lower bound')}" data-sub="${esc(r.window || '')}"` : r.mint && /^(launches|tracking|grads|alerts|paper_|rep_trades|ds_rugs|strong|h_fills|h_stops|b_|book_|edge|tape|tok|tr_|wallet|rej)/.test(d.key) ? `data-mint="${esc(r.mint)}"${r.kind === 'grad' ? ' data-kind="grad"' : ''}` : ''}>${tb.cols.map((c) => `<td class="${NUMF.has(c.fmt) ? 'num' : ''} ${colorOf(r[c.k], c.fmt)}">${dfx(r[c.k], c.fmt, r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
       ${rows.length > lim ? `<button class="more" data-t="${ti}">Show ${Math.min(100, rows.length - lim)} more</button>` : ''}` : '<div class="empty">No rows yet.</div>'}</div>`;
   }).join('');
-  $('#drillBody').innerHTML = `<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
+  $('#drillBody').innerHTML = `${ext}<div class="drill-hero"><span class="v">${esc(t.value || '')}</span><span class="s">${esc(t.sub || '')}</span></div>
     ${d.explain ? `<p class="drill-explain">${esc(d.explain)}</p>` : ''}
     ${(d.sections || []).map((x) => `<section class="drill-sec"><h3>${esc(x.h)}</h3><p>${esc(x.p)}</p></section>`).join('')}
     ${stats ? `<div class="drill-stats">${stats}</div>` : ''}${drillChart(d.series)}${tables}
@@ -1803,9 +1814,16 @@ addEventListener('resize', () => { if (S.tab === 'edge' && EX.data) renderEdgeMa
 const swS = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
 /** Wallet link group: pump.fun profile (primary) and Solscan. Tap targets are ≥ 36 px tall via .wl in styles.css. */
 const walletLinks = (w, { tag = '' } = {}) => (w ? `<span class="wl"><a class="mono" href="https://pump.fun/profile/${encodeURIComponent(w)}" target="_blank" rel="noopener" title="Open ${esc(w)} on pump.fun">${swS(w)}</a><a class="wl-alt" href="https://solscan.io/account/${encodeURIComponent(w)}" target="_blank" rel="noopener" title="Open ${esc(w)} on Solscan">scan</a>${tag}</span>` : '–');
+// Big, unmistakable external actions for a wallet or token drill: the row link is small on a phone, this is not.
+const walletActions = (w) => `<div class="d-actions"><a href="https://pump.fun/profile/${encodeURIComponent(w)}" target="_blank" rel="noopener">Open on pump.fun <span class="ext">↗</span></a><a href="https://solscan.io/account/${encodeURIComponent(w)}" target="_blank" rel="noopener">Solscan <span class="ext">↗</span></a><button type="button" class="copy" data-copy="${esc(w)}">Copy address</button></div>`;
+const tokenActions = (m) => `<div class="d-actions"><a href="https://pump.fun/coin/${encodeURIComponent(m)}" target="_blank" rel="noopener">pump.fun <span class="ext">↗</span></a><a href="https://dexscreener.com/solana/${encodeURIComponent(m)}" target="_blank" rel="noopener">DexScreener <span class="ext">↗</span></a><a href="https://solscan.io/token/${encodeURIComponent(m)}" target="_blank" rel="noopener">Solscan <span class="ext">↗</span></a><button type="button" class="copy" data-copy="${esc(m)}">Copy mint</button></div>`;
+document.addEventListener('click', (e) => { const b = e.target.closest('button.copy[data-copy]'); if (!b) return; e.stopPropagation(); navigator.clipboard?.writeText(b.dataset.copy).then(() => { const t = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = t; }, 1200); }).catch(() => {}); }, true);
 const tokenLinks = (m, { dex = null } = {}) => `<div class="d-links"><a href="https://pump.fun/coin/${encodeURIComponent(m)}" target="_blank" rel="noopener">pump.fun</a><a href="${esc(dex || `https://dexscreener.com/solana/${m}`)}" target="_blank" rel="noopener">DexScreener</a><a href="https://solscan.io/token/${encodeURIComponent(m)}" target="_blank" rel="noopener">Solscan</a></div>`;
 async function loadTracker() {
   let v; try { v = await get('/api/tracker'); } catch (e) { $('#trWallets').innerHTML = `<div class="empty"><strong>Tracker unavailable</strong>${esc(e.message)}</div>`; return; }
+  const sig = JSON.stringify(v); if (sig === loadTracker.sig && $('#trWallets').children.length) return;
+  if (!quietForTouch()) { setTimeout(loadTracker, 1600); return; }
+  loadTracker.sig = sig;
   const C = v.config, k = (key, label, value, sub) => `<div data-drill="${key}" data-label="${esc(label)}" data-value="${esc(value)}" data-sub="${esc(sub)}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
   $('#trHint').textContent = `top ${C.topN} wallets returning +${C.profitPct}% or more on over ${Math.round(C.minRate * 100)}% of positions · ${C.minPositions}+ scored positions · live trades`;
   $('#trKpis').innerHTML = k('tracker', 'Tracked wallets', `${v.counts.tracked} / ${C.topN}`, `${v.counts.realized} realized · ${v.counts.proxy} proxy`)

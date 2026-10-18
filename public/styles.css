@@ -1156,3 +1156,13 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .ns-item:active { transform: scale(.98); }
 @keyframes nsup { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } } @keyframes nsfade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .ns-panel, .ns-scrim { animation: none; } }
+
+/* external actions at the top of a wallet / token drill; the whole wallet cell is the tap target in boards */
+.d-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-4); }
+.d-actions a, .d-actions button.copy { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--text-sm); text-decoration: none; cursor: pointer; }
+.d-actions a:first-child { border-color: color-mix(in oklab, var(--accent) 55%, var(--border)); color: var(--accent); }
+.d-actions a:hover, .d-actions button.copy:hover { background: color-mix(in oklab, var(--accent) 12%, var(--surface-2)); }
+.d-actions .ext { font-size: var(--text-xs); opacity: .8; }
+.board td > .wl { display: flex; width: 100%; }
+.board td > .wl a.mono { flex: 1; min-width: 96px; }
+@media (pointer: coarse) { .board td > .wl a.mono { min-height: 44px; } }
