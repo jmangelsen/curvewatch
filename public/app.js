@@ -1853,25 +1853,41 @@ setInterval(() => { if (S.tab === 'rejects' && !document.hidden) loadRejects(); 
 
 // ================= Trading codex =================
 // What the bot holds right now, on which coins, and what it held at any moment in the last 24 hours.
-const CX = { data: null, moment: null, momentData: null, filter: null, marks: new Map(), tapeKeys: new Set(), timer: null, booted: false };
+const CX = { data: null, moment: null, momentData: null, filter: null, group: localStorage.getItem('cx.group') || 'coin', marks: new Map(), tapeKeys: new Set(), booted: false, fullAt: 0 };
 const CX_DAY = 86400000;
 const cxGateway = (u) => (!u ? null : u.startsWith('ipfs://') ? `https://pump.mypinata.cloud/ipfs/${u.slice(7)}` : u.replace(/^https?:\/\/(ipfs\.io|gateway\.pinata\.cloud|cf-ipfs\.com|dweb\.link)\/ipfs\//i, 'https://pump.mypinata.cloud/ipfs/'));
 const cxHue = (s) => { let h = 0; for (const c of s || '') h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
 const cxBookColor = (b) => (['main', 'band', 'flow', 'confirm', 'random', 'clean', 'hold120', 'timed'].includes(b) ? `var(--b-${b})` : ({ follow: '#5fd3c8', followctl: '#8a929c', scale: '#f29e3e', fixed: '#6aa5e0', trail: '#a7d0ff' }[b] || 'var(--accent)'));
 const cxClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const nw = (s) => `<span class="nw">${s}</span>`;
 
-function cxAvatar(p) {
+function cxAvatar(p, size = '') {
   const img = cxGateway(p.image), init = esc((p.symbol || '?').replace(/[^A-Za-z0-9$]/g, '').slice(0, 3).toUpperCase() || '?');
   const bg = `linear-gradient(135deg, hsl(${cxHue(p.mint)} 55% 38%), hsl(${(cxHue(p.mint) + 50) % 360} 60% 24%))`;
-  return `<div class="cx-ava" style="--av:${bg}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<span>${init}</span></div>`;
+  return `<div class="cx-ava ${size}" style="--av:${bg}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<span>${init}</span></div>`;
 }
-function cxRangeBar(p) {
+/** Price path since entry: inline SVG, entry level dashed, colored by where the mark sits. */
+function cxSpark(points, entryMcap, markPct, { h = 44 } = {}) {
+  const pts = (points || []).filter((x) => x && x[1] != null);
+  if (pts.length < 2) return `<div class="cx-spark empty"><span>${pts.length === 1 ? 'one tick so far' : 'no price path yet'}</span></div>`;
+  const W = 300, H = h, pad = 3, xs = pts.map((x) => x[0]), ys = pts.map((x) => x[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), ymin = Math.min(...ys, entryMcap ?? Infinity), ymax = Math.max(...ys, entryMcap ?? -Infinity);
+  const X = (t) => pad + ((t - x0) / Math.max(1, x1 - x0)) * (W - 2 * pad), Y = (v) => H - pad - ((v - ymin) / Math.max(1e-12, ymax - ymin)) * (H - 2 * pad);
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1], c = cls(markPct);
+  return `<svg class="cx-spark ${c}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    ${entryMcap != null ? `<line x1="0" x2="${W}" y1="${Y(entryMcap).toFixed(1)}" y2="${Y(entryMcap).toFixed(1)}" class="entry"/>` : ''}
+    <path d="${d} L${X(last[0]).toFixed(1)},${H} L${X(pts[0][0]).toFixed(1)},${H} Z" class="fill"/><path d="${d}" class="line"/>
+    <circle cx="${X(last[0]).toFixed(1)}" cy="${Y(last[1]).toFixed(1)}" r="3" class="dot"/></svg>`;
+}
+function cxRangeBar(p, { thin = false } = {}) {
   const cur = 1 + (p.markPct ?? 0) / 100, hasStop = p.stopMult != null && p.stopMult > 0.02, stop = hasStop ? p.stopMult : null, tp = p.tpMult;
   const hi = Math.max(tp || 0, cur, 1.15) * 1.08, lo = Math.min(stop ?? 0.75, cur) * 0.92;
   const X = (m) => Math.max(0, Math.min(100, ((m - lo) / (hi - lo)) * 100));
   const stopX = hasStop ? X(stop) : 0, tpX = tp ? X(tp) : 100, entryX = X(1);
   const right = tp ? `TP +${n((tp - 1) * 100, 0)}%` : p.rule?.trailPct ? `trail ${p.rule.trailPct}%` : p.rule?.maxHoldMin ? `timed ${p.rule.maxHoldMin}m` : 'no target';
   const left = hasStop ? `stop ${n((stop - 1) * 100, 0)}%` : 'no stop';
+  if (thin) return `<div class="cx-range-bar thin" title="${left} · entry · ${right}"><div class="cx-rb-track" style="--stop:${n(stopX, 1)}%;--tp:${n(tpX, 1)}%"></div><div class="cx-rb-tick" style="left:${n(entryX, 1)}%"></div><div class="cx-rb-mark ${cls(p.markPct)}" style="left:${n(X(cur), 1)}%"></div></div>`;
   return `<div class="cx-range-bar" title="${left} · entry · ${right}">
     <span class="cx-rb-lab e" style="left:${n(entryX, 1)}%">entry</span>
     <div class="cx-rb-track" style="--stop:${n(stopX, 1)}%;--tp:${n(tpX, 1)}%"></div>
@@ -1879,33 +1895,69 @@ function cxRangeBar(p) {
     <div class="cx-rb-mark ${cls(p.markPct)}" style="left:${n(X(cur), 1)}%"></div>
     <span class="cx-rb-lab l">${left}</span><span class="cx-rb-lab r">${right}</span></div>`;
 }
-function cxCard(p, { moment = false } = {}) {
-  const prev = CX.marks.get(p.key), flash = !moment && prev != null && p.markPct != null && Math.abs(p.markPct - prev) > 0.05 ? (p.markPct > prev ? 'flash-up' : 'flash-down') : '';
+const cxFlash = (key, markPct, moment) => {
+  const prev = CX.marks.get(key);
+  const flash = !moment && prev != null && markPct != null && Math.abs(markPct - prev) > 0.05 ? (markPct > prev ? 'flash-up' : 'flash-down') : '';
   const enter = !moment && prev == null && CX.booted ? 'enter' : '';
-  if (!moment && p.markPct != null) CX.marks.set(p.key, p.markPct);
-  const curve = p.venue === 'curve', dd = p.peakPct != null && p.markPct != null ? p.peakPct - p.markPct : null;
-  const progress = curve ? `<div class="cx-prog"><i style="width:${n(Math.min(100, p.progressPct ?? 0), 0)}%"></i></div><div class="cx-prog-lab"><span>bonding curve ${p.progressPct != null ? pct(p.progressPct, 0) : '–'}</span><span>${p.mcapUsd != null ? usd(p.mcapUsd) : '–'} mcap${p.entryMcapUsd != null ? ` · in at ${usd(p.entryMcapUsd)}` : ''}</span></div>`
-    : `<div class="cx-prog pool"><i style="width:${n(Math.min(100, ((p.liqUsd || 0) / Math.max(p.mcapUsd || 1, 1)) / 0.3 * 100), 0)}%"></i></div><div class="cx-prog-lab"><span>PumpSwap pool ${p.liqUsd != null ? usd(p.liqUsd) : '–'}</span><span>${p.mcapUsd != null ? usd(p.mcapUsd) : '–'} mcap${p.entryMcapUsd != null ? ` · in at ${usd(p.entryMcapUsd)}` : ''}</span></div>`;
-  const stats = [['held', age(p.heldSec)], ['peak', p.peakPct != null ? signed(p.peakPct, 0, '%') : '–'], ['off peak', dd != null ? `−${n(Math.max(0, dd), 0)}%` : '–'],
-    curve ? ['buyers', p.buyers != null ? `${n(p.buyers, 0)}${p.holders != null ? ` · ${n(p.holders, 0)}h` : ''}` : '–'] : ['holders', p.holders != null ? n(p.holders, 0) : 'unknown']];
+  if (!moment && markPct != null) CX.marks.set(key, markPct);
+  return `${flash} ${enter}`;
+};
+function cxProgress(p, moment) {
+  const curve = p.venue === 'curve';
+  const mc = `${p.mcapUsd != null ? usd(p.mcapUsd) : '–'} mcap${p.entryMcapUsd != null ? ` · in at ${usd(p.entryMcapUsd)}` : ''}`;
+  if (moment) return `<div class="cx-prog-lab solo"><span>${curve ? 'curve' : 'PumpSwap'} mcap then</span><span>${mc}</span></div>`;
+  if (curve) return `<div class="cx-prog"><i style="width:${n(Math.min(100, p.progressPct ?? 0), 0)}%"></i></div><div class="cx-prog-lab"><span>bonding curve ${p.progressPct != null ? pct(p.progressPct, 0) : '–'}</span><span>${mc}</span></div>`;
+  return `<div class="cx-prog pool"><i style="width:${n(Math.min(100, ((p.liqUsd || 0) / Math.max(p.mcapUsd || 1, 1)) / 0.3 * 100), 0)}%"></i></div><div class="cx-prog-lab"><span>PumpSwap pool ${p.liqUsd != null ? usd(p.liqUsd) : '–'}</span><span>${mc}</span></div>`;
+}
+function cxStats(p, moment) {
+  const curve = p.venue === 'curve', dd = p.peakPct != null && p.markPct != null ? Math.max(0, p.peakPct - p.markPct) : null;
+  const stats = [['held', age(p.heldSec)], ['peak', p.peakPct != null ? signed(p.peakPct, 0, '%') : '–'], ['off peak', dd != null ? `−${n(dd, 0)}%` : '–'],
+    curve ? [moment ? 'buyers then' : 'buyers', p.buyers != null ? `${n(p.buyers, 0)}${!moment && p.holders != null ? ` · ${n(p.holders, 0)}h` : ''}` : '–'] : ['holders', p.holders != null ? n(p.holders, 0) : moment ? '–' : 'unknown']];
+  return `<div class="cx-stats">${stats.map(([l, v]) => `<div><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div>`;
+}
+const cxTags = (p, moment) => `<span class="cx-tag">${p.venue === 'curve' ? 'curve' : 'PumpSwap'}</span>${p.gated ? '<span class="cx-tag gated">gated</span>' : ''}${p.approx ? '<span class="cx-tag">approx</span>' : ''}${!p.live && !moment ? '<span class="cx-tag" title="The token has left the live board (idle or stalled curve); the mark still follows its trades, but curve progress and buyers are no longer tracked.">off board</span>' : ''}`;
+const cxOutcome = (p, moment) => (p.outcome ? `<div class="cx-outcome ${cls(p.outcome.pnlPct)}">later exited ${cxClock(p.outcome.exitTs)} · ${signed(p.outcome.pnlPct, 1, '%')} · ${esc(p.outcome.reason || '')}</div>` : moment ? '<div class="cx-outcome muted">still open</div>' : '');
+/** One card per book × coin. */
+function cxCard(p, { moment = false } = {}) {
   const rule = p.rule ? `${p.tp1Done ? '<span class="pulse">profit banked · </span>' : ''}${esc(p.rule.text || '')}` : '';
-  const outcome = p.outcome ? `<div class="cx-outcome ${cls(p.outcome.pnlPct)}">later exited ${cxClock(p.outcome.exitTs)} · ${signed(p.outcome.pnlPct, 1, '%')} · ${esc(p.outcome.reason || '')}</div>` : moment ? `<div class="cx-outcome muted">still open</div>` : '';
-  const drawer = curve ? `data-mint="${esc(p.mint)}"` : `data-gmint="${esc(p.mint)}"`;
-  return `<article class="cx-card ${flash} ${enter}" style="--bc:${cxBookColor(p.book)}" data-cx-mint="${esc(p.mint)}" data-cx-venue="${p.venue}" ${drawer} role="button" tabindex="0" aria-label="${esc(p.symbol)} position: open the token record">
+  return `<article class="cx-card ${cxFlash(p.key, p.markPct, moment)}" style="--bc:${cxBookColor(p.book)}" data-cx-mint="${esc(p.mint)}" data-cx-venue="${p.venue}" role="button" tabindex="0" aria-label="${esc(p.symbol)} position: open the token record">
     <div class="cx-top">${cxAvatar(p)}<div class="cx-id"><div class="cx-sym">${esc(p.symbol || '?')}<small title="${esc(p.name || '')}">${esc(p.name || '')}</small></div>
-      <div class="cx-tags"><span class="cx-tag book">${esc(p.bookLabel)}</span><span class="cx-tag">${curve ? 'curve' : 'PumpSwap'}</span>${p.gated ? '<span class="cx-tag gated">gated</span>' : ''}${p.approx ? '<span class="cx-tag">approx</span>' : ''}${!p.live && !moment ? '<span class="cx-tag">no live feed</span>' : ''}</div></div>
-      <div class="cx-pnl"><div class="big ${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</div><div class="usd">${p.markUsd != null ? usd(p.markUsd) : `${n(p.markSol, 3)} SOL`} of ${p.sizeUsd != null ? usd(p.sizeUsd) : `${n(p.sizeSol, 2)} SOL`}</div></div></div>
+      <div class="cx-tags"><span class="cx-tag book">${esc(p.bookLabel)}</span>${cxTags(p, moment)}</div></div>
+      <div class="cx-pnl"><div class="big ${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</div><div class="usd">${nw(p.markUsd != null ? usd(p.markUsd) : `${n(p.markSol, 3)} SOL`)} of ${nw(p.sizeUsd != null ? usd(p.sizeUsd) : `${n(p.sizeSol, 2)} SOL`)}</div></div></div>
+    ${cxSpark(p.spark, p.venue === 'curve' ? p.entryMcapSol : p.entryMcapUsd, p.markPct)}
     ${cxRangeBar(p)}
-    ${progress}
-    <div class="cx-stats">${stats.map(([l, v]) => `<div><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div>
+    ${cxProgress(p, moment)}
+    ${cxStats(p, moment)}
     <div class="cx-rule"><span>${rule}</span><span>${p.lastTradeAgoSec != null ? `last trade ${age(p.lastTradeAgoSec)} ago` : ''}</span></div>
+    ${cxOutcome(p, moment)}</article>`;
+}
+/** One card per coin: the aggregate mark, then a ladder with one thin range bar per book. */
+function cxCoinCard(group, { moment = false } = {}) {
+  const ps = group.positions, lead = ps.reduce((a, b) => (a.entryTs <= b.entryTs ? a : b));
+  const size = ps.reduce((s, p) => s + p.sizeSol, 0), mark = ps.reduce((s, p) => s + (p.markSol ?? p.sizeSol), 0), markPct = size ? (mark / size - 1) * 100 : null;
+  const sizeUsd = ps.reduce((s, p) => s + (p.sizeUsd ?? 0), 0), markUsd = ps.reduce((s, p) => s + (p.markUsd ?? p.sizeUsd ?? 0), 0);
+  const key = `coin:${lead.venue}:${lead.mint}`;
+  const ladder = [...ps].sort((a, b) => (b.markPct ?? -1e9) - (a.markPct ?? -1e9)).map((p) => `<div class="cx-lad" style="--bc:${cxBookColor(p.book)}" data-b="${esc(p.book)}" title="${esc(p.rule?.text || '')}"><i></i><span class="lb">${esc(p.bookLabel)}${p.tp1Done ? ' <em>banked</em>' : ''}</span>${cxRangeBar(p, { thin: true })}<span class="lp ${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</span></div>`).join('');
+  const outcomes = ps.filter((p) => p.outcome);
+  const outcome = moment ? (outcomes.length ? `<div class="cx-outcome ${cls(outcomes.reduce((s, p) => s + p.outcome.pnlPct, 0))}">${outcomes.length === ps.length ? 'all' : `${outcomes.length} of ${ps.length}`} later exited · ${outcomes.map((p) => `${esc(p.bookLabel)} ${signed(p.outcome.pnlPct, 0, '%')}`).join(' · ')}</div>` : '<div class="cx-outcome muted">still open</div>') : '';
+  const held = Math.max(...ps.map((p) => p.heldSec));
+  return `<article class="cx-card coin ${cxFlash(key, markPct, moment)}" style="--bc:${ps.length === 1 ? cxBookColor(lead.book) : 'var(--accent)'}" data-cx-mint="${esc(lead.mint)}" data-cx-venue="${lead.venue}" role="button" tabindex="0" aria-label="${esc(lead.symbol)}: open the token record">
+    <div class="cx-top">${cxAvatar(lead)}<div class="cx-id"><div class="cx-sym">${esc(lead.symbol || '?')}<small title="${esc(lead.name || '')}">${esc(lead.name || '')}</small></div>
+      <div class="cx-tags"><span class="cx-tag book">${ps.length === 1 ? esc(lead.bookLabel) : `${ps.length} books`}</span>${cxTags(lead, moment)}</div></div>
+      <div class="cx-pnl"><div class="big ${cls(markPct)}">${markPct != null ? signed(markPct, 1, '%') : '–'}</div><div class="usd">${nw(sizeUsd ? usd(markUsd) : `${n(mark, 3)} SOL`)} of ${nw(sizeUsd ? usd(sizeUsd) : `${n(size, 2)} SOL`)}</div></div></div>
+    ${cxSpark(lead.spark, lead.venue === 'curve' ? lead.entryMcapSol : lead.entryMcapUsd, markPct)}
+    <div class="cx-ladder">${ladder}</div>
+    ${cxProgress(lead, moment)}
+    ${cxStats({ ...lead, heldSec: held, peakPct: Math.max(...ps.map((p) => p.peakPct ?? -Infinity)) > -Infinity ? Math.max(...ps.map((p) => p.peakPct ?? -Infinity)) : null, markPct }, moment)}
+    <div class="cx-rule"><span>${ps.length === 1 ? `${lead.tp1Done ? '<span class="pulse">profit banked · </span>' : ''}${esc(lead.rule?.text || '')}` : `first entry ${cxClock(lead.entryTs)} · ${ps.length} books hold this coin`}</span><span>${lead.lastTradeAgoSec != null ? `last trade ${age(lead.lastTradeAgoSec)} ago` : ''}</span></div>
     ${outcome}</article>`;
 }
 function cxBooks(d) {
   const counts = d.books || {}, meta = CX.data?.bookMeta || {};
   const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-  $('#cxBooks').innerHTML = keys.length ? [`<button type="button" aria-pressed="${CX.filter == null}" data-b=""><i style="--bc:var(--accent)"></i>All <b>${d.positions.length}</b></button>`,
-    ...keys.map((b) => `<button type="button" aria-pressed="${CX.filter === b}" data-b="${esc(b)}" style="--bc:${cxBookColor(b)}"><i></i>${esc(meta[b]?.label || b)} <b>${counts[b]}</b></button>`)].join('') : '';
+  $('#cxBooks').innerHTML = keys.length ? `<div class="cx-chips">${[`<button type="button" aria-pressed="${CX.filter == null}" data-b=""><i style="--bc:var(--accent)"></i>All <b>${d.positions.length}</b></button>`,
+    ...keys.map((b) => `<button type="button" aria-pressed="${CX.filter === b}" data-b="${esc(b)}" style="--bc:${cxBookColor(b)}"><i></i>${esc(meta[b]?.label || b)} <b>${counts[b]}</b></button>`)].join('')}</div>
+    <div class="cx-seg" role="group" aria-label="Group cards"><button type="button" data-g="coin" aria-pressed="${CX.group === 'coin'}">by coin</button><button type="button" data-g="book" aria-pressed="${CX.group === 'book'}">by book</button></div>` : '';
 }
 function cxGrid(d, moment) {
   const rows = d.positions.filter((p) => !CX.filter || p.book === CX.filter);
@@ -1914,7 +1966,11 @@ function cxGrid(d, moment) {
     $('#cxGrid').innerHTML = `<div class="cx-empty"><strong>${moment ? `Flat at ${cxClock(d.ts)}` : CX.filter ? `No ${esc(CX.data?.bookMeta?.[CX.filter]?.label || CX.filter)} position open` : 'Flat'}</strong>${moment ? 'No paper position was open at that moment.' : `Watching ${n(d.watching?.curves ?? CX.data?.watching?.curves, 0)} live curves and ${n(d.watching?.graduates ?? CX.data?.watching?.graduates, 0)} graduates for the next signal.`}${L ? `<div class="cx-last">last exit · ${esc(L.symbol)} · <span class="${cls(L.pnlPct)}">${signed(L.pnlPct, 1, '%')}</span> · ${esc(L.reason || '')} · ${ago(L.t)} ago</div>` : ''}</div>`;
     return;
   }
-  $('#cxGrid').innerHTML = rows.map((p) => cxCard(p, { moment })).join('');
+  if (CX.group === 'book') { $('#cxGrid').innerHTML = rows.map((p) => cxCard(p, { moment })).join(''); return; }
+  const groups = new Map();
+  for (const p of rows) { const k = `${p.venue}:${p.mint}`; if (!groups.has(k)) groups.set(k, { key: k, positions: [] }); groups.get(k).positions.push(p); }
+  const list = [...groups.values()].sort((a, b) => Math.max(...b.positions.map((p) => p.entryTs)) - Math.max(...a.positions.map((p) => p.entryTs)));
+  $('#cxGrid').innerHTML = list.map((g) => cxCoinCard(g, { moment })).join('');
 }
 function cxHero(d, moment) {
   const st = $('.cx-state'); st.classList.remove('in', 'flat', 'moment');
@@ -1927,17 +1983,38 @@ function cxHero(d, moment) {
 function cxKpis(d) {
   const s = d.series, day = d.day, ex = d.exposure || {};
   const k = [['Open positions', n(d.positions.length, 0), `${d.coins} coin${d.coins === 1 ? '' : 's'} · ${Object.keys(d.books || {}).length} book${Object.keys(d.books || {}).length === 1 ? '' : 's'}`, 'codex_market'],
-    ['At risk now', ex.exposureUsd != null ? usd(ex.exposureUsd) : `${n(ex.exposureSol, 2)} SOL`, ex.sizeUsd != null ? `${usd(ex.sizeUsd)} deployed · marked ${ex.pnlPct != null ? signed(ex.pnlPct, 1, '%') : '–'}` : 'nothing deployed', 'codex_market'],
+    ['At risk now', ex.exposureUsd != null ? usd(ex.exposureUsd) : `${n(ex.exposureSol, 2)} SOL`, ex.sizeUsd != null ? `${nw(usd(ex.sizeUsd))} deployed · marked ${nw(ex.pnlPct != null ? signed(ex.pnlPct, 1, '%') : '–')}` : 'nothing deployed', 'codex_market'],
     ['Time in market 24h', s ? pct(s.timeInMarketPct, 0) : '–', s ? `peak ${Math.max(0, ...s.counts)} concurrent` : '', 'codex_market'],
-    ['Today', day ? `${n(day.trades, 0)} closed` : '–', day && day.trades ? `${pct(day.winRatePct, 0)} above zero · ${day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`}` : 'nothing closed yet', 'codex_day']];
-  $('#cxKpis').innerHTML = k.map(([l, v, sub, key]) => `<div class="kpi" data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0" aria-label="${esc(l)}: open detail"><div class="label">${esc(l)}</div><div class="value">${v}</div><div class="sub">${esc(sub)}</div></div>`).join('');
+    ['Today', day ? `${n(day.trades, 0)} closed` : '–', day && day.trades ? `${pct(day.winRatePct, 0)} above zero · ${nw(day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`)}` : 'nothing closed yet', 'codex_day']];
+  $('#cxKpis').innerHTML = k.map(([l, v, sub, key]) => `<div class="kpi" data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0" aria-label="${esc(l)}: open detail"><div class="label">${esc(l)}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join('');
 }
+// ---- scrubber ----
+const cxTsOf = (v) => { const s = CX.data?.series; const start = s ? s.start : Date.now() - CX_DAY; return start + (v / 1000) * CX_DAY; };
+const cxValOf = (ts) => { const s = CX.data?.series; const start = s ? s.start : Date.now() - CX_DAY; return Math.max(0, Math.min(1000, Math.round(((ts - start) / CX_DAY) * 1000))); };
 function cxStrip(d) {
   const s = d.series; if (!s) return;
   const max = Math.max(1, ...s.counts), cur = CX.moment ? Math.floor((CX.moment - s.start) / s.step) : -1;
-  $('#cxStrip').innerHTML = s.counts.map((c, i) => `<b class="${c ? '' : 'z'} ${i === cur ? 'cur' : ''}" style="height:${c ? Math.max(8, (c / max) * 100) : 4}%" title="${cxClock(s.start + i * s.step)} · ${c} open"></b>`).join('');
+  $('#cxStrip').innerHTML = s.counts.map((c, i) => { const pnl = s.pnl?.[i] || 0, tone = s.exits?.[i] ? (pnl > 0 ? 'w' : pnl < 0 ? 'l' : 'e') : ''; return `<b class="${c ? '' : 'z'} ${tone} ${i === cur ? 'cur' : ''}" style="height:${c ? Math.max(10, (c / max) * 100) : 4}%" title="${cxClock(s.start + i * s.step)} · ${c} open${s.exits?.[i] ? ` · ${s.exits[i]} exit${s.exits[i] === 1 ? '' : 's'} ${sUsd(pnl, { sign: true })}` : ''}"></b>`; }).join('')
+    + `<div class="cx-cursor" id="cxCursor" ${CX.moment ? '' : 'hidden'} style="left:${((CX.moment || Date.now()) - s.start) / CX_DAY * 100}%"></div>`;
   const lab = (f) => cxClock(s.start + f * CX_DAY);
   $('#cxAx0').textContent = lab(0); $('#cxAx1').textContent = lab(0.25); $('#cxAx2').textContent = lab(0.5); $('#cxAx3').textContent = lab(0.75);
+  cxReadout();
+}
+function cxReadout(dragTs = null) {
+  const el = $('#cxReadout'), ts = dragTs ?? CX.moment; const s = CX.data?.series;
+  if (ts == null || !s) { el.hidden = true; return; }
+  const i = Math.max(0, Math.min(s.counts.length - 1, Math.floor((ts - s.start) / s.step))), c = s.counts[i];
+  const f = (ts - s.start) / CX_DAY;
+  el.hidden = false; el.classList.toggle('pin-r', f > 0.82); el.classList.toggle('pin-l', f < 0.18); el.style.left = f > 0.82 || f < 0.18 ? '' : `${f * 100}%`; el.innerHTML = `<b>${cxClock(ts)}</b> · ${c} open${s.exits?.[i] ? ` · ${s.exits[i]} exit${s.exits[i] === 1 ? '' : 's'}` : ''}`;
+  const cur = $('#cxCursor'); if (cur) { cur.hidden = false; cur.style.left = `${(ts - s.start) / CX_DAY * 100}%`; }
+}
+function cxStep(dir) {
+  const s = CX.data?.series; if (!s || !s.marks?.length) return;
+  const ref = CX.moment ?? Date.now(), eps = 20000; // entries across books land in bursts; one step moves to the previous or next burst
+  const next = dir > 0 ? s.marks.find((m) => m[0] > ref + eps) : [...s.marks].reverse().find((m) => m[0] < ref - eps);
+  if (!next) { if (dir > 0) cxLive(); return; }
+  const t = next[1] === 1 ? next[0] - 1000 : next[0] + 1000; // land just before an exit / just after an entry, so the position is on the board
+  $('#cxRange').value = cxValOf(t); cxGoto(t);
 }
 function cxTape(d) {
   const ev = d.tape || []; const keys = new Set(ev.map((e) => `${e.kind}:${e.id}:${e.t}`));
@@ -1945,7 +2022,7 @@ function cxTape(d) {
     const g = e.kind === 'entry' ? '▲' : e.kind === 'partial' ? '◆' : '▼';
     const right = e.kind === 'exit' ? `<span class="${cls(e.pnlPct)}">${signed(e.pnlPct, 1, '%')}</span> <small class="faint">${e.pnlUsd != null ? usd(e.pnlUsd, { sign: true }) : ''}</small>` : e.kind === 'partial' ? `<span class="up">+${n(e.pct, 0)}% banked</span>` : `<span class="faint">${e.sizeUsd != null ? usd(e.sizeUsd) : `${n(e.sizeSol, 2)} SOL`}</span>`;
     const what = e.kind === 'exit' ? esc(e.reason || 'exit') : e.kind === 'partial' ? 'partial take-profit' : 'entered';
-    return `<div class="cx-ev ${isNew ? 'new' : ''}" data-${e.venue === 'curve' ? 'mint' : 'gmint'}="${esc(e.mint)}" role="button" tabindex="0"><span class="t">${cxClock(e.t)}</span><span class="g ${e.kind} ${e.kind === 'exit' ? cls(e.pnlPct) : ''}">${g}</span><span class="w"><b>${esc(e.symbol || '?')}</b> <small>· ${esc(e.bookLabel)} · ${what}${e.kind === 'exit' && e.heldSec != null ? ` after ${age(e.heldSec)}` : ''}</small></span><span class="r">${right}</span></div>`; }).join('')
+    return `<div class="cx-ev ${isNew ? 'new' : ''}" data-${e.venue === 'curve' ? 'mint' : 'gmint'}="${esc(e.mint)}" data-t="${e.t}" role="button" tabindex="0" title="tap: token record · long-press or ⌥-tap: jump the scrubber to this moment"><span class="t">${cxClock(e.t)}</span><span class="g ${e.kind} ${e.kind === 'exit' ? cls(e.pnlPct) : ''}">${g}</span><span class="w"><b>${esc(e.symbol || '?')}</b> <small>· ${esc(e.bookLabel)} · ${what}${e.kind === 'exit' && e.heldSec != null ? ` after ${age(e.heldSec)}` : ''}</small></span><span class="r">${right}</span></div>`; }).join('')
     : '<div class="empty"><strong>Quiet</strong>No paper entries or exits in the last 24 hours.</div>';
   CX.tapeKeys = keys;
   $('#cxTapeHint').textContent = ev.length ? `${ev.filter((e) => e.kind === 'entry').length} entries · ${ev.filter((e) => e.kind === 'exit').length} exits in 24 h · tap for the token, header for the full tape` : 'entries, partials and exits as they happen';
@@ -1953,7 +2030,7 @@ function cxTape(d) {
 function cxDay(d) {
   const day = d.day; if (!day) return;
   $('#cxDayHint').textContent = `${day.day} · all books · since local midnight`;
-  $('#cxDay').innerHTML = [['Closed', n(day.trades, 0), day.trades ? `${day.wins} above zero` : 'nothing yet'], ['P&L', day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`, day.meanPct != null ? `mean ${signed(day.meanPct, 1, '%')} per trade` : ''],
+  $('#cxDay').innerHTML = [['Closed', n(day.trades, 0), day.trades ? `${day.wins} above zero` : 'nothing yet'], ['P&L', nw(day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`), day.meanPct != null ? `mean ${signed(day.meanPct, 1, '%')} per trade` : ''],
     ['Best', day.best ? signed(day.best.pnlPct, 0, '%') : '–', day.best ? `${day.best.symbol} · ${CX.data?.bookMeta?.[day.best.book]?.label || day.best.book}` : ''], ['Worst', day.worst ? signed(day.worst.pnlPct, 0, '%') : '–', day.worst ? `${day.worst.symbol} · ${CX.data?.bookMeta?.[day.worst.book]?.label || day.worst.book}` : '']]
     .map(([l, v, s]) => `<div><div class="l">${l}</div><div class="v ${l === 'P&L' ? cls(day.pnlSol) : l === 'Best' ? 'up' : l === 'Worst' ? cls(day.worst?.pnlPct) : ''}">${v}</div><div class="s">${esc(s)}</div></div>`).join('');
 }
@@ -1964,29 +2041,42 @@ function renderCodex() {
   cxHero(view, !!moment); cxKpis(d); $('#cxKpis').classList.toggle('dim', !!moment); cxStrip(d); cxBooks(view); cxGrid(view, !!moment); cxTape(d); cxDay(d);
   $('#cxLiveBadge').className = `cx-live-badge ${moment ? 'off' : ''}`; $('#cxLiveBadge').innerHTML = moment ? `<i></i>${cxClock(view.ts)}` : '<i></i>LIVE';
   $('#cxMomentLabel').textContent = moment ? `${new Date(view.ts).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · marks rebuilt from the tape` : 'any moment in the last 24 hours';
-  $('#cxBackLive').hidden = !moment; $('#cxMomentHint').textContent = moment ? 'release at the right edge or tap back to live' : 'drag to travel';
+  $('#cxBackLive').hidden = !moment; $('#cxMomentHint').textContent = moment ? 'step between trades or drag; release at the right edge for live' : 'drag the strip, or step between trades';
+  $('#cxMoment').classList.toggle('moment', !!moment);
   CX.booted = true;
 }
 async function loadCodex() {
-  try { CX.data = await get('/api/codex'); if (CX.moment == null) renderCodex(); else { cxKpis(CX.data); cxStrip(CX.data); cxTape(CX.data); cxDay(CX.data); } } catch (e) { console.warn(e); }
+  try { CX.data = await get('/api/codex'); CX.fullAt = Date.now(); if (CX.moment == null) renderCodex(); else { cxKpis(CX.data); cxStrip(CX.data); cxTape(CX.data); cxDay(CX.data); } } catch (e) { console.warn(e); }
 }
 let cxMomentT = null;
 async function cxGoto(ts) {
-  CX.moment = ts;
+  CX.moment = ts; cxReadout(ts);
   clearTimeout(cxMomentT);
   cxMomentT = setTimeout(async () => { try { CX.momentData = await get(`/api/codex?at=${Math.floor(ts)}`); renderCodex(); } catch (e) { console.warn(e); } }, 120);
   $('#cxMomentLabel').textContent = `${cxClock(ts)} · loading that moment`;
 }
 function cxLive() { CX.moment = null; CX.momentData = null; $('#cxRange').value = 1000; renderCodex(); }
-$('#cxRange').addEventListener('input', (e) => { const v = Number(e.target.value); if (v >= 998) return cxLive(); const s = CX.data?.series; const now = Date.now(); cxGoto((s ? s.start : now - CX_DAY) + (v / 1000) * CX_DAY); });
+$('#cxRange').addEventListener('input', (e) => { const v = Number(e.target.value); if (v >= 998) return cxLive(); cxGoto(cxTsOf(v)); });
 $('#cxBackLive').onclick = cxLive;
-$('#cxBooks').addEventListener('click', (e) => { const b = e.target.closest('button[data-b]'); if (!b) return; CX.filter = b.dataset.b || null; renderCodex(); });
-$('#cxGrid').addEventListener('click', (e) => { const c = e.target.closest('.cx-card'); if (!c || e.target.closest('a')) return; c.dataset.cxVenue === 'curve' ? openDrawer(c.dataset.cxMint) : openGradDrawer(c.dataset.cxMint); });
+$('#cxPrev').onclick = () => cxStep(-1); $('#cxNext').onclick = () => cxStep(1);
+$('#cxBooks').addEventListener('click', (e) => { const g = e.target.closest('button[data-g]'); if (g) { CX.group = g.dataset.g; localStorage.setItem('cx.group', CX.group); CX.marks.clear(); renderCodex(); return; } const b = e.target.closest('button[data-b]'); if (!b) return; CX.filter = b.dataset.b || null; renderCodex(); });
+$('#cxGrid').addEventListener('click', (e) => { const lad = e.target.closest('.cx-lad'); if (lad && CX.group === 'coin') { e.stopPropagation(); CX.filter = CX.filter === lad.dataset.b ? null : lad.dataset.b; renderCodex(); return; } const c = e.target.closest('.cx-card'); if (!c || e.target.closest('a')) return; c.dataset.cxVenue === 'curve' ? openDrawer(c.dataset.cxMint) : openGradDrawer(c.dataset.cxMint); });
 $('#cxGrid').addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !== ' ') return; const c = e.target.closest('.cx-card'); if (!c) return; e.preventDefault(); c.click(); });
-$('#cxTape').addEventListener('click', (e) => { const r = e.target.closest('.cx-ev'); if (!r) return; e.stopPropagation(); r.dataset.mint ? openDrawer(r.dataset.mint) : openGradDrawer(r.dataset.gmint); });
-$('#cxStrip').addEventListener('click', (e) => { const b = e.target.closest('b'); if (!b) return; const i = [...b.parentElement.children].indexOf(b); const s = CX.data?.series; if (!s) return; const ts = s.start + (i + 0.5) * s.step; $('#cxRange').value = Math.round(((ts - s.start) / CX_DAY) * 1000); cxGoto(ts); });
+$('#cxTape').addEventListener('click', (e) => { const r = e.target.closest('.cx-ev'); if (!r) return; e.stopPropagation(); if (e.altKey && r.dataset.t) { const t = Number(r.dataset.t) + 1000; $('#cxRange').value = cxValOf(t); cxGoto(t); window.scrollTo({ top: 0, behavior: 'smooth' }); return; } r.dataset.mint ? openDrawer(r.dataset.mint) : openGradDrawer(r.dataset.gmint); });
+let cxPressT = null;
+$('#cxTape').addEventListener('pointerdown', (e) => { const r = e.target.closest('.cx-ev'); if (!r || !r.dataset.t) return; cxPressT = setTimeout(() => { cxPressT = null; const t = Number(r.dataset.t) + 1000; $('#cxRange').value = cxValOf(t); cxGoto(t); window.scrollTo({ top: 0, behavior: 'smooth' }); }, 550); });
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('#cxTape').addEventListener(ev, () => { clearTimeout(cxPressT); cxPressT = null; });
+// drag directly on the strip
+(() => { const strip = $('#cxStrip'); let down = false;
+  const at = (e) => { const r = strip.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); const v = Math.round(f * 1000); $('#cxRange').value = v; if (v >= 998) cxLive(); else cxGoto(cxTsOf(v)); };
+  strip.addEventListener('pointerdown', (e) => { down = true; strip.setPointerCapture(e.pointerId); at(e); });
+  strip.addEventListener('pointermove', (e) => { if (down) at(e); else if (CX.data?.series && e.pointerType === 'mouse') cxReadout(cxTsOf(Math.max(0, Math.min(1000, Math.round(((e.clientX - strip.getBoundingClientRect().left) / strip.getBoundingClientRect().width) * 1000))))); });
+  for (const ev of ['pointerup', 'pointercancel']) strip.addEventListener(ev, () => { down = false; cxReadout(); });
+  strip.addEventListener('pointerleave', () => { if (!down) cxReadout(); });
+})();
+document.addEventListener('keydown', (e) => { if (S.tab !== 'codex' || e.target.closest('input, textarea, [contenteditable]')) return; if (e.key === '[') cxStep(-1); else if (e.key === ']') cxStep(1); else if (e.key.toLowerCase() === 'l' && CX.moment != null) cxLive(); });
 document.querySelector('.tabs [data-tab=codex]')?.addEventListener('click', () => { loadCodex(); });
-setInterval(() => { if (S.tab === 'codex' && !document.hidden && CX.moment == null && Date.now() - lastSse > 7000) loadCodex(); if (S.tab === 'codex' && !document.hidden && Date.now() - (CX.fullAt || 0) > 20000) { CX.fullAt = Date.now(); loadCodex(); } }, 3000);
+setInterval(() => { if (S.tab !== 'codex' || document.hidden) return; if (CX.moment == null && Date.now() - lastSse > 7000) loadCodex(); else if (Date.now() - CX.fullAt > 20000) loadCodex(); }, 3000);
 // live pulse from the stream: positions and totals only; the full payload (tape, day, series) refreshes every 20 s
 function cxPulse(p) {
   if (!CX.data) { CX.data = { ...p, tape: [], series: null, day: null, bookMeta: {} }; }

@@ -30,6 +30,17 @@ const SQL = {
   dayCurve: `SELECT book, pnl_pct, pnl_sol, size_sol, symbol, mint, exit_reason, entry_ts, exit_ts FROM paper_trades WHERE status = 'closed' AND COALESCE(gap,0) = 0 AND COALESCE(gated,0) = 0 AND exit_ts >= ?`,
   dayGrad: `SELECT COALESCE(book,'fixed') book, pnl_pct, pnl_sol, size_sol, symbol, mint, exit_reason, entry_ts, exit_ts FROM grad_paper WHERE status = 'closed' AND exit_ts >= ?`,
   tokenMeta: 'SELECT name, image, created_at FROM tokens WHERE mint = ?',
+  exits24: `SELECT exit_ts, pnl_sol FROM paper_trades WHERE status = 'closed' AND COALESCE(gap,0) = 0 AND exit_ts > ?
+    UNION ALL SELECT exit_ts, pnl_sol FROM grad_paper WHERE status = 'closed' AND exit_ts > ?`,
+  marks24: `SELECT entry_ts t, 'entry' kind FROM paper_trades WHERE status IN ('open','closed') AND COALESCE(gap,0) = 0 AND entry_ts > ?
+    UNION ALL SELECT exit_ts t, 'exit' kind FROM paper_trades WHERE status = 'closed' AND COALESCE(gap,0) = 0 AND exit_ts > ?
+    UNION ALL SELECT entry_ts t, 'entry' kind FROM grad_paper WHERE status IN ('open','closed') AND entry_ts > ?
+    UNION ALL SELECT exit_ts t, 'exit' kind FROM grad_paper WHERE status = 'closed' AND exit_ts > ? ORDER BY t`,
+  curveSpark: 'SELECT ts, vsol, vtok FROM trades WHERE mint = ? AND ts >= ? AND ts <= ? ORDER BY ts DESC LIMIT 600',
+  gradSpark: 'SELECT ts, mcap FROM grad_snapshots WHERE mint = ? AND ts >= ? AND ts <= ? ORDER BY ts',
+  curvePeakAt: 'SELECT vsol, vtok FROM trades WHERE mint = ? AND ts >= ? AND ts <= ? AND vtok > 0 ORDER BY vsol / vtok DESC LIMIT 1',
+  curveBuyersAt: 'SELECT COUNT(DISTINCT wallet) n FROM trades WHERE mint = ? AND ts <= ? AND is_buy = 1',
+  gradPeakAt: 'SELECT MAX(mcap) m FROM grad_snapshots WHERE mint = ? AND ts >= ? AND ts <= ?',
 };
 const Q = new Proxy({}, { get: (c, k) => (c[k] ||= db.prepare(SQL[k])) });
 
@@ -37,6 +48,25 @@ const GRAD_LABEL = { fixed: 'Grad fixed', trail: 'Grad trail' };
 const bookLabel = (book, venue) => (venue === 'curve' ? paper.STRATEGIES[book]?.label || book : GRAD_LABEL[book] || book);
 const usd = (sol) => (market.solUsd && sol != null ? sol * market.solUsd : null);
 const parseEvents = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };
+
+const sparkCache = new Map(); // key -> { t, v }
+/** Up to 40 [ts, mcap] points between `since` and `until` (curve: from the trade tape; graduate: from snapshots). */
+function spark(venue, mint, since, until, { live = false, lastPoint = null } = {}) {
+  const key = `${venue}:${mint}:${live ? 'live' : until}`, hit = sparkCache.get(key);
+  if (hit && Date.now() - hit.t < (live ? 8000 : 60000)) return hit.v;
+  let pts;
+  if (venue === 'curve') {
+    const rows = Q.curveSpark.all(mint, since, until).reverse();
+    const stride = Math.max(1, Math.ceil(rows.length / 40));
+    pts = rows.filter((_, i) => i % stride === 0 || i === rows.length - 1).map((r) => [r.ts, mcapOf(r.vsol, r.vtok)]);
+  } else {
+    pts = Q.gradSpark.all(mint, since, until).map((r) => [r.ts, r.mcap]).filter((x) => x[1] != null);
+  }
+  if (lastPoint && lastPoint[1] != null && (!pts.length || lastPoint[0] > pts[pts.length - 1][0])) pts.push(lastPoint);
+  if (sparkCache.size > 500) sparkCache.clear();
+  sparkCache.set(key, { t: Date.now(), v: pts });
+  return pts;
+}
 
 export function makeCodex({ engine, grads }) {
   const curveExitRule = (book) => { const S = paper.STRATEGIES[book]; if (!S) return null; return { stopPct: S.stopPct, tpMult: S.tpMult, tpFraction: S.tpFraction, trailPct: S.trailPct, maxHoldMin: S.maxHoldMin, text: S.entry }; };
@@ -56,7 +86,8 @@ export function makeCodex({ engine, grads }) {
         entryTs: p.entryTs, heldSec: (now - p.entryTs) / 1000, sizeSol: p.sizeSol, markSol: p.markSol, markPct: p.markPct, realizedSol: p.realized, remainingSol: value, tp1Done: p.tp1Done, peakPct: p.peakPct, troughPct: p.troughPct,
         entryMcapSol: p.entryMcap, mcapSol: p.mcap, mcapUsd: usd(p.mcap), entryMcapUsd: usd(p.entryMcap), sizeUsd: usd(p.sizeSol), markUsd: usd(p.markSol),
         progressPct: t ? t.progress * 100 : null, buyers: t ? t.buyers.size : null, holders: t ? t.holders.size : null, lastTradeAgoSec: t ? (now - t.lastTradeAt) / 1000 : null, score: t?.lastScore?.score ?? null,
-        rule: S, stopMult: S ? 1 - S.stopPct / 100 : null, tpMult: S ? (Number.isFinite(S.tpMult) ? S.tpMult : null) : null, gated: !!p.gated, live: !!t, approx: false });
+        rule: S, stopMult: S ? 1 - S.stopPct / 100 : null, tpMult: S ? (Number.isFinite(S.tpMult) ? S.tpMult : null) : null, gated: !!p.gated, live: !!t, approx: false,
+        spark: spark('curve', p.mint, p.entryTs, now, { live: true, lastPoint: t ? [now, p.mcap] : null }) });
     }
     for (const [, pos] of grads.open) {
       const st = grads.watch.get(pos.mint); const value = st ? grads.valueSol(pos, st) : 0; const total = pos.realized + value; const S = gradExitRule(pos.book);
@@ -65,7 +96,8 @@ export function makeCodex({ engine, grads }) {
         entryTs: pos.entryTs, heldSec: (now - pos.entryTs) / 1000, sizeSol: pos.sizeSol, markSol: total, markPct: (total / pos.sizeSol - 1) * 100, realizedSol: pos.realized, remainingSol: value, tp1Done: !!pos.tp1Done, peakPct: (pos.peak / pos.sizeSol - 1) * 100, troughPct: null,
         entryMcapUsd: pos.entryMcap, mcapUsd: st?.last?.mcap ?? null, liqUsd: st?.last?.liq ?? null, sizeUsd: usd(pos.sizeSol), markUsd: usd(total), priceUsd: st?.last?.price ?? null, entryPriceUsd: pos.entryPrice,
         holders: hc?.holders ?? null, lastTradeAgoSec: st?.last?.t ? (now - st.last.t) / 1000 : null, score: st?.score ?? null, c1h: st?.features?.c1h ?? null,
-        rule: S, stopMult: 1 - S.stopPct / 100, tpMult: S.tpMult, gated: false, live: !!st, approx: false });
+        rule: S, stopMult: 1 - S.stopPct / 100, tpMult: S.tpMult, gated: false, live: !!st, approx: false,
+        spark: spark('pumpswap', pos.mint, pos.entryTs, now, { live: true, lastPoint: st?.last?.mcap != null ? [now, st.last.mcap] : null }) });
     }
     out.sort((a, b) => b.entryTs - a.entryTs);
     return out;
@@ -82,8 +114,12 @@ export function makeCodex({ engine, grads }) {
       const frac = tp1 ? (1 - (paper.STRATEGIES[r.book]?.tpFraction ?? 0.5)) : 1, realized = tp1 ? tp1.sol : 0;
       const gross = mcap && r.entry_mcap ? mcap / r.entry_mcap : null;
       const markSol = gross != null ? realized + r.size_sol * frac * gross * (1 - config.paper.feePct / 100) : null;
+      const pk = Q.curvePeakAt.get(r.mint, r.entry_ts, ts), peakMcap = pk ? mcapOf(pk.vsol, pk.vtok) : null;
+      const peakPct = peakMcap && r.entry_mcap ? Math.max(0, (peakMcap / r.entry_mcap) * (1 - config.paper.feePct / 100) - 1) * 100 : null;
+      const buyers = Q.curveBuyersAt.get(r.mint, ts)?.n ?? null;
       out.push({ key: `curve:${r.book}:${r.mint}`, id: r.id, venue: 'curve', book: r.book, bookLabel: bookLabel(r.book, 'curve'), mint: r.mint, symbol: r.symbol, name: m.name, image: m.image, entryTs: r.entry_ts, heldSec: (ts - r.entry_ts) / 1000,
         sizeSol: r.size_sol, markSol, markPct: markSol != null ? (markSol / r.size_sol - 1) * 100 : null, realizedSol: realized, tp1Done: !!tp1, entryMcapSol: r.entry_mcap, mcapSol: mcap, mcapUsd: usd(mcap), entryMcapUsd: usd(r.entry_mcap), sizeUsd: usd(r.size_sol), markUsd: usd(markSol),
+        peakPct, troughPct: null, buyers, holders: null, spark: spark('curve', r.mint, r.entry_ts, ts),
         rule: S, stopMult: S ? 1 - S.stopPct / 100 : null, tpMult: S && Number.isFinite(S.tpMult) ? S.tpMult : null, gated: !!r.gated, live: false, approx: true, outcome: r.exit_ts ? { exitTs: r.exit_ts, reason: r.exit_reason, pnlPct: r.pnl_pct } : null });
     }
     for (const r of Q.gradOpenAt.all(ts, ts)) {
@@ -92,8 +128,11 @@ export function makeCodex({ engine, grads }) {
       const ev = parseEvents(r.events).filter((e) => e.t <= ts), tp1 = ev.find((e) => e.type === 'tp1');
       const frac = tp1 ? 1 - (GP.tp1Fraction ?? 0.5) : 1, realized = tp1 ? tp1.sol || 0 : 0;
       const markSol = gross != null ? realized + r.size_sol * frac * gross * (1 - (GP.feePct || 1) / 100) : null;
+      const pkm = Q.gradPeakAt.get(r.mint, r.entry_ts, ts)?.m ?? null;
+      const peakPct = pkm && r.entry_mcap ? Math.max(0, (pkm / r.entry_mcap) * (1 - (GP.feePct || 1) / 100) - 1) * 100 : null;
       out.push({ key: `grad:${r.book}:${r.mint}`, id: r.id, venue: 'pumpswap', book: r.book, bookLabel: bookLabel(r.book, 'grad'), mint: r.mint, symbol: r.symbol, name: m.name, image: m.image, entryTs: r.entry_ts, heldSec: (ts - r.entry_ts) / 1000,
         sizeSol: r.size_sol, markSol, markPct: markSol != null ? (markSol / r.size_sol - 1) * 100 : null, realizedSol: realized, tp1Done: !!tp1, entryMcapUsd: r.entry_mcap, mcapUsd: snap?.mcap ?? null, sizeUsd: usd(r.size_sol), markUsd: usd(markSol),
+        peakPct, troughPct: null, holders: null, spark: spark('pumpswap', r.mint, r.entry_ts, ts),
         rule: S, stopMult: 1 - S.stopPct / 100, tpMult: S.tpMult, gated: false, live: false, approx: true, outcome: r.exit_ts ? { exitTs: r.exit_ts, reason: r.exit_reason, pnlPct: r.pnl_pct } : null });
     }
     out.sort((a, b) => b.entryTs - a.entryTs);
@@ -126,7 +165,10 @@ export function makeCodex({ engine, grads }) {
     segs.sort((x, y) => x[0] - y[0]); let cur = null;
     for (const [a, b] of segs) { if (!cur || a > cur[1]) { if (cur) covered += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b); }
     if (cur) covered += cur[1] - cur[0];
-    return { start, step, counts, timeInMarketPct: (covered / DAY) * 100 };
+    const pnl = new Array(n).fill(0), exits = new Array(n).fill(0);
+    for (const r of Q.exits24.all(start, start)) { const i = Math.floor((r.exit_ts - start) / step); if (i >= 0 && i < n) { pnl[i] += r.pnl_sol || 0; exits[i]++; } }
+    const marks = Q.marks24.all(start, start, start, start).map((r) => [r.t, r.kind === 'exit' ? 1 : 0]);
+    return { start, step, counts, pnl, exits, marks, timeInMarketPct: (covered / DAY) * 100 };
   }
 
   /** Closed trades since local midnight (dashboard timezone), all books. */

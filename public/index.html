@@ -121,9 +121,9 @@
     <div class="cx-moment card" id="cxMoment">
       <div class="cx-moment-head">
         <div class="cx-moment-title"><span class="cx-live-badge" id="cxLiveBadge"><i></i>LIVE</span><span id="cxMomentLabel">any moment in the last 24 hours</span></div>
-        <div class="cx-moment-ctl"><button type="button" class="cx-btn" id="cxBackLive" hidden>Back to live</button><span class="hint" id="cxMomentHint">drag to travel</span></div>
+        <div class="cx-moment-ctl"><span class="hint" id="cxMomentHint">drag the strip, or step between trades</span><button type="button" class="cx-btn icon" id="cxPrev" aria-label="Previous trade event" title="Previous entry or exit  [">‹</button><button type="button" class="cx-btn icon" id="cxNext" aria-label="Next trade event" title="Next entry or exit  ]">›</button><button type="button" class="cx-btn" id="cxBackLive" hidden>Back to live</button></div>
       </div>
-      <div class="cx-strip" id="cxStrip" role="img" aria-label="Open positions over the last 24 hours"></div>
+      <div class="cx-stripwrap"><div class="cx-readout" id="cxReadout" hidden></div><div class="cx-strip" id="cxStrip" role="img" aria-label="Open positions over the last 24 hours; bars are tinted by the realised result of exits in that five-minute window"></div></div>
       <input type="range" id="cxRange" class="cx-range" min="0" max="1000" value="1000" step="1" aria-label="Moment in the last 24 hours">
       <div class="cx-axis"><span id="cxAx0"></span><span id="cxAx1"></span><span id="cxAx2"></span><span id="cxAx3"></span><span>now</span></div>
     </div>
