@@ -109,10 +109,11 @@ export function postgrad({ days = 14, lines = 300 } = {}) {
 
 // ---------- features: what separates graduates ----------
 export const NUMERIC = ['mcapSol', 'progressPct', 'netSol', 'netSolPerMin', 'flow60Sol', 'uniqueBuyers', 'buyers60', 'buyersPerMin', 'buySellRatio', 'medianBuySol', 'tinyBuyShare', 'top10Pct', 'bundlePct',
-  'creatorHoldPct', 'creatorSoldPct', 'holders', 'repeatTradeShare', 'smartBuyers', 'drawdownPct', 'secSinceTrade', 'initialBuySol', 'creatorLaunches', 'creatorGraduations', 'creatorRugs', 'buyVolSol', 'sellVolSol', 'buys', 'sells'];
+  'creatorHoldPct', 'creatorSoldPct', 'holders', 'hordeGain30', 'hordeGain60', 'hordeGain120', 'hordeRate60', 'solPerHolder', 'repeatTradeShare', 'smartBuyers', 'drawdownPct', 'secSinceTrade', 'initialBuySol', 'creatorLaunches', 'creatorGraduations', 'creatorRugs', 'buyVolSol', 'sellVolSol', 'buys', 'sells'];
 export const LABELS = { mcapSol: 'market cap (SOL)', progressPct: 'curve progress %', netSol: 'net SOL in', netSolPerMin: 'net SOL / min', flow60Sol: '60 s net inflow (SOL)', uniqueBuyers: 'unique buyers', buyers60: 'buyers, last 60 s', buyersPerMin: 'buyers / min',
   buySellRatio: 'buy : sell ratio', medianBuySol: 'median buy (SOL)', tinyBuyShare: 'tiny-buy share', top10Pct: 'top-10 holders %', bundlePct: 'bundle %', creatorHoldPct: 'creator hold %', creatorSoldPct: 'creator sold %', holders: 'holders', repeatTradeShare: 'repeat-trade share',
   smartBuyers: 'smart-wallet buyers', drawdownPct: 'drawdown from peak %', secSinceTrade: 'seconds since last trade', initialBuySol: 'creator initial buy (SOL)', creatorLaunches: 'creator launches', creatorGraduations: 'creator graduations', creatorRugs: 'creator rugs', buyVolSol: 'buy volume (SOL)', sellVolSol: 'sell volume (SOL)', buys: 'buys', sells: 'sells',
+  hordeGain30: 'horde: holders gained since 30 s', hordeGain60: 'horde: holders gained since 60 s', hordeGain120: 'horde: holders gained since 2 min', hordeRate60: 'horde: new holders per minute since 60 s', solPerHolder: 'SOL of market cap per holder',
   score: 'score', tGrad: 'time to graduation (min)' };
 
 function featRows(cp, days) {
@@ -120,7 +121,18 @@ function featRows(cp, days) {
     const since = Date.now() - days * DAY;
     const rows = db.prepare(`SELECT s.mint, s.mcap, s.max_mcap_after mx, s.graduated_after g, s.score, s.features f, t.created_at ca, t.symbol FROM snapshots s JOIN tokens t ON t.mint = s.mint
       WHERE s.checkpoint = ? AND s.features IS NOT NULL AND s.max_mcap_after IS NOT NULL AND t.finalized = 1 AND COALESCE(t.gap, 0) = 0 AND t.created_at > ? AND s.mint NOT IN (${NONSOL})`).all(cp, since);
-    return rows.map((x) => { let f = {}; try { f = JSON.parse(x.f) || {}; } catch { /* skip */ } return { mint: x.mint, symbol: x.symbol, ca: x.ca, g: x.g ? 1 : 0, x2: x.mcap > 0 && x.mx >= 2 * x.mcap ? 1 : 0, x3: x.mcap > 0 && x.mx >= 3 * x.mcap ? 1 : 0, mult: x.mcap > 0 ? x.mx / x.mcap : null, f: { ...f, score: x.score } }; });
+    // Horde features: holder counts at earlier checkpoints (from the same trade tape) so growth, not level, can be tested.
+    const earlier = CPS.filter((c) => c < cp);
+    const hmap = new Map();
+    if (earlier.length) for (const h of db.prepare(`SELECT mint, checkpoint cp, json_extract(features, '$.holders') h FROM snapshots WHERE checkpoint IN (${earlier.join(',')}) AND features IS NOT NULL AND ts > ?`).all(since)) { let m = hmap.get(h.mint); if (!m) { m = {}; hmap.set(h.mint, m); } m[h.cp] = h.h; }
+    return rows.map((x) => { let f = {}; try { f = JSON.parse(x.f) || {}; } catch { /* skip */ }
+      const hs = hmap.get(x.mint) || {}, h0 = hs[30], h60 = hs[60], h120 = hs[120], hNow = Number(f.holders);
+      const horde = {};
+      if (cp >= 120 && Number.isFinite(h60) && Number.isFinite(hNow)) { horde.hordeGain60 = hNow - h60; horde.hordeRate60 = (hNow - h60) / ((cp - 60) / 60); }
+      if (cp >= 300 && Number.isFinite(h120) && Number.isFinite(hNow)) horde.hordeGain120 = hNow - h120;
+      if (cp >= 60 && Number.isFinite(h0) && Number.isFinite(hNow)) horde.hordeGain30 = hNow - h0;
+      if (Number.isFinite(hNow) && hNow > 0 && Number.isFinite(Number(f.mcapSol))) horde.solPerHolder = Number(f.mcapSol) / hNow;
+      return { mint: x.mint, symbol: x.symbol, ca: x.ca, g: x.g ? 1 : 0, x2: x.mcap > 0 && x.mx >= 2 * x.mcap ? 1 : 0, x3: x.mcap > 0 && x.mx >= 3 * x.mcap ? 1 : 0, mult: x.mcap > 0 ? x.mx / x.mcap : null, f: { ...f, ...horde, score: x.score } }; });
   });
 }
 const outcomeOf = (row, o) => (o === 'x2' ? row.x2 : o === 'x3' ? row.x3 : row.g);
