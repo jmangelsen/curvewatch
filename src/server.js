@@ -1,6 +1,7 @@
 // HTTP API + Server-Sent Events + static dashboard.
 import express from 'express';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { tapeMarks } from './drill.js';
@@ -164,7 +165,13 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); while (grads.paperEvents.length) push('gradPaper', grads.paperEvents.shift()); }, 1000);
   setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
 
-  app.use(express.static(path.join(here, '..', 'public'), { maxAge: '5m' }));
+  // index.html is never cached and references versioned asset URLs, so phones pick up a new build on the next open
+  // instead of running a stale app.js against a new API (the static files themselves stay cacheable).
+  const pub = path.join(here, '..', 'public');
+  const assetV = (() => { try { return Math.floor(Math.max(...['app.js', 'styles.css', 'index.html'].map((f) => fs.statSync(path.join(pub, f)).mtimeMs)) / 1000).toString(36); } catch { return String(Date.now()).slice(-6); } })();
+  const indexHtml = () => fs.readFileSync(path.join(pub, 'index.html'), 'utf8').replace('href="styles.css"', `href="styles.css?v=${assetV}"`).replace('src="app.js"', `src="app.js?v=${assetV}"`);
+  app.get(['/', '/index.html'], (req, res) => { res.set('Cache-Control', 'no-cache'); res.type('html').send(indexHtml()); });
+  app.use(express.static(pub, { maxAge: '1d' }));
   app.listen(config.port, '0.0.0.0', () => log.info(`dashboard on http://0.0.0.0:${config.port}`));
   return app;
 }

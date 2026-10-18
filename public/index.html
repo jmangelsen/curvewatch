@@ -24,10 +24,10 @@
     <div class="brand-text"><span class="brand-name">Curvewatch</span><span class="brand-sub">Pump.fun runner screener</span></div>
   </div>
   <nav class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="live" data-short="Live">Live</button>
-    <button role="tab" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
-    <button role="tab" aria-selected="false" data-tab="studio" data-short="Studio">Studio</button>
-    <button role="tab" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
+    <button role="tab" class="pri" aria-selected="true" data-tab="live" data-short="Live">Live</button>
+    <button role="tab" class="pri" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
+    <button role="tab" class="pri" aria-selected="false" data-tab="studio" data-short="Studio">Studio</button>
+    <button role="tab" class="pri" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
     <button role="tab" aria-selected="false" data-tab="report" data-short="Report">Report</button>
@@ -35,6 +35,7 @@
     <button role="tab" aria-selected="false" data-tab="health" data-short="Health">Health<span class="hdot" id="hDot"></span></button>
     <button role="tab" aria-selected="false" data-tab="edge" data-short="Edge">Edge Lab</button>
     <button role="tab" aria-selected="false" data-tab="rejects" data-short="Rejects">Rejects</button>
+    <button type="button" class="more" id="navMore" aria-haspopup="dialog" aria-expanded="false" aria-controls="navSheet"><span class="more-ic" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="more-lb" id="navMoreLb">More</span><span class="hdot" id="hDotMore"></span></button>
   </nav>
   <div class="top-right">
     <div id="feeds" class="feeds" aria-live="polite"></div>
@@ -478,6 +479,27 @@
     <div id="drawerBody"></div>
   </div>
 </aside>
+<div class="navsheet" id="navSheet" hidden>
+  <div class="ns-scrim" data-ns-close></div>
+  <div class="ns-panel" role="dialog" aria-modal="true" aria-label="All screens">
+    <div class="ns-grip" aria-hidden="true"></div>
+    <div class="ns-head"><h2>All screens</h2><button type="button" class="ns-close" data-ns-close aria-label="Close">×</button></div>
+    <div class="ns-group"><h3>Trade</h3>
+      <button type="button" class="ns-item" data-go="live"><b>Live</b><span>launches on the curve, radar, alerts</span></button>
+      <button type="button" class="ns-item" data-go="codex"><b>Codex</b><span>is the bot in a trade, on what, and when</span></button>
+      <button type="button" class="ns-item" data-go="runners"><b>Runners</b><span>post-graduation picks and the 48 h scorecard</span></button>
+      <button type="button" class="ns-item" data-go="grads"><b>Graduates</b><span>pools after the curve, strong signals</span></button></div>
+    <div class="ns-group"><h3>Research</h3>
+      <button type="button" class="ns-item" data-go="studio"><b>Studio</b><span>curve cohorts, separators, rule tester</span></button>
+      <button type="button" class="ns-item" data-go="edge"><b>Edge Lab</b><span>pre-registered hypotheses and their pass map</span></button>
+      <button type="button" class="ns-item" data-go="perf"><b>Performance</b><span>paper books, terminal, benchmarks</span></button>
+      <button type="button" class="ns-item" data-go="report"><b>Report</b><span>the written economics, by day</span></button></div>
+    <div class="ns-group"><h3>Monitor</h3>
+      <button type="button" class="ns-item" data-go="health"><b>Health</b><span>feeds, gaps, fills, data quality</span></button>
+      <button type="button" class="ns-item" data-go="intel"><b>Intel</b><span>tracked wallets and creators</span></button>
+      <button type="button" class="ns-item" data-go="rejects"><b>Rejects</b><span>what the scorer threw away and why</span></button></div>
+  </div>
+</div>
 <div id="scrim" class="scrim"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="vendor/lightweight-charts.js"></script>

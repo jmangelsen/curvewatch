@@ -44,8 +44,29 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
   if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'codex') loadCodex(); if (S.tab === 'studio') loadStudio(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
-  scrollTo({ top: 0, behavior: 'instant' }); b.scrollIntoView?.({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  scrollTo({ top: 0, behavior: 'instant' }); navSync();
 });
+// ---------- mobile navigation sheet: four primary tabs in the bar, every other screen one pick away ----------
+const PRIMARY = new Set(['live', 'codex', 'studio', 'grads']);
+function navSync() {
+  const more = $('#navMore'), lb = $('#navMoreLb'); if (!more) return;
+  const sec = !PRIMARY.has(S.tab); more.classList.toggle('is-on', sec);
+  lb.textContent = sec ? ($(`.tabs [data-tab="${S.tab}"]`)?.dataset.short || 'More') : 'More';
+  document.querySelectorAll('#navSheet .ns-item').forEach((b) => b.classList.toggle('is-on', b.dataset.go === S.tab));
+}
+function navSheet(open) {
+  const sh = $('#navSheet'), more = $('#navMore'); if (!sh) return;
+  sh.hidden = !open; more.setAttribute('aria-expanded', String(open)); document.body.classList.toggle('ns-open', open);
+  if (open) { navSync(); sh.querySelector('.ns-item.is-on, .ns-item')?.focus({ preventScroll: true }); } else more.focus({ preventScroll: true });
+}
+$('#navMore')?.addEventListener('click', () => navSheet($('#navSheet').hidden));
+$('#navSheet')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-ns-close]')) return navSheet(false);
+  const it = e.target.closest('.ns-item'); if (!it) return;
+  navSheet(false); $(`.tabs [data-tab="${it.dataset.go}"]`)?.click();
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#navSheet').hidden) navSheet(false); });
+navSync();
 
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200); }
 
@@ -1202,7 +1223,7 @@ async function loadHealth() {
 async function pollHealthDot() {
   try { const d = HX.data && S.tab === 'health' ? HX.data : await get('/api/health'); if (S.tab !== 'health') HX.data = d; setHDot(d); } catch {}
 }
-function setHDot(d) { const el = $('#hDot'); if (!el || !d) return; el.className = 'hdot ' + (d.overall === 'HEALTHY' ? 'pass' : d.overall === 'WATCH' ? 'warn' : 'fail'); el.title = d.overall; }
+function setHDot(d) { if (!d) return; const cls = 'hdot ' + (d.overall === 'HEALTHY' ? 'pass' : d.overall === 'WATCH' ? 'warn' : 'fail'); for (const id of ['hDot', 'hDotMore']) { const el = $(`#${id}`); if (el) { el.className = cls; el.title = d.overall; } } }
 const fmtCheck = (c) => {
   const v = c.value; if (v == null) return '–';
   switch (c.id) {
