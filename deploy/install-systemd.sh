@@ -69,7 +69,8 @@ grep -E 'tests passed' /tmp/cw-test.log | awk '{s+=$1} END {print s" tests passe
 say "5/6 systemd unit"
 install -m 644 deploy/curvewatch.service /etc/systemd/system/curvewatch.service
 systemctl daemon-reload
-systemctl enable --now curvewatch >/dev/null
+systemctl enable curvewatch >/dev/null 2>&1
+systemctl restart curvewatch   # always restart so a redeploy actually loads the new code (a few seconds of downtime; the gap backfill covers it)
 for i in $(seq 1 30); do
   if curl -fsS localhost:8080/health >/dev/null 2>&1; then echo "healthy: $(curl -fsS localhost:8080/health | cut -c1-200)"; break; fi
   sleep 2; [ "$i" = 30 ] && { echo "Not healthy after 60 s. Last log lines:"; journalctl -u curvewatch -n 60 --no-pager; exit 1; }

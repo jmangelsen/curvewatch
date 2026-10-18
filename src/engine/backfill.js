@@ -20,7 +20,7 @@ const B = {
   httpUrls: (process.env.RPC_HTTP_URLS || process.env.RPC_HTTP_URL || 'https://solana-rpc.publicnode.com,https://api.mainnet-beta.solana.com').split(',').map((x) => x.trim()).filter(Boolean),
   paceMs: Number(process.env.BACKFILL_PACE_MS || 500),
   maxWindowMs: Number(process.env.BACKFILL_MAX_HOURS || 12) * 3600000, // the Runner window is 2–8 h since mint; older graduates add polling cost, not signal
-  minGapMs: Number(process.env.BACKFILL_MIN_GAP_SEC || 90) * 1000,
+  minGapMs: Number(process.env.BACKFILL_MIN_GAP_SEC || 30) * 1000, // a migration lands every ~50 s, so even a short restart can miss one
 };
 let urlIdx = 0;
 
