@@ -154,8 +154,10 @@ export const config = {
     minAgeH: num('RUNNER_MIN_AGE_H', 2), maxAgeH: num('RUNNER_MAX_AGE_H', 8), minMcapUsd: num('RUNNER_MIN_MCAP_USD', 100000), maxMcapUsd: num('RUNNER_MAX_MCAP_USD', 750000),
     minLiqUsd: num('RUNNER_MIN_LIQ_USD', 20000), targetMcapUsd: num('RUNNER_TARGET_MCAP_USD', 1500000) },
   // On-chain holder counts for graduates (Helius DAS getTokenAccounts). Off without a key; counts are then null, never zero.
-  holders: { apiKey: process.env.HELIUS_API_KEY || '', tickMs: num('HOLDERS_TICK_MS', 120000), perTick: num('HOLDERS_PER_TICK', 12), staleMin: num('HOLDERS_STALE_MIN', 20),
-    maxPages: num('HOLDERS_MAX_PAGES', 4), paceMs: num('HOLDERS_PACE_MS', 400), runnerMin: num('HOLDERS_RUNNER_MIN', 2500) },
+  // Budget: Helius free plan = 1M credits/month, every DAS call = 10 credits, 2 DAS requests/s. Defaults below spend at most
+  // 2,400 calls/day (24k credits, ~720k/month) and the daily cap stops the poller before the plan does.
+  holders: { apiKey: process.env.HELIUS_API_KEY || '', tickMs: num('HOLDERS_TICK_MS', 300000), perTick: num('HOLDERS_PER_TICK', 3), staleMin: num('HOLDERS_STALE_MIN', 30),
+    maxPages: num('HOLDERS_MAX_PAGES', 3), paceMs: num('HOLDERS_PACE_MS', 600), runnerMin: num('HOLDERS_RUNNER_MIN', 2500), dailyCalls: num('HOLDERS_DAILY_CALLS', 2400) },
   // 24-hour gate: the bar a book must clear on a rolling day before any money is discussed. Written before looking.
   gate24h: { hours: num('GATE24_HOURS', 24), minN: num('GATE24_MIN_N', 300), minMeanPct: num('GATE24_MIN_MEAN_PCT', 0), minLoPct: num('GATE24_MIN_LO_PCT', -3) },
   killRule: {

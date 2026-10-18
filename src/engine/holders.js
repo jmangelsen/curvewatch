@@ -26,10 +26,11 @@ const Q = {
 export const holdersEnabled = () => Boolean(H.apiKey);
 
 /** Count token accounts with a non-zero balance for a mint. Returns { holders, capped } or null on failure. */
-export async function countHolders(mint, { maxPages = H.maxPages } = {}) {
+export async function countHolders(mint, { maxPages = H.maxPages, onCall = null } = {}) {
   if (!holdersEnabled()) return null;
   let total = 0, page = 1, capped = 0;
   for (; page <= maxPages; page++) {
+    onCall?.();
     const r = await fetch(`https://mainnet.helius-rpc.com/?api-key=${H.apiKey}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(12000),
       body: JSON.stringify({ jsonrpc: '2.0', id: 'cw', method: 'getTokenAccounts', params: { mint, limit: 1000, page, options: { showZeroBalance: false } } }),
@@ -65,17 +66,24 @@ export function holderGrowth(mint, windowMin = 60) {
  */
 export class HolderPoller {
   constructor({ pick, grads }) { this.pick = pick; this.grads = grads; this.timer = null; this.busy = false; this.calls = 0; this.errors = 0; this.lastErr = null; }
-  start() { if (!holdersEnabled()) { log.info('off (no HELIUS_API_KEY): graduate holder counts stay unknown'); return; } this.timer = setInterval(() => this.tick(), H.tickMs); setTimeout(() => this.tick(), 15000); log.info(`on · up to ${H.perTick} mints per ${H.tickMs / 1000}s tick, refresh after ${H.staleMin} min`); }
+  start() { if (!holdersEnabled()) { log.info('off (no HELIUS_API_KEY): graduate holder counts stay unknown'); return; } this.timer = setInterval(() => this.tick(), H.tickMs); setTimeout(() => this.tick(), 15000); log.info(`on · up to ${H.perTick} mints per ${H.tickMs / 1000}s tick, refresh after ${H.staleMin} min, cap ${H.dailyCalls} calls/day`); }
   stop() { clearInterval(this.timer); }
+  /** Calls made today (UTC), persisted so a restart does not reset the budget. */
+  today() { const k = `holders_calls:${new Date().toISOString().slice(0, 10)}`; return { k, n: Number(db.prepare('SELECT v FROM kv WHERE k = ?').get(k)?.v || 0) }; }
+  bump(k, n) { db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run(k, String(n)); }
   async tick() {
     if (this.busy) return; this.busy = true;
     try {
       const now = Date.now();
+      const t = this.today(); let used = t.n;
+      if (used >= H.dailyCalls) { if (!this._cappedDay || this._cappedDay !== t.k) { log.warn(`daily call cap ${H.dailyCalls} reached; holder counts pause until 00:00 UTC`); this._cappedDay = t.k; } return; }
       const wanted = this.pick().filter((m) => { const c = Q.get.get(m); return !c || now - c.ts > H.staleMin * 60000; })
         .sort((a, b) => (Q.get.get(a)?.ts || 0) - (Q.get.get(b)?.ts || 0)).slice(0, H.perTick);
       for (const mint of wanted) {
         try {
-          const r = await countHolders(mint); this.calls++;
+          if (used >= H.dailyCalls) break;
+          const r = await countHolders(mint, { onCall: () => { used++; this.calls++; } });
+          this.bump(t.k, used);
           if (!r) continue;
           Q.put.run(mint, r.holders, r.capped, Date.now()); Q.histIns.run(mint, Date.now(), r.holders);
           const st = this.grads?.watch?.get(mint); if (st) { st.holders = r.holders; st.holdersCapped = Boolean(r.capped); st.holdersAt = Date.now(); }
@@ -85,5 +93,5 @@ export class HolderPoller {
       }
     } finally { this.busy = false; }
   }
-  status() { return { enabled: holdersEnabled(), calls: this.calls, errors: this.errors, lastErr: this.lastErr, counted: db.prepare('SELECT COUNT(*) n FROM holder_counts').get().n }; }
+  status() { const t = this.today(); return { enabled: holdersEnabled(), calls: this.calls, callsToday: t.n, dailyCap: H.dailyCalls, errors: this.errors, lastErr: this.lastErr, counted: db.prepare('SELECT COUNT(*) n FROM holder_counts').get().n }; }
 }
