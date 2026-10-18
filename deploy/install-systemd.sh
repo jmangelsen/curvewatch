@@ -60,7 +60,11 @@ chown curvewatch:curvewatch .env && chmod 640 .env
 
 say "4/6 Dependencies and tests"
 sudo -u curvewatch -H bash -c "cd '$APP' && npm ci --omit=dev --no-audit --no-fund 2>&1 | tail -2"
-sudo -u curvewatch -H bash -c "cd '$APP' && DATA_DIR=/tmp/cw-test-\$\$ npm test 2>&1 | grep -E 'tests passed|Error|FAIL' || true"
+if ! sudo -u curvewatch -H bash -c "cd '$APP' && DATA_DIR=/tmp/cw-test-\$\$ npm test > /tmp/cw-test.log 2>&1"; then
+  grep -E 'Error|FAIL|passed' /tmp/cw-test.log | tail -20
+  echo "Tests failed. The service was not restarted (it keeps running the previous code in memory); fix and re-run."; exit 1
+fi
+grep -E 'tests passed' /tmp/cw-test.log | awk '{s+=$1} END {print s" tests passed"}' 
 
 say "5/6 systemd unit"
 install -m 644 deploy/curvewatch.service /etc/systemd/system/curvewatch.service

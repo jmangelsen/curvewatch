@@ -26,8 +26,9 @@ let urlIdx = 0;
 
 export const backfillState = { running: false, queued: 0, runs: 0, lastRun: null, totals: { migrations: 0, added: 0, known: 0, failed: 0 } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const hasWatch = db.prepare('SELECT 1 FROM grad_watch WHERE mint = ? LIMIT 1');
-const tokenRow = db.prepare('SELECT graduated, symbol, name FROM tokens WHERE mint = ?');
+// prepared lazily: grad_watch is created by the graduates module, and import order must not matter on a fresh database
+const SQL = { hasWatch: 'SELECT 1 FROM grad_watch WHERE mint = ? LIMIT 1', tokenRow: 'SELECT graduated, symbol, name FROM tokens WHERE mint = ?' };
+const Q = new Proxy({}, { get: (c, k) => (c[k] ||= db.prepare(SQL[k])) });
 
 async function rpc(method, params, attempt = 0) {
   const url = B.httpUrls[urlIdx % B.httpUrls.length];
@@ -102,11 +103,11 @@ async function run(since, until, { grads, engine, reason, gapId }) {
         const tx = await rpc('getTransaction', [s.sig, { encoding: 'json', maxSupportedTransactionVersion: 255 }]);
         const mint = mintFromTx(tx);
         if (!mint) { res.failed++; continue; }
-        const tok = tokenRow.get(mint);
+        const tok = Q.tokenRow.get(mint);
         if (tok && !tok.graduated) q.markGraduated.run(s.ts, mint);
         const live = engine?.getToken?.(mint);
         if (live && !live.graduated) { live.graduated = true; live.graduatedAt = s.ts; }
-        if (hasWatch.get(mint) || grads.watch.has(mint)) { res.known++; continue; }
+        if (Q.hasWatch.get(mint) || grads.watch.has(mint)) { res.known++; continue; }
         grads.add(mint, 'backfill', { symbol: tok?.symbol, name: tok?.name, pairCreatedAt: s.ts, addedAt: s.ts });
         res.added++;
       } catch (e) { res.failed++; if (res.failed <= 3) log.warn(`tx ${s.sig.slice(0, 12)}: ${e.message}`); }
