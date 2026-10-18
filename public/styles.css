@@ -676,7 +676,7 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .tr-row:hover { background: var(--surface-2); }
 .tr-row .num { text-align: right; font-family: var(--font-mono); }
 .mono { font-family: var(--font-mono); }
-@media (max-width: 720px) { .tr-grid { grid-template-columns: minmax(0, 1fr); } .tr-h { flex-wrap: wrap; } .tr-tbl th:nth-child(4), .tr-tbl td:nth-child(4), .tr-tbl th:nth-child(5), .tr-tbl td:nth-child(5) { display: none; } .tr-tbl th, .tr-tbl td { padding-left: var(--space-1); padding-right: var(--space-1); } .tr-row { grid-template-columns: 3.4rem 2.4rem minmax(0, 1.5fr) minmax(0, 1fr) 3.8rem; gap: var(--space-1); padding-left: var(--space-2); padding-right: var(--space-2); font-size: 12px; } }
+@media (max-width: 720px) { .tr-grid { grid-template-columns: minmax(0, 1fr); } .tr-h { flex-wrap: wrap; } .tr-tbl th:nth-child(4), .tr-tbl td:nth-child(4), .tr-tbl th:nth-child(6), .tr-tbl td:nth-child(6) { display: none; } .tr-tbl th, .tr-tbl td { padding-left: var(--space-1); padding-right: var(--space-1); } .tr-row { grid-template-columns: 3.4rem 2.4rem minmax(0, 1.5fr) minmax(0, 1fr) 3.8rem; gap: var(--space-1); padding-left: var(--space-2); padding-right: var(--space-2); font-size: 12px; } }
 .tr-grid > div { min-width: 0; }
 @media (max-width: 800px) and (min-width: 721px) { .tabs button { padding: var(--space-1) var(--space-2); } .top { gap: var(--space-2); } }
 /* Rejects tab */

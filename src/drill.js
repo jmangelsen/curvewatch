@@ -12,6 +12,7 @@ import { benchmarks } from './benchmarks.js';
 import { trackerView, walletDetail } from './engine/smartTracker.js';
 import { rejectsView, rejectRows } from './engine/rejects.js';
 import { closedCurrent, killStatsFrom, STRATEGIES, gate24h } from './engine/paper.js';
+import { sequentialVerdict, confidenceSequence } from './engine/seqtest.js';
 
 const H = 3600000, D = 86400000;
 const solHist = []; // [t, usd] one per minute, 48 h, in memory
@@ -370,6 +371,25 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         { title: 'By exit hour', cols: [C('Hour (UTC)', 'hour'), C('Closed', 'n', 'num'), C('Mean', 'meanPct', 'spct'), C('P&L', 'pnlSol', 'susd')], rows: hrs.map((h) => ({ hour: new Date(h.t).toISOString().slice(5, 13).replace('T', ' ') + ':00', n: h.n, meanPct: h.meanPct, pnlSol: h.pnlSol })) },
       ] };
   };
+  // ---- Sequential test (hypothesis 2) ----
+  const seqDrill = (b) => {
+    const S = STRATEGIES[b]; if (!S) return null;
+    const rows = closedCurrent().filter((r) => (r.book || 'main') === b && !r.gated && r.pnl_pct != null).sort((a, c) => a.exit_ts - c.exit_ts);
+    const rets = rows.map((r) => r.pnl_pct / 100);
+    const v = sequentialVerdict(rets, { passMargin: 0.02, minTrades: 20 });
+    // path of the sequence: bounds after every 5th trade (cheap enough: grid 401 × n)
+    const pts = []; for (let n = 5; n <= rets.length; n += Math.max(1, Math.floor(rets.length / 60))) { const c = confidenceSequence(rets.slice(0, n)); pts.push({ n, lo: c.lo * 100, hi: c.hi * 100, mean: c.mean * 100 }); }
+    const ctl = b === 'follow' ? sequentialVerdict(closedCurrent().filter((r) => r.book === 'followctl' && !r.gated && r.pnl_pct != null).map((r) => r.pnl_pct / 100), { passMargin: 0.02, minTrades: 20 }) : null;
+    const line = { KILL: 'The anytime-valid upper bound is below zero: the book loses money at 95% confidence, and no amount of further trades changes the decision. The rule is dead as specified.',
+      PASS: 'The anytime-valid lower bound is above the +2% margin. This is the first evidence worth acting on; the next step is to leave the rule untouched and watch whether the bound holds, and to check the control stayed flat.',
+      CONTINUE: 'The sequence still contains zero. Unlike a fixed-n gate this can be read after every trade without inflating the error rate; the width below is how far the data is from a decision.' }[v.decision];
+    return { title: `Sequential test · ${S.label}`, explain: `${line} Method: hedged betting confidence sequence (Waudby-Smith & Ramdas) on after-cost returns clipped to [−100%, +300%], α = 0.05. Rule: ${S.entry}.`,
+      stats: [['Decision', v.decision, 'text'], ['Closed trades', v.n, 'num'], ['Mean / trade', v.mean == null ? null : v.mean * 100, 'spct'], ['CS lower', v.lo * 100, 'spct'], ['CS upper', v.hi * 100, 'spct'], ['Width', v.width * 100, 'pct']],
+      series: pts.length > 1 ? { label: 'Confidence sequence lower bound by trade count', kind: 'line', fmt: 'spct', points: pts.map((p) => [p.n, p.lo]) } : undefined,
+      sections: ctl ? [{ h: 'Matched control (Follow control)', p: `${ctl.n} trades · mean ${ctl.mean == null ? '–' : (ctl.mean * 100).toFixed(1)}% · sequence ${(ctl.lo * 100).toFixed(1)}% to ${(ctl.hi * 100).toFixed(1)}% · ${ctl.decision}. A PASS for Follow also requires Follow minus control to exclude zero.` }] : undefined,
+      tables: [{ title: 'Sequence path', cols: [C('Trades', 'n', 'num'), C('Mean', 'mean', 'spct'), C('Lower', 'lo', 'spct'), C('Upper', 'hi', 'spct')], rows: pts },
+        { title: 'Closed trades, oldest first', cols: [C('Token', 'symbol'), C('Exit', 'exit', 'text'), C('P&L', 'pnl_pct', 'spct'), C('Reason', 'exit_reason', 'text')], rows: rows.slice(-200).map((r) => ({ symbol: r.symbol, exit: new Date(r.exit_ts).toISOString().slice(5, 16).replace('T', ' '), pnl_pct: r.pnl_pct, exit_reason: r.exit_reason, drill: `tok:${r.mint}`, label: r.symbol })) }] };
+  };
   // ---- Edge Lab ----
   const testCols = [C('Hypothesis', 'label'), C('Window', 'window'), C('Tokens', 'n', 'num'), C('Net mean', 'meanPct', 'spct'), C('Lower bound', 'loPct', 'spct'), C('Status', 'status')];
   const edgeList = (title, explain, filter) => () => {
@@ -591,7 +611,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         sections: SECTIONS,
         tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
-    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('seq:') ? () => seqDrill(key.slice(4)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

@@ -428,6 +428,17 @@ The pre-registered 24-hour gate for curve-stage entries is closed as **rejected*
 
 Data preservation: retention defaults raised (`RETAIN_TRADES_DAYS=60`, `RETAIN_SNAPSHOTS_DAYS=180`, `RETAIN_WALLETS_DAYS=365`, `BACKUP_KEEP_DAYS=30`), and `retention()` now archives aged rows to `DATA_DIR/archive/<table>-<YYYY-MM>.csv.gz` before deleting them (`ARCHIVE_PRUNED=0` disables). The archive files are multi-member gzip and read as one stream with `zcat`, `gunzip` or pandas.
 
+## 5i. Hypothesis 2: smart-wallet follow, sequential testing, graduate data repairs (October 18, 2026)
+
+Study and pre-registration: `docs/decisions/2026-10-18-hypothesis-2-smart-follow.md`. In short: launch features predict graduation (AUC 0.95–0.99) but the top decile loses at every horizon and exit; graduates lose in every band once a labeling defect (watchlist exits scored as −100%, now right-censored) and a ramp/honeypot pattern (now a reject reason) are removed; the one positive conditional mean is positions of wallets ranked on prior days.
+
+- **Follow book** (`follow`) and its matched control (`followctl`): buys ≥ 0.2 SOL by realized-basis tracked wallets whose empirical-Bayes posterior mean return is ≥ +10% (≥ 5 scored positions), on tokens ≤ 30 min old that pass the screen. Exits identical to Main. Env: `FOLLOW_ENABLED`, `FOLLOW_MIN_POST`, `FOLLOW_MIN_BUY_SOL`, `FOLLOW_MAX_AGE_SEC`.
+- **Empirical-Bayes wallet ranking** (`ebPosteriors` in `src/engine/smartTracker.js`): normal-normal shrinkage of each wallet's mean clipped position return; shown as "EB mean" on the Tracker tab with a `follow` tag on eligible wallets.
+- **Sequential test** (`src/engine/seqtest.js`): hedged betting confidence sequence, anytime-valid at α = 0.05, on each book's after-cost returns. KILL when the upper bound < 0 after 20 trades; PASS when the lower bound > +2%. The Paper tab's "Hypothesis test" card shows Follow, Follow control and the Main/Random reference rows; each tile drills into the sequence path and the trades (`/api/drill/seq:<book>`). `/api/paper` carries `books.<book>.seq`, `books.verdicts` and `books.seqRule`.
+- **Graduate data repairs**: `grad_snapshots.censored` column and one-time repair; deaths keep the last known price as the 6 h outcome; `ramp pattern (price climbs on frozen liquidity)` reject; quote mints (USDC, USDT, WSOL) never watched; `GRAD_MAX_WATCH` default 1,500; seeded DexScreener rows evicted before observed migrations.
+
+Note: registering the new books changed the settings fingerprint, so every book's "current test" counters restart from zero on 2026-10-18; hypothesis-1 figures are preserved in the decision memo and the archived database.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

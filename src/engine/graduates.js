@@ -20,6 +20,7 @@ import { round } from '../util.js';
 import { logger } from '../log.js';
 
 const log = logger('grads');
+const QUOTE_MINTS = new Set(['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 'So11111111111111111111111111111111111111112']);
 const G = config.grads, GP = config.gradPaper;
 const WSOL = 'So11111111111111111111111111111111111111112';
 const MIN = 60000, HOUR = 3600000;
@@ -49,6 +50,10 @@ CREATE TABLE IF NOT EXISTS grad_paper (
 `);
 
 try { db.exec('ALTER TABLE grad_snapshots ADD COLUMN mbm_6h REAL'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_snapshots ADD COLUMN censored INTEGER DEFAULT 0'); } catch { /* already there */ }
+// One-time repair: rows scored as a total loss only because the token left the watchlist (evicted / aged out) are censored.
+try { db.exec(`UPDATE grad_snapshots SET max_1h=NULL, min_1h=NULL, max_6h=NULL, min_6h=NULL, price_6h=NULL, mbm_6h=NULL, censored=1
+  WHERE labeled=1 AND price_6h=0 AND censored=0 AND mint IN (SELECT mint FROM grad_watch WHERE active=0 AND dropped_reason NOT LIKE 'liquidity under%' AND dropped_reason NOT LIKE 'no post-graduation pool%')`); } catch { /* ok */ }
 try { db.exec("ALTER TABLE grad_paper ADD COLUMN book TEXT DEFAULT 'fixed'"); } catch { /* already there */ }
 try { db.exec('ALTER TABLE grad_watch ADD COLUMN extended INTEGER DEFAULT 0'); } catch { /* already there */ }
 
@@ -62,6 +67,9 @@ const Q = {
   insertSnap: db.prepare(`INSERT OR IGNORE INTO grad_snapshots (mint,ts,price,mcap,liq,score,reject,features) VALUES (@mint,@ts,@price,@mcap,@liq,@score,@reject,@features)`),
   dueSnaps: db.prepare(`SELECT mint, ts, price FROM grad_snapshots WHERE labeled=0 AND ts <= ? LIMIT 2000`),
   labelSnap: db.prepare(`UPDATE grad_snapshots SET max_1h=@max1, min_1h=@min1, max_6h=@max6, min_6h=@min6, price_6h=@p6, mbm_6h=@mbm, labeled=1 WHERE mint=@mint AND ts=@ts`),
+  censorSnap: db.prepare(`UPDATE grad_snapshots SET max_1h=NULL, min_1h=NULL, max_6h=NULL, min_6h=NULL, price_6h=NULL, mbm_6h=NULL, labeled=1, censored=1 WHERE mint=@mint AND ts=@ts`),
+  dropReasonOf: db.prepare(`SELECT dropped_reason FROM grad_watch WHERE mint = ?`),
+  lastSnapPrice: db.prepare(`SELECT price FROM grad_snapshots WHERE mint = ? AND ts > ? AND price > 0 ORDER BY ts DESC LIMIT 1`),
   insertAlert: db.prepare(`INSERT INTO grad_alerts (mint,symbol,name,ts,score,price,mcap,liq,age_min,vs_mig,reasons,flags,features)
     VALUES (@mint,@symbol,@name,@ts,@score,@price,@mcap,@liq,@ageMin,@vsMig,@reasons,@flags,@features)`),
   updateAlert1h: db.prepare(`UPDATE grad_alerts SET max_1h=? WHERE id=?`),
@@ -114,7 +122,7 @@ export class Graduates extends EventEmitter {
       lastSnapAt: 0, lastAlertAt: 0, alertId: null, info: null, creatorRugger: false };
   }
   add(mint, source = 'migration', meta = {}) {
-    if (!G.enabled || !mint || this.watch.has(mint)) return;
+    if (!G.enabled || !mint || this.watch.has(mint) || QUOTE_MINTS.has(mint)) return; // a migration message can name the quote side (USDC) — never watch it as a graduate
     if (this.watch.size >= G.maxWatch) this.evict();
     const st = this.blank(mint, { ...meta, source });
     this.watch.set(mint, st);
@@ -123,9 +131,12 @@ export class Graduates extends EventEmitter {
   }
   evict() {
     // Drop the weakest (lowest liquidity) seeded or dead-looking token to make room.
+    // Seeded DexScreener rows go first (they are not graduations we observed), then the lowest liquidity. Evicting a real
+    // migration or backfill row should be rare; raise GRAD_MAX_WATCH if the log shows it happening.
+    const rank = (s) => (String(s.source || '').startsWith('dex-') ? 0 : 1) * 1e12 + (s.last?.liq ?? 0);
     let worst = null;
-    for (const s of this.watch.values()) { const l = s.last?.liq ?? 0; if (!worst || l < (worst.last?.liq ?? 0)) worst = s; }
-    if (worst) this.drop(worst.mint, 'evicted (watchlist full)');
+    for (const s of this.watch.values()) { if (!worst || rank(s) < rank(worst)) worst = s; }
+    if (worst) this.drop(worst.mint, `evicted (watchlist full, ${worst.source || 'unknown'} source)`);
   }
   drop(mint, reason) {
     this.watch.delete(mint); Q.dropWatch.run(reason, mint); this.counters.dropped++;
@@ -281,7 +292,9 @@ export class Graduates extends EventEmitter {
     else if (vsMig != null && vsMig <= G.collapsedFrac) reject = `collapsed to ${round(vsMig * 100, 0)}% of migration price`;
     else if (tx5 === 0 && L.v5 === 0) reject = 'no trades in last 5 min';
     else if (fdvLiq != null && fdvLiq > 40) reject = `thin pool (FDV ${round(fdvLiq, 0)}× liquidity)`;
+    else if (this.rampPattern(st, L, ageMin)) reject = 'ramp pattern (price climbs on frozen liquidity)';
     st.reject = reject;
+    st.ramp = reject?.startsWith('ramp') || false;
     if (reject && !reject.startsWith('warming') && !isGradRejected(st.mint)) {
       recordReject({ kind: 'grad', mint: st.mint, symbol: st.symbol, ts: Date.now(), reason: reject, age: ageMin * 60, mcapUsd: L.mcap, price: L.price });
     }
@@ -488,13 +501,40 @@ export class Graduates extends EventEmitter {
   // ---- outcome labeling (1h and 6h after each snapshot / alert) ----
   // Labels use our own poll series, so they only exist for tokens still watched; dropped tokens are labeled
   // with the floor they were dropped at (liquidity gone = loss), which is the honest direction to err in.
+  /**
+   * Ramp / honeypot signature. In the test data the strongest-looking "winners" were pools whose price climbed in a straight
+   * line while liquidity stayed frozen (coefficient of variation < 5% over 20+ polls) with absurd 24 h changes or a market cap
+   * no 8-hour-old graduate reaches organically. Buyers of those cannot exit: 363 of 2,695 watched mints matched and nearly
+   * all ended with liquidity pulled. They are rejected so no book trades them and no scorecard counts them.
+   */
+  rampPattern(st, L, ageMin) {
+    if ((L.c24 ?? 0) > 2000) return true;
+    if (ageMin <= 480 && (L.mcap ?? 0) > 5e6) return true;
+    const liqs = st.series.slice(-30).map((p) => p.liq).filter((x) => x > 0);
+    if (liqs.length >= 20) {
+      const m = liqs.reduce((a, b) => a + b, 0) / liqs.length, sd = Math.sqrt(liqs.reduce((a, b) => a + (b - m) ** 2, 0) / liqs.length);
+      const first = st.series.slice(-30)[0]?.price, up = first ? L.price / first - 1 : 0;
+      if (sd / m < 0.05 && up > 0.5) return true;
+    }
+    return false;
+  }
+  dropReason(mint) { return Q.dropReasonOf.get(mint)?.dropped_reason || null; }
+  lastPrice(mint, after) { return Q.lastSnapPrice.get(mint, after)?.price ?? null; }
   label() {
     const now = Date.now();
     const pathOf = (mint, from, to) => (this.watch.get(mint)?.series || []).filter((p) => p.t > from && p.t <= to).map((p) => p.price);
     for (const s of Q.dueSnaps.all(now - 6 * HOUR)) {
       const st = this.watch.get(s.mint);
       const p1 = pathOf(s.mint, s.ts, s.ts + HOUR), p6 = pathOf(s.mint, s.ts, s.ts + 6 * HOUR);
-      if (!st || p6.length < 10) { Q.labelSnap.run({ mint: s.mint, ts: s.ts, max1: null, min1: null, max6: s.price, min6: 0, p6: 0, mbm: 0 }); continue; }
+      if (!st || p6.length < 10) {
+        // The token left the watchlist (or the series is too thin) before the 6 h horizon. Only a genuine death
+        // (liquidity gone, pool vanished) is a known outcome; an eviction or age-out is right-censored and must not
+        // be scored as a loss. Censored rows keep labeled=1 (so they are not re-queued) with NULL outcomes and censored=1.
+        const reason = this.dropReason(s.mint);
+        if (/liquidity under|no post-graduation pool/.test(reason || '')) { const lastP = this.lastPrice(s.mint, s.ts) ?? 0; Q.labelSnap.run({ mint: s.mint, ts: s.ts, max1: null, min1: null, max6: Math.max(s.price, lastP), min6: Math.min(lastP, s.price), p6: lastP, mbm: Math.min(lastP, s.price) }); }
+        else Q.censorSnap.run({ mint: s.mint, ts: s.ts });
+        continue;
+      }
       const mx = Math.max(...p6), iMax = p6.indexOf(mx);
       Q.labelSnap.run({ mint: s.mint, ts: s.ts, max1: Math.max(...p1), min1: Math.min(...p1), max6: mx, min6: Math.min(...p6), p6: p6[p6.length - 1], mbm: Math.min(s.price, ...p6.slice(0, iMax + 1)) });
     }

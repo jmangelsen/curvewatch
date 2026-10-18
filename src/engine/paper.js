@@ -11,7 +11,9 @@ import { db, q } from '../db.js';
 import { curveBuy, curveSell, round } from '../util.js';
 import { logger } from '../log.js';
 import { gate, marketTag } from './marketgate.js';
-import { verdictFor } from '../verdicts.js';
+import { verdictFor, VERDICTS } from '../verdicts.js';
+import { sequentialVerdict } from './seqtest.js';
+const SEQ_PASS_MARGIN = 0.02, SEQ_MIN_TRADES = 20; // pre-registered: PASS needs the anytime 95% lower bound above +2% per trade after cost
 import { CFG } from '../version.js';
 import { countBlocked } from './rejects.js';
 const log = logger('paper');
@@ -37,6 +39,13 @@ export const STRATEGIES = {
     delaySec: SC.confirm.waitSec, tpMult: (1 + SC.confirm.tpGrossPct / 100) * COST, tpFraction: 1, stopPct: SC.confirm.stopNetPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin,
     requireMinRet: SC.confirm.minRetPct / 100,
     thesis: `Let the first-minute dump happen, buy only what survives, take a quicker +${SC.confirm.tpGrossPct}% (gross).` },
+  // ---- hypothesis 2, pre-registered 2026-10-18: smart-wallet follow (see docs/decisions/2026-10-18-hypothesis-2-smart-follow.md) ----
+  follow: { id: 'follow', label: 'Follow', entry: `buy ≥ ${SC.follow.minBuySol} SOL by a tracked wallet (realized basis, ≥ 5 scored positions, empirical-Bayes posterior mean return ≥ +${Math.round(SC.follow.minPost * 100)}%) on a token ≤ ${Math.round(SC.follow.maxAgeSec / 60)} min old that passes the screen`,
+    delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, candidate: true,
+    thesis: 'Every long entry chosen from price and flow features lost (curve stage and graduates alike): by the time a token looks good it is overpriced. Wallets with a shrunken positive track record are the one conditional with a positive mean in the data; the test is whether that survives latency, cost and a matched control.' },
+  followctl: { id: 'followctl', label: 'Follow control', entry: `control: at each Follow entry, a random other eligible token of similar age (±${SC.random.ageTolPct}%) and mcap (±${SC.random.mcapTolPct}%)`,
+    delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, control: true,
+    thesis: 'Not a strategy: the matched baseline for Follow. Same moments, same exits, random token.' },
   // ---- candidates, registered 2026-10-16 ----
   clean: { id: 'clean', label: 'Clean strong', entry: `strong curve signal and creator with 0 rugs who has not sold, bundle < ${SC.clean.maxBundlePct}%, top-10 < ${SC.clean.maxTop10Pct}%`,
     delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: 1, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, candidate: true,
@@ -48,7 +57,7 @@ export const STRATEGIES = {
     delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: 100, trailPct: 100, maxHoldMin: SC.timed.holdMin, candidate: true,
     thesis: 'About half of all trades hit the stop before the target. This variant rides the whole distribution for an hour; the graduates sweep found timed exits least bad, which is untested on the curve until now.' },
 };
-export const BOOKS = Object.keys(STRATEGIES).filter((b) => b === 'main' || SC[b]?.enabled !== false);
+export const BOOKS = Object.keys(STRATEGIES).filter((b) => b === 'main' || b === 'followctl' ? SC.follow?.enabled !== false || b === 'main' : SC[b]?.enabled !== false);
 
 // ---- schema additions ----
 for (const col of ['signal_mcap REAL', 'signal_ts INTEGER', 'features TEXT', 'trough_value REAL', 'peak_ts INTEGER', 'max_drop_pct REAL', 'cause TEXT', 'cause_detail TEXT', 'tp_mult REAL', 'stop_pct REAL', 'entry_slip_pct REAL', 'skip_reason TEXT', 'cfg TEXT', 'gap INTEGER', 'restored INTEGER', 'fill_n INTEGER', 'fill_real_pct REAL', 'exit_fill_n INTEGER', 'exit_real_pct REAL', 'trigger_pct REAL']) {
@@ -378,11 +387,13 @@ export function books() {
   for (const b of BOOKS) {
     const rows = cur.filter((r) => (r.book || 'main') === b);
     const S = STRATEGIES[b];
+    const seqRows = rows.filter((r) => !r.gated && r.pnl_pct != null).sort((a, c) => a.exit_ts - c.exit_ts);
     out[b] = { kill: (({ equity, ...k }) => k)(killRule(b)), open: [...open.values()].filter((p) => p.book === b).length, label: S.label, entry: S.entry,
+      seq: sequentialVerdict(seqRows.map((r) => r.pnl_pct / 100), { passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES }),
       byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
   }
   const older = q.closedPapersAsc.all().filter((r) => r.cfg !== CFG || r.gap);
-  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
+  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), verdicts: VERDICTS, seqRule: { alpha: 0.05, passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES, hypothesisBooks: ['follow', 'followctl'] }, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
 }
 
 /** One-time backfill: label older closed trades (recorded before cause tracking) from the stored trade tape. */

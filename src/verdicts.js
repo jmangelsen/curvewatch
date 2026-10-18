@@ -12,6 +12,16 @@ export const VERDICTS = [
     conclusion: 'The upper bound of the interval is already below zero at 116 trades, so the 300-trade gate cannot pass. Losses are dominated by the round-trip cost (~10.9% audited) plus normal post-launch decay. Hypothesis rejected; no capital. Books continue as data collection only.',
     dataPreserved: 'Raw trades, snapshots, paper trades, labels and wallet history retained (retention raised, aged rows archived to DATA_DIR/archive as gzip CSV before pruning); frozen database snapshot of the test archived off the sandbox.',
   },
+  {
+    id: 'smart-follow',
+    title: 'Hypothesis 2: follow wallets with a shrunken positive track record (Follow book)',
+    status: 'open',
+    openedAt: '2026-10-18',
+    gate: 'anytime-valid 95% confidence sequence (hedged betting CS) on the mean after-cost return per trade of the Follow book, checked after every closed trade · KILL when the upper bound is below 0 after ≥ 20 trades · PASS when the lower bound is above +2% after ≥ 20 trades AND Follow minus Follow-control is positive with its own sequence excluding 0 · no rule change while open; a change restarts the sequence',
+    evidence: 'Preserved data (Oct 13–18): launch features predict graduation with AUC 0.95–0.99 out of time, yet the top decile returns −9 to −18% at 1 h even with take-profit/stop exits (price already reflects it). Graduates after ramp/honeypot removal and censoring repair lose 5–37% over 6 h in every age and liquidity band. Positions of wallets ranked on prior days returned +11.4% (95% CI +2.5 to +20.1, 213 positions, 150 tokens) on the one clean walk-forward day versus +7.8% for all positions: the only positive conditional mean found, on thin data.',
+    conclusion: 'Open. Expected value is uncertain and the prior is weak (one day of walk-forward evidence, before cost). The design exists to settle it fast: a losing book is killed by the sequence typically inside 100–150 trades.',
+    dataPreserved: 'Same retention and archive policy as hypothesis 1.',
+  },
 ];
 export const verdictFor = (id) => VERDICTS.find((v) => v.id === id) || null;
 export const openVerdicts = () => VERDICTS.filter((v) => v.status === 'open');

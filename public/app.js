@@ -319,7 +319,19 @@ function renderGate() {
       <div class="label"><span>${esc(x.label)}</span>${x.candidate ? '<span class="cand-tag">candidate</span>' : ''}</div>
       <div class="value ${vcls}">${value}</div>
       <div class="sub">${sub}</div></div>`; }).join('');
-  const v = S.paper?.books?.verdict;
+  const v = S.paper?.books?.verdict, open = (S.paper?.books?.verdicts || []).find((x) => x.status === 'open'), B = S.paper?.books?.books || {}, rule = S.paper?.books?.seqRule;
+  if (open && rule) {
+    // Hypothesis 2 is live: the card becomes the sequential test. Hypothesis-1 books stay as reference rows.
+    const show = [...rule.hypothesisBooks, 'main', 'random'].filter((b) => B[b]?.seq);
+    $('#gateHint').textContent = `anytime-valid 95% · KILL when upper < 0 · PASS when lower > +${(rule.passMargin * 100).toFixed(0)}% · after ${rule.minTrades} trades`;
+    $('#gate').innerHTML = show.map((b) => { const x = B[b], q = x.seq, hyp = rule.hypothesisBooks.includes(b), dc = { KILL: 'down', PASS: 'up', CONTINUE: hyp ? 'acc' : 'faint' }[q.decision];
+      return `<div class="kpi gate-tile ${hyp ? 'cand' : ''}" data-drill="seq:${b}" data-label="Sequential test · ${esc(x.label)}" role="button" tabindex="0" aria-label="${esc(x.label)} sequential test: open detail">
+        <div class="label"><span>${esc(x.label)}</span>${hyp ? `<span class="cand-tag">${b === 'followctl' ? 'control' : 'hypothesis 2'}</span>` : '<span class="cand-tag faint">reference</span>'}</div>
+        <div class="value ${q.n ? (q.decision === 'CONTINUE' ? cls(q.mean * 100) : dc) : 'faint'}">${q.n ? (q.decision === 'CONTINUE' ? signed(q.mean * 100, 1, '%') : q.decision) : '–'}</div>
+        <div class="sub">${q.n ? `${q.n} trades · CS ${signed(q.lo * 100, 1, '%')} to ${signed(q.hi * 100, 1, '%')}` : 'waiting for the first closed trade'}</div></div>`; }).join('');
+    $('#gateNote').innerHTML = `<b>${esc(open.title)}</b> (opened ${esc(open.openedAt)}). ${esc(open.conclusion)} <span class="faint">Hypothesis 1 (curve-stage entry) was rejected on ${esc(v?.closedAt || '')}; Main and Random stay as reference rows.</span>`;
+    return;
+  }
   if (v && v.status !== 'open') {
     $('#gateHint').textContent = `closed ${v.closedAt} · ${v.status} · tiles stay live as data collection`;
     $('#gateNote').innerHTML = `<span class="down"><b>Hypothesis ${esc(v.status)} on ${esc(v.closedAt)}.</b></span> ${esc(v.conclusion)} <span class="faint">Evidence: ${esc(v.evidence)}</span>`;
@@ -1748,8 +1760,8 @@ async function loadTracker() {
     + k('tracker', 'Wallets scored', n(v.scored.wallets || 0, 0), `${n(v.scored.positions || 0, 0)} positions · ${n(v.scored.eligible || 0, 0)} with ${C.minPositions}+`)
     + k('tr_trades', 'Their trades 24 h', n(v.day.n || 0, 0), `${n(v.day.buys || 0, 0)} buys · ${n(v.day.tokens || 0, 0)} tokens`)
     + k('tr_open', 'Open positions', n(v.open.length, 0), `on ${new Set(v.open.map((r) => r.mint)).size} live tokens`);
-  $('#trWallets').innerHTML = v.wallets.length ? `<div class="table-wrap"><table class="board tr-tbl"><thead><tr><th>#</th><th>Wallet</th><th class="num">Hit +${C.profitPct}%</th><th class="num">95% low</th><th class="num">Positions</th><th>Basis</th></tr></thead><tbody>
-    ${v.wallets.map((r) => `<tr data-drill="wallet:${esc(r.wallet)}" data-label="Wallet ${swS(r.wallet)}" data-value="${pct(r.rate * 100, 0)} hit rate" data-sub="${r.k} of ${r.n} · ${r.basis}"><td class="num">${r.rank}</td><td class="mono">${swS(r.wallet)}</td><td class="num up">${pct(r.rate * 100, 0)}</td><td class="num">${pct(r.lo * 100, 0)}</td><td class="num">${r.k}/${r.n}</td><td><span class="st ${r.basis === 'realized' ? 'st-PASS' : 'st-COLLECTING'}">${r.basis.toUpperCase()}</span></td></tr>`).join('')}
+  $('#trWallets').innerHTML = v.wallets.length ? `<div class="table-wrap"><table class="board tr-tbl"><thead><tr><th>#</th><th>Wallet</th><th class="num">Hit +${C.profitPct}%</th><th class="num">95% low</th><th class="num">EB mean</th><th class="num">Positions</th><th>Basis</th></tr></thead><tbody>
+    ${v.wallets.map((r) => `<tr data-drill="wallet:${esc(r.wallet)}" data-label="Wallet ${swS(r.wallet)}" data-value="${pct(r.rate * 100, 0)} hit rate" data-sub="${r.k} of ${r.n} · ${r.basis}"><td class="num">${r.rank}</td><td class="mono">${swS(r.wallet)}</td><td class="num up">${pct(r.rate * 100, 0)}</td><td class="num">${pct(r.lo * 100, 0)}</td><td class="num ${r.post == null ? 'faint' : cls(r.post * 100)}" title="empirical-Bayes posterior mean return; shrunk ${r.shrink == null ? '' : Math.round(r.shrink * 100) + '%'} toward the population">${r.post == null ? '–' : signed(r.post * 100, 0, '%')}${r.post != null && r.post >= 0.1 && r.basis === 'realized' && r.n >= 5 ? ' <span class="cand-tag">follow</span>' : ''}</td><td class="num">${r.k}/${r.n}</td><td><span class="st ${r.basis === 'realized' ? 'st-PASS' : 'st-COLLECTING'}">${r.basis.toUpperCase()}</span></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No wallet qualifies yet. Positions are scored one hour after each token launches.</div>';
   const feed = v.recent.slice(0, 40);
   $('#trFeed').innerHTML = feed.length ? `<div class="tr-feed">${feed.map((t) => `<div class="tr-row" data-mint="${esc(t.mint)}"><span class="faint">${ago(t.ts)}</span><span class="${t.is_buy ? 'up' : 'down'}">${t.is_buy ? 'BUY' : 'SELL'}</span><span class="mono">#${t.rank} ${swS(t.wallet)}</span><span>${esc(t.symbol || swS(t.mint))}</span><span class="num">${usd((t.sol || 0) * (solPx() || 0))}</span></div>`).join('')}</div>`

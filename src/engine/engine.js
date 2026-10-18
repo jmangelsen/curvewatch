@@ -1,5 +1,5 @@
 // Orchestrator: token lifecycle, evaluation loop, snapshots, alerts, outcome labeling.
-import { scorePositions, isTracked, onTrackedTrade } from './smartTracker.js';
+import { scorePositions, isTracked, onTrackedTrade, followEligible } from './smartTracker.js';
 import { recordReject, countBlocked } from './rejects.js';
 import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
@@ -85,7 +85,7 @@ export class Engine extends EventEmitter {
       return;
     }
     if (!t.applyTrade(ev)) return;
-    if (isTracked(ev.wallet)) { if (t.rejectedHard || t.lastScore?.reject) countBlocked('tracker'); else onTrackedTrade(ev, t); }
+    if (isTracked(ev.wallet)) { if (t.rejectedHard || t.lastScore?.reject) countBlocked('tracker'); else { onTrackedTrade(ev, t); this.maybeFollow(ev, t); } }
     this.counters.trades++;
     if (!t.initialBuySol && ev.wallet === t.creator && ev.isBuy && t.trades.length <= 2) {
       t.initialBuySol = ev.sol; q.updateInitialBuy.run(ev.sol, t.initialMcap, t.mint);
@@ -202,9 +202,9 @@ export class Engine extends EventEmitter {
    * Random control book: at each signal, buy a random OTHER token from the same moment that passed the hard filters,
    * matched on age and mcap. Same exits and costs as Main. The question it answers: does the score beat chance?
    */
-  maybeRandom(sig) {
+  maybeRandom(sig, book = 'random') {
     const R = config.strategies.random;
-    if (!R.enabled) return;
+    if (!R.enabled && book === 'random') return;
     const now = Date.now(), age = (now - sig.createdAt) / 1000, aTol = R.ageTolPct / 100, mTol = R.mcapTolPct / 100;
     const pool = [];
     for (const t of this.tokens.values()) {
@@ -218,7 +218,23 @@ export class Engine extends EventEmitter {
     const pick = pool[Math.floor(Math.random() * pool.length)];
     pick.randomAt = now;
     this.startRecording(pick);
-    paper.scheduleEntry(pick, null, { book: 'random', score: pick.lastScore.score, features: pick.lastFeatures });
+    paper.scheduleEntry(pick, null, { book, score: pick.lastScore.score, features: pick.lastFeatures });
+  }
+
+  /**
+   * Follow book (hypothesis 2): a sufficiently large buy by a wallet whose empirical-Bayes posterior mean return clears the
+   * margin, on a young token that passes the screen. One entry per token. Fires the matched random control as well.
+   */
+  maybeFollow(ev, t) {
+    const F = config.strategies.follow;
+    if (!F?.enabled || !ev.isBuy || ev.sol < F.minBuySol || t.graduated || t.lite || t.followAt) return;
+    if ((Date.now() - t.createdAt) / 1000 > F.maxAgeSec) return;
+    if (!followEligible(ev.wallet, F.minPost)) return;
+    if (!t.lastScore || t.lastScore.reject || t.rejectedHard) return;
+    t.followAt = Date.now(); t.followWallet = ev.wallet;
+    this.startRecording(t);
+    paper.scheduleEntry(t, t.alertId || null, { book: 'follow', score: t.lastScore.score, features: { ...(t.lastFeatures || {}), followWallet: ev.wallet, followBuySol: ev.sol } });
+    this.maybeRandom(t, 'followctl');
   }
 
   /** Hold-120 candidate: first main/band signal before the checkpoint; the entry fires at the checkpoint and requires price ≥ signal price. */

@@ -46,6 +46,34 @@ let lastRefresh = 0, startedAt = null;
 const live = []; // recent tracked trades, newest last
 let engineRef = null;
 
+/**
+ * Empirical-Bayes (normal-normal) shrinkage of each wallet's mean position return toward the population mean.
+ * A wallet with 3 lucky positions should not outrank one with 40 solid ones: posterior = (n/σ²·x̄ + 1/τ²·μ) / (n/σ² + 1/τ²),
+ * where μ, τ² are the between-wallet mean and variance estimated from all wallets (method of moments) and σ² the
+ * within-wallet variance of position returns. Returns a map wallet -> { post, n, xbar, shrink } for wallets with n ≥ 3.
+ */
+export function ebPosteriors() {
+  // per-wallet mean of clipped position returns (a single 50x cannot carry a wallet; wins are winsorised at +300%)
+  const rows = db.prepare('SELECT wallet, COUNT(*) AS n, AVG(MIN(MAX(ret, -1), 3)) AS xbar FROM wallet_positions2 WHERE ret IS NOT NULL GROUP BY wallet HAVING COUNT(*) >= 3').all();
+  if (!rows.length) return { map: new Map(), mu: 0, tau2: 0, sigma2: 0 };
+  const xbar = rows.map((r) => r.xbar);
+  const mu = xbar.reduce((a, b) => a + b, 0) / xbar.length;
+  // within-wallet variance from the position table (clipped returns, so a single 50x cannot dominate)
+  const v = db.prepare('SELECT AVG((MIN(MAX(p.ret, -1), 3) - w.m) * (MIN(MAX(p.ret, -1), 3) - w.m)) AS s2 FROM wallet_positions2 p JOIN (SELECT wallet, AVG(MIN(MAX(ret, -1), 3)) AS m FROM wallet_positions2 WHERE ret IS NOT NULL GROUP BY wallet HAVING COUNT(*) >= 3) w USING (wallet) WHERE p.ret IS NOT NULL').get();
+  const sigma2 = Math.max(1e-4, v?.s2 ?? 0.25);
+  const varX = xbar.reduce((a, b) => a + (b - mu) ** 2, 0) / Math.max(1, xbar.length - 1);
+  const meanNoise = rows.reduce((a, r) => a + sigma2 / r.n, 0) / rows.length;
+  const tau2 = Math.max(1e-6, varX - meanNoise); // between-wallet variance net of sampling noise
+  const map = new Map();
+  rows.forEach((r, i) => { const w1 = r.n / sigma2, w0 = 1 / tau2; const post = (w1 * xbar[i] + w0 * mu) / (w1 + w0); map.set(r.wallet, { post, n: r.n, xbar: xbar[i], shrink: w0 / (w1 + w0), postSd: Math.sqrt(1 / (w1 + w0)) }); });
+  return { map, mu, tau2, sigma2 };
+}
+let eb = { map: new Map(), mu: 0, tau2: 0, sigma2: 0 };
+export const ebOf = (w) => eb.map.get(w) || null;
+export const ebSummary = () => ({ wallets: eb.map.size, mu: eb.mu, tau: Math.sqrt(eb.tau2), sigma: Math.sqrt(eb.sigma2) });
+/** Follow-book eligibility: realized-basis tracked wallet whose posterior mean return clears the margin (pre-registered). */
+export function followEligible(w, minPost = 0.1) { const r = tracked.get(w); const e = eb.map.get(w); return !!(r && r.basis === 'realized' && e && e.post >= minPost && e.n >= 5); }
+
 /** Wilson score lower bound (95%). */
 export function wilsonLo(k, n, z = 1.96) {
   if (!n) return 0;
@@ -91,6 +119,8 @@ export function refreshTracked() {
   // attach live realized stats to proxy rows when available
   const perf = db.prepare('SELECT * FROM wallet_perf2 WHERE wallet = ?');
   list.forEach((r, i) => { r.rank = i + 1; if (r.basis === 'proxy') { const p = perf.get(r.wallet); if (p) { r.realN = p.positions; r.realHits = p.hits; r.avgRet = p.positions ? p.sum_ret / p.positions : null; r.pnlSol = p.pnl_sol; } } });
+  try { eb = ebPosteriors(); } catch (e) { log.warn('eb posteriors', e.message); }
+  for (const r of list) { const e = eb.map.get(r.wallet); if (e) { r.post = e.post; r.shrink = e.shrink; r.postSd = e.postSd; } }
   tracked = new Map(list.map((r) => [r.wallet, r]));
   pool = new Set(db.prepare('SELECT wallet FROM wallet_perf2 WHERE positions >= 3 ORDER BY positions DESC LIMIT 50000').all().map((r) => r.wallet));
   lastRefresh = now;

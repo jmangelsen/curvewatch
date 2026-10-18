@@ -121,6 +121,7 @@ export const config = {
 
   // Strategy lab: extra paper books, each with its own entry/exit, judged side by side (October 14, 2026 calibration).
   strategies: {
+    follow: { enabled: bool('FOLLOW_ENABLED', true), minPost: num('FOLLOW_MIN_POST', 0.10), minBuySol: num('FOLLOW_MIN_BUY_SOL', 0.2), maxAgeSec: num('FOLLOW_MAX_AGE_SEC', 1800) },
     // Labeled snapshots (198 tokens at score >= 50): only 60s net inflow and median buy size separated winners in BOTH halves.
     // score>=50 & flow60>=12.6 & medBuy>=0.387 hit +25% net before -20% net 40% in each half (30 tokens) - still under the 44% breakeven.
     flow: { enabled: bool('FLOW_ENABLED', true), minScore: num('FLOW_MIN_SCORE', 50), minFlow60Sol: num('FLOW_MIN_FLOW60_SOL', 12.6), minMedianBuySol: num('FLOW_MIN_MEDIAN_BUY_SOL', 0.387) },
@@ -165,7 +166,7 @@ export const config = {
   grads: {
     enabled: bool('GRAD_ENABLED', true),
     pollSec: num('GRAD_POLL_SEC', 60), // one batched DexScreener pass over the watchlist
-    maxWatch: num('GRAD_MAX_WATCH', 900), // 30 tokens per request -> 30 requests per pass
+    maxWatch: num('GRAD_MAX_WATCH', 1500), // 30 tokens per request -> 50 requests per pass (DexScreener allows 300/min)
     minAgeMin: num('GRAD_MIN_AGE_MIN', 20), // skip the BOOST buyback window and the migration dump
     maxAgeHours: num('GRAD_MAX_AGE_H', 72), // base window; past it a graduate stays watched only while it is "alive" (below)
     extMaxAgeHours: num('GRAD_EXT_MAX_AGE_H', 336), // hard ceiling for alive graduates (14 days) so the watchlist stays bounded
