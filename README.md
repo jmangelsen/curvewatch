@@ -471,6 +471,9 @@ The Codex tab now opens as a trading terminal on screens 900 px and wider (the c
 ### Dapp audit
 `docs/audit-2026-10-18.md` lists eleven findings with severity, evidence and status. Fixed in this release without touching a fingerprinted file: the graduate watcher now rebuilds its price series from stored snapshots on restart (before this, every restart censored or truncated six hours of 6 h labels), the mobile tab bar scrolls, and two CSS class collisions. Queued for after the weekend because they touch frozen files: the missing 900 s checkpoint, a `quote_ok` column so non-SOL curves stop counting as graduates in the Report tab, a column rename, Codex approx marks through `curveSell`, and a startup grace window for the health gap detector. The audit also quantifies the cost of restarts on production (five deploy restarts marked 71% of today's tokens gap-flagged): the deploy that ships this release is the last restart before Monday.
 
+### Rolling out updates without stopping collection
+Two lanes. Dashboard-only changes (anything under `public/`) ship with `deploy/hot-static.sh`: it copies the files to the server and the next page load serves them, with no process restart and therefore no data gap. Anything under `src/` needs the full `deploy/provision-do.sh`, which restarts the service; each restart costs a 30–65 s feed gap that flags every live token and voids open paper positions from the stats, so server changes are batched into one window (next: Monday). The index page is served uncached with versioned asset URLs, so phones pick up a hot-shipped build on the next open.
+
 ### Curve Studio (tab "Studio")
 A read-only research view that compares every graduated coin against the field and lets a rule be tested on held-out time before anyone hard-codes it.
 
