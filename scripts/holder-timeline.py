@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 RPC = 'https://mainnet.helius-rpc.com/'
 ap = argparse.ArgumentParser()
-ap.add_argument('mint'); ap.add_argument('--budget-sec', type=float, default=780); ap.add_argument('--rps', type=float, default=8)
+ap.add_argument('mint'); ap.add_argument('--budget-sec', type=float, default=780); ap.add_argument('--rps', type=float, default=5)
 ap.add_argument('--sample', type=int, default=0, help='probe at most this many accounts, chosen by a stable hash of the address; counts are scaled by the kept fraction')
 ap.add_argument('--max-pages', type=int, default=3, help='signature pages (1000 each) per account before giving up on the oldest')
 ap.add_argument('--db', default=os.path.join(os.environ.get('DATA_DIR', 'data'), 'curvewatch.db'))
@@ -48,11 +48,11 @@ def rpc(method, params, tries=6):
         out = p.stdout.rsplit('\n', 1); code = out[-1].strip() if len(out) == 2 else ''
         if code == '429' or code.startswith('5') or code == '':
             if i >= 2: print('http', repr(code), p.stderr.strip()[:120], file=sys.stderr)
-            time.sleep(0.35 * (i + 1)); continue
+            time.sleep(1.0 * (i + 1)); continue
         try:
             j = json.loads(out[0])
         except ValueError:
-            if i >= 2: print('badjson', repr(out[0][:120]), file=sys.stderr)
+            if i >= 1: print('badjson', repr(code), repr(out[0][:80]), p.stderr.strip()[:80], file=sys.stderr)
             time.sleep(1.0 * (i + 1)); continue
         if 'error' in j:
             if 'rate' in str(j['error']).lower(): time.sleep(1.5 * (i + 1)); continue
@@ -101,12 +101,12 @@ def flush():
     db.executemany('INSERT OR REPLACE INTO holder_entries (mint, account, owner, amount, first_ts, last_ts, n_sigs, truncated) VALUES (?,?,?,?,?,?,?,?)', buf)
     db.execute('UPDATE holder_timeline_runs SET done=(SELECT COUNT(*) FROM holder_entries WHERE mint=?), calls=calls+? WHERE mint=?', (a.mint, len(buf), a.mint))
     db.commit(); buf = []
-with ThreadPoolExecutor(max_workers=6) as ex:
+with ThreadPoolExecutor(max_workers=4) as ex:
     futs = {}
     it = iter(todo)
     for acc in it:
         futs[ex.submit(probe, acc)] = acc
-        if len(futs) >= 12: break
+        if len(futs) >= 8: break
     while futs:
         for f in as_completed(list(futs)):
             acc = futs.pop(f)

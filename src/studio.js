@@ -315,8 +315,13 @@ export function horde({ days = 30, hours = 12 } = {}) {
       series });
   }
   cases.sort((x, y) => (y.holders ? 1 : 0) - (x.holders ? 1 : 0) || y.peakMcap - x.peakMcap);
-  const withH = cases.filter((c) => c.holders && c.dipTs);
-  const grp = (f) => { const s = withH.filter(f); const gain = s.map((c) => c.holders.atDip != null && c.holders.atTop ? c.holders.atDip / c.holders.atTop - 1 : null).filter((v) => v != null).sort((a, b) => a - b); return { n: s.length, medianDipHolderChangePct: gain.length ? +(100 * gain[gain.length >> 1]).toFixed(1) : null }; };
-  return { days, hours, n: cases.length, withDip: cases.filter((c) => c.dipTs).length, reconstructed: cases.filter((c) => c.holders).length, reclaimedVsFailed: { reclaimed: grp((c) => c.reclaimed), failed: grp((c) => !c.reclaimed) }, cases,
+  for (const c of cases) { c.dipHolderChangePct = c.holders && c.holders.atDip != null && c.holders.atTop ? +(100 * (c.holders.atDip / c.holders.atTop - 1)).toFixed(1) : null; c.price6hMult = (() => { const t = c.dipTs || c.legTs; const r = c.series.filter((p) => p[0] >= t + 6 * HOUR)[0] || c.series[c.series.length - 1]; const at = c.series.find((p) => p[0] === t); return r && at && at[1] ? +(r[1] / at[1]).toFixed(2) : null; })(); }
+  const withH = cases.filter((c) => c.holders && c.dipTs && c.dipHolderChangePct != null);
+  const med = (a) => { const v = a.filter((x) => x != null).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+  const grp = (s) => ({ n: s.length, medianDipHolderChangePct: med(s.map((c) => c.dipHolderChangePct)), reclaimedPct: s.length ? +(100 * s.filter((c) => c.reclaimed).length / s.length).toFixed(0) : null, above6hPct: s.length ? +(100 * s.filter((c) => c.price6hMult != null && c.price6hMult >= 1).length / s.length).toFixed(0) : null, medianPrice6hMult: med(s.map((c) => c.price6hMult)) });
+  // H3d falsifier: split the dip cases into terciles of holder growth through the dip; the top tercile must reload more often than the bottom
+  const byGain = [...withH].sort((a, b) => a.dipHolderChangePct - b.dipHolderChangePct), k = Math.floor(byGain.length / 3);
+  const terciles = byGain.length >= 6 ? { bottom: grp(byGain.slice(0, k)), middle: grp(byGain.slice(k, byGain.length - k)), top: grp(byGain.slice(byGain.length - k)) } : null;
+  return { days, hours, n: cases.length, withDip: cases.filter((c) => c.dipTs).length, reconstructed: cases.filter((c) => c.holders).length, reclaimedVsFailed: { reclaimed: grp(withH.filter((c) => c.reclaimed)), failed: grp(withH.filter((c) => !c.reclaimed)) }, terciles, cases,
     note: 'holders(t) is reconstructed from current token accounts (first/last touch); closed accounts are invisible, partial sells are not timed. Sampled coins are scaled by the kept fraction.' };
 }
