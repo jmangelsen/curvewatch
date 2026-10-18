@@ -825,3 +825,17 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
   .alert .name { flex: 1 1 100%; order: 9; max-width: none; white-space: normal; overflow: visible; }
 }
 @media (max-width: 720px) { .tile-drill:not(.card) { margin: 0; padding: 0; border-color: transparent; } .tile-drill:not(.card):hover { background: transparent; } }
+
+/* Wallet link group: primary pump.fun profile, secondary Solscan. Hit areas stay tall on touch without widening rows. */
+.wl { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.wl a { display: inline-flex; align-items: center; min-height: 36px; padding: 0 6px; margin: -10px 0; border-radius: 6px; color: var(--accent); text-decoration: none; }
+.wl a:hover, .wl a:focus-visible { background: color-mix(in oklab, var(--accent) 14%, transparent); text-decoration: none; outline: none; }
+.wl a:focus-visible { box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 45%, transparent); }
+.wl .wl-alt { font-size: var(--text-xs); color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.wl .wl-alt:hover { color: var(--text); }
+.d-links a { display: inline-flex; align-items: center; min-height: 32px; }
+@media (pointer: coarse) { .wl a { min-height: 44px; margin: -14px 0; } .d-links a { min-height: 44px; padding: 0 10px; } }
+/* Links inside dense tables keep a 32 px (44 px on touch) hit area without changing row height. */
+.drill td a:not(.wl a), .board td a:not(.wl a), .rn-row a { display: inline-flex; align-items: center; min-height: 32px; margin: -8px 0; padding: 0 4px; border-radius: 6px; }
+.drill td a:hover, .board td a:hover { background: color-mix(in oklab, var(--accent) 12%, transparent); text-decoration: none; }
+@media (pointer: coarse) { .drill td a:not(.wl a), .board td a:not(.wl a) { min-height: 44px; margin: -14px 0; padding: 0 8px; } }

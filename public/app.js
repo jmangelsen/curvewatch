@@ -540,7 +540,7 @@ function renderIntel() {
     $('#hourly').insertAdjacentHTML('beforeend', `<div class="legend"><span><i style="background:${css('--text-faint')}"></i>launches per hour (local time) · graduations under each bar${innerWidth < 520 ? ' (g); tap a bar for its hour' : ''}</span></div>`);
   } else $('#hourly').innerHTML = `<div class="empty"><strong>Collecting</strong>Hourly launch volume appears here.</div>`;
   const I = S.intel; if (!I) return;
-  const link = (w) => `<a href="https://solscan.io/account/${w}" target="_blank" rel="noopener" class="mono">${short(w)}</a>`;
+  const link = (w) => walletLinks(w);
   $('#ruggers tbody').innerHTML = I.ruggers.length ? I.ruggers.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${c.rugs}</td><td class="num faint">${ago(c.last_seen)} ago</td></tr>`).join('') : `<tr><td colspan="5"><div class="empty">Builds up as creators launch repeatedly.</div></td></tr>`;
   $('#smart tbody').innerHTML = I.smartWallets.length ? I.smartWallets.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.early_buys}</td><td class="num">${c.wins}</td><td class="num">${pct(c.win_rate * 100, 0)}</td><td class="num">${c.graduations}</td></tr>`).join('') : `<tr><td colspan="5"><div class="empty"><strong>None qualified yet</strong>A wallet needs ≥ 5 early buys and ≥ 3 wins (3× or graduation) in your own data. Usually takes a few days.</div></td></tr>`;
   $('#creators tbody').innerHTML = I.creators.length ? I.creators.map((c) => `<tr><td>${link(c.wallet)}</td><td class="num">${c.launches}</td><td class="num">${c.graduations}</td><td class="num">${sUsd(c.best_peak_mcap)}</td></tr>`).join('') : `<tr><td colspan="4"><div class="empty">No graduated creators recorded yet.</div></td></tr>`;
@@ -767,8 +767,8 @@ async function openDrawer(mint) {
       <div class="parts">${Object.entries(parts).map(([k, v]) => `<div class="part ${v < 0 ? 'neg' : ''}"><span>${k}</span><div class="bar"><i style="width:${Math.min(100, (Math.abs(v) / (pmax[k] || 10)) * 100)}%"></i></div><span>${n(v, 1)}</span></div>`).join('') || '<div class="faint">No live score (token archived).</div>'}</div>
       ${L?.flags?.length ? `<div class="chips" style="margin-top:10px">${L.flags.map((x) => `<span class="chip warn">${esc(x)}</span>`).join('')}</div>` : ''}</div>
     <div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Token record"><h3>Features</h3><div class="feat">${featRows.map(([a, b]) => `<div><span class="muted">${a}</span><span>${esc(b ?? '–')}</span></div>`).join('')}</div></div>
-    ${L?.topHolders?.length ? `<div class="d-sec"><h3>Top holders (wallets, excl. curve)</h3><div class="feat">${L.topHolders.map((h) => `<div><span class="mono">${short(h.w)}${h.creator ? ' <span class="acc">dev</span>' : ''}</span><span>${pct(h.pct, 2)}</span></div>`).join('')}</div></div>` : ''}
-    ${L?.lastTrades?.length ? `<div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Recorded trades"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${short(t.w)}</span><span style="text-align:right">${sUsd(t.sol)}</span><span style="text-align:right" class="faint">${sUsd(t.mcap)}</span></div>`).join('')}</div></div>` : ''}
+    ${L?.topHolders?.length ? `<div class="d-sec"><h3>Top holders (wallets, excl. curve)</h3><div class="feat">${L.topHolders.map((h) => `<div>${walletLinks(h.w, { tag: h.creator ? ' <span class="acc">dev</span>' : '' })}<span>${pct(h.pct, 2)}</span></div>`).join('')}</div></div>` : ''}
+    ${L?.lastTrades?.length ? `<div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Recorded trades"><h3>Recent trades</h3><div class="trades">${L.lastTrades.map((t) => `<div><span class="faint">${ago(t.at)}</span><span class="${t.b ? 'up' : 'down'}">${t.b ? 'BUY' : 'SELL'}</span><span>${walletLinks(t.w)}</span><span style="text-align:right">${sUsd(t.sol)}</span><span style="text-align:right" class="faint">${sUsd(t.mcap)}</span></div>`).join('')}</div></div>` : ''}
     ${d.snapshots.length ? `<div class="d-sec tile-drill" data-drill="tok:${mint}" data-label="Checkpoint snapshots"><h3>Snapshots</h3><div class="feat">${d.snapshots.map((s) => `<div><span class="muted">${s.checkpoint}s · score ${s.reject ? '✕' : n(s.score, 0)}</span><span>${sUsd(s.mcap)}${s.max_mcap_after ? ` → max ${n(s.max_mcap_after / s.mcap, 2)}×` : ''}</span></div>`).join('')}</div></div>` : ''}`;
   if (L?.series?.length > 1) lineChart($('#dSpark'), L.series.map(([t, m]) => [t, m * (solPx() || 1)]), { zero: false, h: 140, yFmt: (v) => (solPx() ? usd(v) : n(v, 0)), color: css('--accent') });
 }
@@ -1462,7 +1462,7 @@ function findTile(t) {
 }
 document.addEventListener('click', (e) => {
   // a handler that re-rendered the tapped element detaches it; never treat a detached target as a new tile tap
-  if (!e.target.isConnected || e.target.closest('.drill')) return;
+  if (!e.target.isConnected || e.target.closest('.drill') || e.target.closest('a[href]')) return;   // a real link always wins over the tile it sits in
   const el = findTile(e.target); if (!el) return;
   const t = tileFrom(el); if (!t.key) return;
   e.preventDefault(); openDrill(t);
@@ -1542,6 +1542,7 @@ function dfx(v, f, row) {
     case 'yes': return v ? 'yes' : '–';
     case 'book': return `<span class="dotc" style="background:${BOOK_COL(v)}"></span>${esc(BOOK_LABEL(v))}`;
     case 'short': return `<span title="${esc(v)}">${shortM(v)}</span>`;
+    case 'wallet': { const w = row?.wallet || row?.creator || v; return w && w.length > 20 ? walletLinks(w) : esc(v); }
     case 'token': { const m = row?.mint; return m ? `<a href="https://pump.fun/coin/${encodeURIComponent(m)}" target="_blank" rel="noopener" title="${esc(m)}">${esc(v || shortM(m))}</a>` : esc(v); }
     default: return esc(v);
   }
@@ -1778,6 +1779,9 @@ addEventListener('resize', () => { if (S.tab === 'edge' && EX.data) renderEdgeMa
 
 // ================= Smart wallet tracker (Intel tab) =================
 const swS = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
+/** Wallet link group: pump.fun profile (primary) and Solscan. Tap targets are ≥ 36 px tall via .wl in styles.css. */
+const walletLinks = (w, { tag = '' } = {}) => (w ? `<span class="wl"><a class="mono" href="https://pump.fun/profile/${encodeURIComponent(w)}" target="_blank" rel="noopener" title="Open ${esc(w)} on pump.fun">${swS(w)}</a><a class="wl-alt" href="https://solscan.io/account/${encodeURIComponent(w)}" target="_blank" rel="noopener" title="Open ${esc(w)} on Solscan">scan</a>${tag}</span>` : '–');
+const tokenLinks = (m, { dex = null } = {}) => `<div class="d-links"><a href="https://pump.fun/coin/${encodeURIComponent(m)}" target="_blank" rel="noopener">pump.fun</a><a href="${esc(dex || `https://dexscreener.com/solana/${m}`)}" target="_blank" rel="noopener">DexScreener</a><a href="https://solscan.io/token/${encodeURIComponent(m)}" target="_blank" rel="noopener">Solscan</a></div>`;
 async function loadTracker() {
   let v; try { v = await get('/api/tracker'); } catch (e) { $('#trWallets').innerHTML = `<div class="empty"><strong>Tracker unavailable</strong>${esc(e.message)}</div>`; return; }
   const C = v.config, k = (key, label, value, sub) => `<div data-drill="${key}" data-label="${esc(label)}" data-value="${esc(value)}" data-sub="${esc(sub)}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`;
@@ -1787,7 +1791,7 @@ async function loadTracker() {
     + k('tr_trades', 'Their trades 24 h', n(v.day.n || 0, 0), `${n(v.day.buys || 0, 0)} buys · ${n(v.day.tokens || 0, 0)} tokens`)
     + k('tr_open', 'Open positions', n(v.open.length, 0), `on ${new Set(v.open.map((r) => r.mint)).size} live tokens`);
   $('#trWallets').innerHTML = v.wallets.length ? `<div class="table-wrap"><table class="board tr-tbl"><thead><tr><th>#</th><th>Wallet</th><th class="num">Hit +${C.profitPct}%</th><th class="num">95% low</th><th class="num">EB mean</th><th class="num">Positions</th><th>Basis</th></tr></thead><tbody>
-    ${v.wallets.map((r) => `<tr data-drill="wallet:${esc(r.wallet)}" data-label="Wallet ${swS(r.wallet)}" data-value="${pct(r.rate * 100, 0)} hit rate" data-sub="${r.k} of ${r.n} · ${r.basis}"><td class="num">${r.rank}</td><td class="mono">${swS(r.wallet)}</td><td class="num up">${pct(r.rate * 100, 0)}</td><td class="num">${pct(r.lo * 100, 0)}</td><td class="num ${r.post == null ? 'faint' : cls(r.post * 100)}" title="empirical-Bayes posterior mean return; shrunk ${r.shrink == null ? '' : Math.round(r.shrink * 100) + '%'} toward the population">${r.post == null ? '–' : signed(r.post * 100, 0, '%')}${r.post != null && r.post >= 0.1 && r.basis === 'realized' && r.n >= 5 ? ' <span class="cand-tag">follow</span>' : ''}</td><td class="num">${r.k}/${r.n}</td><td><span class="st ${r.basis === 'realized' ? 'st-PASS' : 'st-COLLECTING'}">${r.basis.toUpperCase()}</span></td></tr>`).join('')}
+    ${v.wallets.map((r) => `<tr data-drill="wallet:${esc(r.wallet)}" data-label="Wallet ${swS(r.wallet)}" data-value="${pct(r.rate * 100, 0)} hit rate" data-sub="${r.k} of ${r.n} · ${r.basis}"><td class="num">${r.rank}</td><td>${walletLinks(r.wallet)}</td><td class="num up">${pct(r.rate * 100, 0)}</td><td class="num">${pct(r.lo * 100, 0)}</td><td class="num ${r.post == null ? 'faint' : cls(r.post * 100)}" title="empirical-Bayes posterior mean return; shrunk ${r.shrink == null ? '' : Math.round(r.shrink * 100) + '%'} toward the population">${r.post == null ? '–' : signed(r.post * 100, 0, '%')}${r.post != null && r.post >= 0.1 && r.basis === 'realized' && r.n >= 5 ? ' <span class="cand-tag">follow</span>' : ''}</td><td class="num">${r.k}/${r.n}</td><td><span class="st ${r.basis === 'realized' ? 'st-PASS' : 'st-COLLECTING'}">${r.basis.toUpperCase()}</span></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No wallet qualifies yet. Positions are scored one hour after each token launches.</div>';
   const feed = v.recent.slice(0, 40);
   $('#trFeed').innerHTML = feed.length ? `<div class="tr-feed">${feed.map((t) => `<div class="tr-row" data-mint="${esc(t.mint)}"><span class="faint">${ago(t.ts)}</span><span class="${t.is_buy ? 'up' : 'down'}">${t.is_buy ? 'BUY' : 'SELL'}</span><span class="mono">#${t.rank} ${swS(t.wallet)}</span><span>${esc(t.symbol || swS(t.mint))}</span><span class="num">${usd((t.sol || 0) * (solPx() || 0))}</span></div>`).join('')}</div>`

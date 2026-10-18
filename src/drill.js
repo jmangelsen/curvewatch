@@ -194,7 +194,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       return { title: 'Rugs, last 24 h', explain: 'Tokens labeled rugged at the 1 hour mark (fell hard after the creator or top holders sold).',
         stats: [['Count', rows.length, 'num']],
         series: { label: 'Rugs per hour', kind: 'bar', fmt: 'num', points: bucket(rows.map((r) => ({ t: r.created_at })), H, Date.now() - D) },
-        tables: [{ title: 'Rugged tokens', cols: [C('Launched', 'created_at', 'time'), C('Token', 'symbol', 'token'), C('Peak 1 h', 'peak_mcap_1h', 'mcap'), C('At 1 h', 'mcap_1h', 'mcap'), C('Creator', 'creator', 'short')], rows }] };
+        tables: [{ title: 'Rugged tokens', cols: [C('Launched', 'created_at', 'time'), C('Token', 'symbol', 'token'), C('Peak 1 h', 'peak_mcap_1h', 'mcap'), C('At 1 h', 'mcap_1h', 'mcap'), C('Creator', 'creator', 'wallet')], rows }] };
     },
     ds_snaps() {
       const rows = all(`SELECT checkpoint, COUNT(*) n, SUM(max_mcap_after IS NOT NULL) l, SUM(reject IS NULL) ok, SUM(COALESCE(gap,0)) g FROM snapshots GROUP BY 1 ORDER BY 1`);
@@ -471,9 +471,9 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
   };
   // ---- smart-wallet tracker ----
   const sw = (w) => (w ? `${w.slice(0, 4)}…${w.slice(-4)}` : '–');
-  const walletCols = [C('#', 'rank', 'num'), C('Wallet', 'short'), C('Basis', 'basis'), C('Positions', 'n', 'num'), C('Hits', 'k', 'num'), C('Hit rate', 'ratePct', 'pct'), C('95% low', 'loPct', 'pct'), C('Avg return', 'avgPct', 'spct'), C('P&L', 'pnlSol', 'susd')];
+  const walletCols = [C('#', 'rank', 'num'), C('Wallet', 'short', 'wallet'), C('Basis', 'basis'), C('Positions', 'n', 'num'), C('Hits', 'k', 'num'), C('Hit rate', 'ratePct', 'pct'), C('95% low', 'loPct', 'pct'), C('Avg return', 'avgPct', 'spct'), C('P&L', 'pnlSol', 'susd')];
   const wRow = (r) => ({ ...r, short: sw(r.wallet), ratePct: r.rate * 100, loPct: r.lo * 100, avgPct: r.avgRet == null ? null : r.avgRet * 100, drill: `wallet:${r.wallet}`, label: `Wallet ${sw(r.wallet)}`, window: '' });
-  const tradeColsW = [C('Time', 'ts', 'time'), C('Wallet', 'short'), C('Rank', 'rank', 'num'), C('Side', 'side'), C('Token', 'symbol', 'token'), C('SOL', 'sol', 'solusd'), C('Mcap', 'mcap', 'mcap')];
+  const tradeColsW = [C('Time', 'ts', 'time'), C('Wallet', 'short', 'wallet'), C('Rank', 'rank', 'num'), C('Side', 'side'), C('Token', 'symbol', 'token'), C('SOL', 'sol', 'solusd'), C('Mcap', 'mcap', 'mcap')];
   Object.assign(H_, {
     tracker() {
       const v = trackerView(), C_ = v.config;
@@ -493,7 +493,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       const v = trackerView();
       return { title: 'Open positions of tracked wallets', explain: 'Positions on tokens still inside their first hour, marked to the current curve price (no exit costs).',
         stats: [['Open positions', v.open.length, 'num'], ['Tokens', new Set(v.open.map((r) => r.mint)).size, 'num']],
-        tables: [{ title: 'Open positions', cols: [C('Entered', 'first_at', 'time'), C('Wallet', 'short'), C('Rank', 'rank', 'num'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('Now', 'mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Return', 'ret', 'spct')], rows: v.open.map((r) => ({ ...r, short: sw(r.wallet) })) }] };
+        tables: [{ title: 'Open positions', cols: [C('Entered', 'first_at', 'time'), C('Wallet', 'short', 'wallet'), C('Rank', 'rank', 'num'), C('Token', 'symbol', 'token'), C('Entry mcap', 'entry_mcap', 'mcap'), C('Now', 'mcap', 'mcap'), C('In', 'buy_sol', 'solusd'), C('Return', 'ret', 'spct')], rows: v.open.map((r) => ({ ...r, short: sw(r.wallet) })) }] };
     },
   });
   const walletDrill = (w) => {
@@ -599,7 +599,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         { title: 'Checkpoint snapshots', cols: [C('Age', 'checkpoint', 'age'), C('Time', 'ts', 'time'), C('Mcap', 'mcap', 'mcap'), C('Score', 'score', 'num1'), C('Rejected', 'reject'), C('Max after', 'max_mcap_after', 'mcap'), C('Graduated after', 'graduated_after', 'yes')], rows: snaps },
         { title: 'Paper trades', cols: [C('Entered', 'entry_ts', 'time'), C('Book', 'book', 'book'), C('Status', 'status'), C('P&L', 'pnl_pct', 'spct'), C('P&L $', 'pnl_sol', 'susd'), C('Exit', 'exit_reason')], rows: papers },
         { title: 'Alerts', cols: [C('Time', 'ts', 'time'), C('Score', 'score', 'num1'), C('Mcap', 'mcap', 'mcap'), C('Peak multiple', 'max_multiple', 'mult'), C('Graduated', 'graduated', 'yes')], rows: alerts },
-        { title: 'Recorded trades, newest first', cols: [C('Time', 'ts', 'time'), C('Side', 'side'), C('SOL', 'sol', 'solusd'), C('Wallet', 'wallet', 'short')], rows: trades.map((t) => ({ ...t, side: t.is_buy ? 'buy' : 'sell' })) },
+        { title: 'Recorded trades, newest first', cols: [C('Time', 'ts', 'time'), C('Side', 'side'), C('SOL', 'sol', 'solusd'), C('Wallet', 'wallet', 'wallet')], rows: trades.map((t) => ({ ...t, side: t.is_buy ? 'buy' : 'sell' })) },
       ] };
   };
   const symOf = db.prepare('SELECT symbol FROM grad_watch WHERE mint = ?');
