@@ -1,5 +1,6 @@
 // Fetch token metadata JSON (from the create event's URI) to detect Telegram / X / website links.
 import { logger } from '../log.js';
+import { q } from '../db.js';
 const log = logger('meta');
 const queue = [];
 let active = 0;
@@ -42,6 +43,8 @@ async function fetchOne(t) {
     const tg = pick(j, ['telegram', 'tg']);
     const web = pick(j, ['website', 'web', 'site']);
     t.social = { twitter: /x\.com|twitter\.com/i.test(tw) || (!!tw && !/^https?:/.test(tw)), telegram: /t\.me|telegram/i.test(tg) || (!!tg && !/^https?:/.test(tg)), website: /^https?:\/\//i.test(web), fetched: true, links: { twitter: tw, telegram: tg, website: web } };
+    const img = typeof j.image === 'string' && /^(https?:\/\/|ipfs:\/\/)/i.test(j.image) ? j.image.slice(0, 300) : null;
+    if (img) { t.image = img; try { q.updateImage.run(img, t.mint); } catch { /* token row may not exist yet */ } }
     t.onSocial?.(t);
     metaStats.ok++;
   } catch (e) { metaStats.fail++; t.social.fetched = true; log.debug(`meta fail ${t.mint}`, e.message); }

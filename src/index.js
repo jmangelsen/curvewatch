@@ -12,6 +12,7 @@ import { TELEGRAM_DAILY_BLOCK, telegramFullText } from './compliance.js';
 import { startTgBot } from './engine/tgBot.js';
 import { Runners } from './engine/runners.js';
 import { Picks } from './engine/picks.js';
+import { makeCodex } from './codex.js';
 import { HolderPoller, holdersEnabled } from './engine/holders.js';
 import { fmtUsd } from './market.js';
 import { dexMcaps } from './engine/dex.js';
@@ -212,7 +213,8 @@ const holderPoller = new HolderPoller({ grads, pick: () => {
   return [...set];
 } });
 holderPoller.start();
-startServer({ engine, status, grads, strong, runners, picks, holderPoller, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners }), edgeView, edgeDetail, trackerView, rejectsView });
+const codex = makeCodex({ engine, grads });
+startServer({ engine, status, grads, strong, runners, picks, holderPoller, codex, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners, codex }), edgeView, edgeDetail, trackerView, rejectsView });
 startTgBot({ engine, grads, strong, status, runners, picks }); // two-way lookups; no-op unless Telegram is configured
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

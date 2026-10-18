@@ -64,7 +64,7 @@ function paperDrill(focus) {
   };
 }
 
-export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = () => null, runners = null }) {
+export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = () => null, runners = null, codex = null }) {
   const H_ = {
     launches() {
       const since = Date.now() - 3 * H;
@@ -406,6 +406,32 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
       tables: [{ title: 'Pairs, oldest first', cols: [C('Token', 'symbol'), C('Exit', 'exit', 'text'), C(`${STRATEGIES[a].label}`, 'a', 'spct'), C(`${STRATEGIES[b].label}`, 'b', 'spct'), C('Diff', 'diff', 'spct'), C('Peak', 'peak', 'mult'), C('Scale-out exit', 'aReason', 'text'), C('Main exit', 'bReason', 'text')],
         rows: P.pairs.slice(-300).reverse().map((x) => ({ symbol: x.symbol, exit: new Date(x.exitTs).toISOString().slice(5, 16).replace('T', ' '), a: x.a, b: x.b, diff: x.diff, peak: x.aPeak, aReason: x.aReason, bReason: x.bReason, drill: `tok:${x.mint}`, label: x.symbol })) }] };
   };
+  // ---- Trading codex ----
+  const codexDay = () => {
+    if (!codex) return null; const d = codex.day();
+    const tz = config.telegram?.timezone || 'UTC', hourOf = (ts) => Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hourCycle: 'h23' }).format(new Date(ts)));
+    const byHour = {}; for (const r of d.rows) { const h = hourOf(r.exit_ts); byHour[h] = (byHour[h] || 0) + (r.pnl_sol || 0); }
+    return { title: `Today's closed trades · ${d.day}`, explain: `Every paper position closed since local midnight, across all books (curve and graduate). ${d.trades ? `${d.wins} of ${d.trades} closed above zero; mean ${d.meanPct.toFixed(1)}% per trade.` : 'Nothing has closed yet today.'} Paper only: no order has ever been sent.`,
+      stats: [['Closed', d.trades, 'num'], ['Win rate', d.winRatePct, 'pct'], ['P&L', d.pnlSol, 'susd'], ['Mean / trade', d.meanPct, 'spct'], ['Best', d.best ? d.best.pnlPct : null, 'spct'], ['Worst', d.worst ? d.worst.pnlPct : null, 'spct']],
+      series: Object.keys(byHour).length > 1 ? { label: 'P&L by exit hour (SOL)', kind: 'bar', fmt: 'susd', points: Object.entries(byHour).sort((a, b) => a[0] - b[0]).map(([h, v]) => [Number(h), v]) } : undefined,
+      tables: [{ title: 'By book', cols: [C('Book', 'book', 'book'), C('Closed', 'n', 'num'), C('Wins', 'wins', 'num'), C('P&L', 'pnlSol', 'susd')], rows: Object.entries(d.byBook).map(([book, x]) => ({ book, ...x })).sort((a, b) => b.n - a.n) },
+        { title: 'Trades, newest first', cols: [C('Exit', 'exit', 'text'), C('Token', 'symbol', 'token'), C('Book', 'book', 'book'), C('Held', 'heldMin', 'min'), C('P&L', 'pnl_pct', 'spct'), C('SOL', 'pnl_sol', 'susd'), C('Why', 'exit_reason', 'text')],
+          rows: d.rows.sort((a, b) => b.exit_ts - a.exit_ts).map((r) => ({ ...r, exit: new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(r.exit_ts)), heldMin: (r.exit_ts - r.entry_ts) / 60000, drill: `tok:${r.mint}`, label: r.symbol })) }] };
+  };
+  const codexTape = () => {
+    if (!codex) return null; const ev = codex.tape(24, 400);
+    const kinds = { entry: 0, partial: 0, exit: 0 }; for (const e of ev) kinds[e.kind]++;
+    return { title: 'Trade tape · last 24 h', explain: 'Every paper entry, partial take-profit and exit in the last 24 hours across all books, newest first. Tap a row for the token record.',
+      stats: [['Entries', kinds.entry, 'num'], ['Partials', kinds.partial, 'num'], ['Exits', kinds.exit, 'num'], ['Exits above zero', ev.filter((e) => e.kind === 'exit' && e.pnlPct > 0).length, 'num']],
+      tables: [{ title: 'Events', cols: [C('Time', 't', 'time'), C('Event', 'kind', 'text'), C('Token', 'symbol', 'token'), C('Book', 'book', 'book'), C('P&L', 'pnlPct', 'spct'), C('Detail', 'detail', 'text')],
+        rows: ev.map((e) => ({ ...e, detail: e.kind === 'exit' ? e.reason : e.kind === 'partial' ? `sold at +${Math.round(e.pct || 0)}%` : `size ${e.sizeSol} SOL`, drill: `tok:${e.mint}`, label: e.symbol })) }] };
+  };
+  const codexMarket = () => {
+    if (!codex) return null; const s = codex.series(), n = codex.now();
+    return { title: 'Time in market · last 24 h', explain: `The bot had at least one open paper position for ${s.timeInMarketPct.toFixed(0)}% of the last 24 hours. Right now: ${n.positions.length} open across ${n.coins} coin${n.coins === 1 ? '' : 's'}; watching ${n.watching.curves} live curves and ${n.watching.graduates} graduates.`,
+      stats: [['Time in market', s.timeInMarketPct, 'pct'], ['Open now', n.positions.length, 'num'], ['Coins', n.coins, 'num'], ['Peak concurrent', Math.max(0, ...s.counts), 'num']],
+      series: { label: 'Open positions per 5 minutes', kind: 'bar', fmt: 'num', points: s.counts.map((c, i) => [s.start + i * s.step, c]) } };
+  };
   // ---- Edge Lab ----
   const testCols = [C('Hypothesis', 'label'), C('Window', 'window'), C('Tokens', 'n', 'num'), C('Net mean', 'meanPct', 'spct'), C('Lower bound', 'loPct', 'spct'), C('Status', 'status')];
   const edgeList = (title, explain, filter) => () => {
@@ -627,7 +653,7 @@ export function makeDrill({ engine, grads, edgeView = () => null, edgeDetail = (
         sections: SECTIONS,
         tables: [{ title: 'Simulation parameters currently in force', cols: [C('Setting', 'k'), C('Value', 'v')], rows: simulationParams(config) }] };
     }
-    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('seq:') ? () => seqDrill(key.slice(4)) : key.startsWith('pair:') ? () => pairDrill(key.slice(5)) : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
+    const fn = key.startsWith('gbt:') ? () => gbtDrill(key.slice(4)) : key.startsWith('book_') ? () => bookDrill(key.slice(5)) : key.startsWith('gate:') ? () => gateDrill(key.slice(5)) : key.startsWith('seq:') ? () => seqDrill(key.slice(4)) : key.startsWith('pair:') ? () => pairDrill(key.slice(5)) : key === 'codex_day' ? codexDay : key === 'codex_tape' ? codexTape : key === 'codex_market' ? codexMarket : key === 'rn_scorecard' ? rnScorecard : key === 'rn_live' ? rnLive : key.startsWith('rn_day:') ? () => rnDay(key.slice(7)) : key.startsWith('edge:') ? () => edgeKey(key.slice(5)) : key.startsWith('tok:') ? () => tokDrill(key.slice(4)) : key.startsWith('rej_cat:') ? () => { const [, kind, ...c] = key.split(':'); return rejDrill(kind, c.join(':')); } : key.startsWith('wallet:') ? () => walletDrill(key.slice(7)) : key.startsWith('tape:') ? () => { const [x, y] = key.slice(5).split('-').map(Number); return tapeDrill(x, Math.min(y, x + 6 * H)); } : H_[key];
     if (!fn) return null;
     const out = fn();
     return { key, generatedAt: Date.now(), solUsd: market.solUsd, ...out };

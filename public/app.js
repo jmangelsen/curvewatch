@@ -43,7 +43,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', x === b));
   document.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.id !== `tab-${S.tab}`));
-  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
+  if (S.tab === 'perf') { loadPerf(); loadTerm(true); termWelcome(); } if (S.tab === 'intel') loadIntel(); if (S.tab === 'codex') loadCodex(); if (S.tab === 'rejects') loadRejects(); if (S.tab === 'report') loadReport(); if (S.tab === 'grads') { loadGrads(); requestAnimationFrame(drawGradRadar); } if (S.tab === 'runners') loadRunners(); if (S.tab === 'live') requestAnimationFrame(drawRadar); if (S.tab === 'health') loadHealth(); if (S.tab === 'perf') loadBench();
   scrollTo({ top: 0, behavior: 'instant' });
 });
 
@@ -787,6 +787,7 @@ function connectSse() {
     es.addEventListener('paper', (e) => { try { termTail(JSON.parse(e.data)); } catch {} if (S.tab === 'perf') { clearTimeout(S._perfT); S._perfT = setTimeout(() => { loadPerf(); loadTerm(); }, 1500); } });
     es.addEventListener('gradAlert', (e) => { const a = JSON.parse(e.data); toast(`Re-ignition · ${a.symbol} · score ${Math.floor(a.score)}`); if (S.tab === 'grads') loadGrads(); });
     es.addEventListener('gradPaper', () => { if (S.tab === 'grads') loadGrads(); });
+    es.addEventListener('codex', (e) => { lastSse = Date.now(); try { cxPulse(JSON.parse(e.data)); } catch (err) { console.warn(err); } });
   } catch { /* fallback below */ }
 }
 async function refreshAlerts() { try { S.alerts = await get('/api/alerts?limit=60'); renderAlerts(); } catch {} }
@@ -1849,3 +1850,147 @@ $('#rjFeed')?.addEventListener('click', (e) => {
 });
 document.querySelector('.tabs [data-tab=rejects]')?.addEventListener('click', loadRejects);
 setInterval(() => { if (S.tab === 'rejects' && !document.hidden) loadRejects(); }, 15000);
+
+// ================= Trading codex =================
+// What the bot holds right now, on which coins, and what it held at any moment in the last 24 hours.
+const CX = { data: null, moment: null, momentData: null, filter: null, marks: new Map(), tapeKeys: new Set(), timer: null, booted: false };
+const CX_DAY = 86400000;
+const cxGateway = (u) => (!u ? null : u.startsWith('ipfs://') ? `https://pump.mypinata.cloud/ipfs/${u.slice(7)}` : u.replace(/^https?:\/\/(ipfs\.io|gateway\.pinata\.cloud|cf-ipfs\.com|dweb\.link)\/ipfs\//i, 'https://pump.mypinata.cloud/ipfs/'));
+const cxHue = (s) => { let h = 0; for (const c of s || '') h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+const cxBookColor = (b) => (['main', 'band', 'flow', 'confirm', 'random', 'clean', 'hold120', 'timed'].includes(b) ? `var(--b-${b})` : ({ follow: '#5fd3c8', followctl: '#8a929c', scale: '#f29e3e', fixed: '#6aa5e0', trail: '#a7d0ff' }[b] || 'var(--accent)'));
+const cxClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function cxAvatar(p) {
+  const img = cxGateway(p.image), init = esc((p.symbol || '?').replace(/[^A-Za-z0-9$]/g, '').slice(0, 3).toUpperCase() || '?');
+  const bg = `linear-gradient(135deg, hsl(${cxHue(p.mint)} 55% 38%), hsl(${(cxHue(p.mint) + 50) % 360} 60% 24%))`;
+  return `<div class="cx-ava" style="--av:${bg}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}<span>${init}</span></div>`;
+}
+function cxRangeBar(p) {
+  const cur = 1 + (p.markPct ?? 0) / 100, hasStop = p.stopMult != null && p.stopMult > 0.02, stop = hasStop ? p.stopMult : null, tp = p.tpMult;
+  const hi = Math.max(tp || 0, cur, 1.15) * 1.08, lo = Math.min(stop ?? 0.75, cur) * 0.92;
+  const X = (m) => Math.max(0, Math.min(100, ((m - lo) / (hi - lo)) * 100));
+  const stopX = hasStop ? X(stop) : 0, tpX = tp ? X(tp) : 100, entryX = X(1);
+  const right = tp ? `TP +${n((tp - 1) * 100, 0)}%` : p.rule?.trailPct ? `trail ${p.rule.trailPct}%` : p.rule?.maxHoldMin ? `timed ${p.rule.maxHoldMin}m` : 'no target';
+  const left = hasStop ? `stop ${n((stop - 1) * 100, 0)}%` : 'no stop';
+  return `<div class="cx-range-bar" title="${left} · entry · ${right}">
+    <span class="cx-rb-lab e" style="left:${n(entryX, 1)}%">entry</span>
+    <div class="cx-rb-track" style="--stop:${n(stopX, 1)}%;--tp:${n(tpX, 1)}%"></div>
+    <div class="cx-rb-tick" style="left:${n(entryX, 1)}%"></div>
+    <div class="cx-rb-mark ${cls(p.markPct)}" style="left:${n(X(cur), 1)}%"></div>
+    <span class="cx-rb-lab l">${left}</span><span class="cx-rb-lab r">${right}</span></div>`;
+}
+function cxCard(p, { moment = false } = {}) {
+  const prev = CX.marks.get(p.key), flash = !moment && prev != null && p.markPct != null && Math.abs(p.markPct - prev) > 0.05 ? (p.markPct > prev ? 'flash-up' : 'flash-down') : '';
+  const enter = !moment && prev == null && CX.booted ? 'enter' : '';
+  if (!moment && p.markPct != null) CX.marks.set(p.key, p.markPct);
+  const curve = p.venue === 'curve', dd = p.peakPct != null && p.markPct != null ? p.peakPct - p.markPct : null;
+  const progress = curve ? `<div class="cx-prog"><i style="width:${n(Math.min(100, p.progressPct ?? 0), 0)}%"></i></div><div class="cx-prog-lab"><span>bonding curve ${p.progressPct != null ? pct(p.progressPct, 0) : '–'}</span><span>${p.mcapUsd != null ? usd(p.mcapUsd) : '–'} mcap${p.entryMcapUsd != null ? ` · in at ${usd(p.entryMcapUsd)}` : ''}</span></div>`
+    : `<div class="cx-prog pool"><i style="width:${n(Math.min(100, ((p.liqUsd || 0) / Math.max(p.mcapUsd || 1, 1)) / 0.3 * 100), 0)}%"></i></div><div class="cx-prog-lab"><span>PumpSwap pool ${p.liqUsd != null ? usd(p.liqUsd) : '–'}</span><span>${p.mcapUsd != null ? usd(p.mcapUsd) : '–'} mcap${p.entryMcapUsd != null ? ` · in at ${usd(p.entryMcapUsd)}` : ''}</span></div>`;
+  const stats = [['held', age(p.heldSec)], ['peak', p.peakPct != null ? signed(p.peakPct, 0, '%') : '–'], ['off peak', dd != null ? `−${n(Math.max(0, dd), 0)}%` : '–'],
+    curve ? ['buyers', p.buyers != null ? `${n(p.buyers, 0)}${p.holders != null ? ` · ${n(p.holders, 0)}h` : ''}` : '–'] : ['holders', p.holders != null ? n(p.holders, 0) : 'unknown']];
+  const rule = p.rule ? `${p.tp1Done ? '<span class="pulse">profit banked · </span>' : ''}${esc(p.rule.text || '')}` : '';
+  const outcome = p.outcome ? `<div class="cx-outcome ${cls(p.outcome.pnlPct)}">later exited ${cxClock(p.outcome.exitTs)} · ${signed(p.outcome.pnlPct, 1, '%')} · ${esc(p.outcome.reason || '')}</div>` : moment ? `<div class="cx-outcome muted">still open</div>` : '';
+  const drawer = curve ? `data-mint="${esc(p.mint)}"` : `data-gmint="${esc(p.mint)}"`;
+  return `<article class="cx-card ${flash} ${enter}" style="--bc:${cxBookColor(p.book)}" data-cx-mint="${esc(p.mint)}" data-cx-venue="${p.venue}" ${drawer} role="button" tabindex="0" aria-label="${esc(p.symbol)} position: open the token record">
+    <div class="cx-top">${cxAvatar(p)}<div class="cx-id"><div class="cx-sym">${esc(p.symbol || '?')}<small title="${esc(p.name || '')}">${esc(p.name || '')}</small></div>
+      <div class="cx-tags"><span class="cx-tag book">${esc(p.bookLabel)}</span><span class="cx-tag">${curve ? 'curve' : 'PumpSwap'}</span>${p.gated ? '<span class="cx-tag gated">gated</span>' : ''}${p.approx ? '<span class="cx-tag">approx</span>' : ''}${!p.live && !moment ? '<span class="cx-tag">no live feed</span>' : ''}</div></div>
+      <div class="cx-pnl"><div class="big ${cls(p.markPct)}">${p.markPct != null ? signed(p.markPct, 1, '%') : '–'}</div><div class="usd">${p.markUsd != null ? usd(p.markUsd) : `${n(p.markSol, 3)} SOL`} of ${p.sizeUsd != null ? usd(p.sizeUsd) : `${n(p.sizeSol, 2)} SOL`}</div></div></div>
+    ${cxRangeBar(p)}
+    ${progress}
+    <div class="cx-stats">${stats.map(([l, v]) => `<div><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div>
+    <div class="cx-rule"><span>${rule}</span><span>${p.lastTradeAgoSec != null ? `last trade ${age(p.lastTradeAgoSec)} ago` : ''}</span></div>
+    ${outcome}</article>`;
+}
+function cxBooks(d) {
+  const counts = d.books || {}, meta = CX.data?.bookMeta || {};
+  const keys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  $('#cxBooks').innerHTML = keys.length ? [`<button type="button" aria-pressed="${CX.filter == null}" data-b=""><i style="--bc:var(--accent)"></i>All <b>${d.positions.length}</b></button>`,
+    ...keys.map((b) => `<button type="button" aria-pressed="${CX.filter === b}" data-b="${esc(b)}" style="--bc:${cxBookColor(b)}"><i></i>${esc(meta[b]?.label || b)} <b>${counts[b]}</b></button>`)].join('') : '';
+}
+function cxGrid(d, moment) {
+  const rows = d.positions.filter((p) => !CX.filter || p.book === CX.filter);
+  if (!rows.length) {
+    const L = d.lastExit || CX.data?.lastExit;
+    $('#cxGrid').innerHTML = `<div class="cx-empty"><strong>${moment ? `Flat at ${cxClock(d.ts)}` : CX.filter ? `No ${esc(CX.data?.bookMeta?.[CX.filter]?.label || CX.filter)} position open` : 'Flat'}</strong>${moment ? 'No paper position was open at that moment.' : `Watching ${n(d.watching?.curves ?? CX.data?.watching?.curves, 0)} live curves and ${n(d.watching?.graduates ?? CX.data?.watching?.graduates, 0)} graduates for the next signal.`}${L ? `<div class="cx-last">last exit · ${esc(L.symbol)} · <span class="${cls(L.pnlPct)}">${signed(L.pnlPct, 1, '%')}</span> · ${esc(L.reason || '')} · ${ago(L.t)} ago</div>` : ''}</div>`;
+    return;
+  }
+  $('#cxGrid').innerHTML = rows.map((p) => cxCard(p, { moment })).join('');
+}
+function cxHero(d, moment) {
+  const st = $('.cx-state'); st.classList.remove('in', 'flat', 'moment');
+  const open = d.positions.length, ex = d.exposure || {};
+  if (moment) { st.classList.add('moment'); $('#cxWord').textContent = `AT ${cxClock(d.ts)}`; $('#cxSub').textContent = open ? `${open} position${open === 1 ? '' : 's'} on ${d.coins} coin${d.coins === 1 ? '' : 's'} · marked ${ex.pnlPct != null ? signed(ex.pnlPct, 1, '%') : '–'} (approx)` : 'flat at that moment'; }
+  else if (open) { st.classList.add('in'); $('#cxWord').textContent = 'IN TRADE'; $('#cxSub').textContent = `${open} position${open === 1 ? '' : 's'} on ${d.coins} coin${d.coins === 1 ? '' : 's'} · ${ex.markUsd != null ? usd(ex.markUsd) : `${n(ex.markSol, 2)} SOL`} marked ${ex.pnlPct != null ? signed(ex.pnlPct, 1, '%') : ''}`; }
+  else { st.classList.add('flat'); $('#cxWord').textContent = 'FLAT'; $('#cxSub').textContent = `watching ${n(d.watching?.curves, 0)} curves · ${n(d.watching?.graduates, 0)} graduates · ${d.lastExit ? `last exit ${ago(d.lastExit.t)} ago` : 'no exits in 24 h'}`; }
+  $('#cxTabDot').hidden = !(CX.data?.inTrade);
+}
+function cxKpis(d) {
+  const s = d.series, day = d.day, ex = d.exposure || {};
+  const k = [['Open positions', n(d.positions.length, 0), `${d.coins} coin${d.coins === 1 ? '' : 's'} · ${Object.keys(d.books || {}).length} book${Object.keys(d.books || {}).length === 1 ? '' : 's'}`, 'codex_market'],
+    ['At risk now', ex.exposureUsd != null ? usd(ex.exposureUsd) : `${n(ex.exposureSol, 2)} SOL`, ex.sizeUsd != null ? `${usd(ex.sizeUsd)} deployed · marked ${ex.pnlPct != null ? signed(ex.pnlPct, 1, '%') : '–'}` : 'nothing deployed', 'codex_market'],
+    ['Time in market 24h', s ? pct(s.timeInMarketPct, 0) : '–', s ? `peak ${Math.max(0, ...s.counts)} concurrent` : '', 'codex_market'],
+    ['Today', day ? `${n(day.trades, 0)} closed` : '–', day && day.trades ? `${pct(day.winRatePct, 0)} above zero · ${day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`}` : 'nothing closed yet', 'codex_day']];
+  $('#cxKpis').innerHTML = k.map(([l, v, sub, key]) => `<div class="kpi" data-drill="${key}" data-label="${esc(l)}" role="button" tabindex="0" aria-label="${esc(l)}: open detail"><div class="label">${esc(l)}</div><div class="value">${v}</div><div class="sub">${esc(sub)}</div></div>`).join('');
+}
+function cxStrip(d) {
+  const s = d.series; if (!s) return;
+  const max = Math.max(1, ...s.counts), cur = CX.moment ? Math.floor((CX.moment - s.start) / s.step) : -1;
+  $('#cxStrip').innerHTML = s.counts.map((c, i) => `<b class="${c ? '' : 'z'} ${i === cur ? 'cur' : ''}" style="height:${c ? Math.max(8, (c / max) * 100) : 4}%" title="${cxClock(s.start + i * s.step)} · ${c} open"></b>`).join('');
+  const lab = (f) => cxClock(s.start + f * CX_DAY);
+  $('#cxAx0').textContent = lab(0); $('#cxAx1').textContent = lab(0.25); $('#cxAx2').textContent = lab(0.5); $('#cxAx3').textContent = lab(0.75);
+}
+function cxTape(d) {
+  const ev = d.tape || []; const keys = new Set(ev.map((e) => `${e.kind}:${e.id}:${e.t}`));
+  $('#cxTape').innerHTML = ev.length ? ev.slice(0, 40).map((e) => { const k = `${e.kind}:${e.id}:${e.t}`, isNew = CX.booted && !CX.tapeKeys.has(k);
+    const g = e.kind === 'entry' ? '▲' : e.kind === 'partial' ? '◆' : '▼';
+    const right = e.kind === 'exit' ? `<span class="${cls(e.pnlPct)}">${signed(e.pnlPct, 1, '%')}</span> <small class="faint">${e.pnlUsd != null ? usd(e.pnlUsd, { sign: true }) : ''}</small>` : e.kind === 'partial' ? `<span class="up">+${n(e.pct, 0)}% banked</span>` : `<span class="faint">${e.sizeUsd != null ? usd(e.sizeUsd) : `${n(e.sizeSol, 2)} SOL`}</span>`;
+    const what = e.kind === 'exit' ? esc(e.reason || 'exit') : e.kind === 'partial' ? 'partial take-profit' : 'entered';
+    return `<div class="cx-ev ${isNew ? 'new' : ''}" data-${e.venue === 'curve' ? 'mint' : 'gmint'}="${esc(e.mint)}" role="button" tabindex="0"><span class="t">${cxClock(e.t)}</span><span class="g ${e.kind} ${e.kind === 'exit' ? cls(e.pnlPct) : ''}">${g}</span><span class="w"><b>${esc(e.symbol || '?')}</b> <small>· ${esc(e.bookLabel)} · ${what}${e.kind === 'exit' && e.heldSec != null ? ` after ${age(e.heldSec)}` : ''}</small></span><span class="r">${right}</span></div>`; }).join('')
+    : '<div class="empty"><strong>Quiet</strong>No paper entries or exits in the last 24 hours.</div>';
+  CX.tapeKeys = keys;
+  $('#cxTapeHint').textContent = ev.length ? `${ev.filter((e) => e.kind === 'entry').length} entries · ${ev.filter((e) => e.kind === 'exit').length} exits in 24 h · tap for the token, header for the full tape` : 'entries, partials and exits as they happen';
+}
+function cxDay(d) {
+  const day = d.day; if (!day) return;
+  $('#cxDayHint').textContent = `${day.day} · all books · since local midnight`;
+  $('#cxDay').innerHTML = [['Closed', n(day.trades, 0), day.trades ? `${day.wins} above zero` : 'nothing yet'], ['P&L', day.pnlUsd != null ? usd(day.pnlUsd, { sign: true }) : `${n(day.pnlSol, 3)} SOL`, day.meanPct != null ? `mean ${signed(day.meanPct, 1, '%')} per trade` : ''],
+    ['Best', day.best ? signed(day.best.pnlPct, 0, '%') : '–', day.best ? `${day.best.symbol} · ${CX.data?.bookMeta?.[day.best.book]?.label || day.best.book}` : ''], ['Worst', day.worst ? signed(day.worst.pnlPct, 0, '%') : '–', day.worst ? `${day.worst.symbol} · ${CX.data?.bookMeta?.[day.worst.book]?.label || day.worst.book}` : '']]
+    .map(([l, v, s]) => `<div><div class="l">${l}</div><div class="v ${l === 'P&L' ? cls(day.pnlSol) : l === 'Best' ? 'up' : l === 'Worst' ? cls(day.worst?.pnlPct) : ''}">${v}</div><div class="s">${esc(s)}</div></div>`).join('');
+}
+function renderCodex() {
+  const d = CX.data; if (!d) return;
+  const moment = CX.moment != null && CX.momentData;
+  const view = moment ? CX.momentData : d;
+  cxHero(view, !!moment); cxKpis(d); $('#cxKpis').classList.toggle('dim', !!moment); cxStrip(d); cxBooks(view); cxGrid(view, !!moment); cxTape(d); cxDay(d);
+  $('#cxLiveBadge').className = `cx-live-badge ${moment ? 'off' : ''}`; $('#cxLiveBadge').innerHTML = moment ? `<i></i>${cxClock(view.ts)}` : '<i></i>LIVE';
+  $('#cxMomentLabel').textContent = moment ? `${new Date(view.ts).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} · marks rebuilt from the tape` : 'any moment in the last 24 hours';
+  $('#cxBackLive').hidden = !moment; $('#cxMomentHint').textContent = moment ? 'release at the right edge or tap back to live' : 'drag to travel';
+  CX.booted = true;
+}
+async function loadCodex() {
+  try { CX.data = await get('/api/codex'); if (CX.moment == null) renderCodex(); else { cxKpis(CX.data); cxStrip(CX.data); cxTape(CX.data); cxDay(CX.data); } } catch (e) { console.warn(e); }
+}
+let cxMomentT = null;
+async function cxGoto(ts) {
+  CX.moment = ts;
+  clearTimeout(cxMomentT);
+  cxMomentT = setTimeout(async () => { try { CX.momentData = await get(`/api/codex?at=${Math.floor(ts)}`); renderCodex(); } catch (e) { console.warn(e); } }, 120);
+  $('#cxMomentLabel').textContent = `${cxClock(ts)} · loading that moment`;
+}
+function cxLive() { CX.moment = null; CX.momentData = null; $('#cxRange').value = 1000; renderCodex(); }
+$('#cxRange').addEventListener('input', (e) => { const v = Number(e.target.value); if (v >= 998) return cxLive(); const s = CX.data?.series; const now = Date.now(); cxGoto((s ? s.start : now - CX_DAY) + (v / 1000) * CX_DAY); });
+$('#cxBackLive').onclick = cxLive;
+$('#cxBooks').addEventListener('click', (e) => { const b = e.target.closest('button[data-b]'); if (!b) return; CX.filter = b.dataset.b || null; renderCodex(); });
+$('#cxGrid').addEventListener('click', (e) => { const c = e.target.closest('.cx-card'); if (!c || e.target.closest('a')) return; c.dataset.cxVenue === 'curve' ? openDrawer(c.dataset.cxMint) : openGradDrawer(c.dataset.cxMint); });
+$('#cxGrid').addEventListener('keydown', (e) => { if (e.key !== 'Enter' && e.key !== ' ') return; const c = e.target.closest('.cx-card'); if (!c) return; e.preventDefault(); c.click(); });
+$('#cxTape').addEventListener('click', (e) => { const r = e.target.closest('.cx-ev'); if (!r) return; e.stopPropagation(); r.dataset.mint ? openDrawer(r.dataset.mint) : openGradDrawer(r.dataset.gmint); });
+$('#cxStrip').addEventListener('click', (e) => { const b = e.target.closest('b'); if (!b) return; const i = [...b.parentElement.children].indexOf(b); const s = CX.data?.series; if (!s) return; const ts = s.start + (i + 0.5) * s.step; $('#cxRange').value = Math.round(((ts - s.start) / CX_DAY) * 1000); cxGoto(ts); });
+document.querySelector('.tabs [data-tab=codex]')?.addEventListener('click', () => { loadCodex(); });
+setInterval(() => { if (S.tab === 'codex' && !document.hidden && CX.moment == null && Date.now() - lastSse > 7000) loadCodex(); if (S.tab === 'codex' && !document.hidden && Date.now() - (CX.fullAt || 0) > 20000) { CX.fullAt = Date.now(); loadCodex(); } }, 3000);
+// live pulse from the stream: positions and totals only; the full payload (tape, day, series) refreshes every 20 s
+function cxPulse(p) {
+  if (!CX.data) { CX.data = { ...p, tape: [], series: null, day: null, bookMeta: {} }; }
+  else Object.assign(CX.data, { ts: p.ts, inTrade: p.inTrade, positions: p.positions, coins: p.coins, books: p.books, exposure: p.exposure, watching: p.watching, solUsd: p.solUsd });
+  $('#cxTabDot').hidden = !p.inTrade;
+  if (S.tab === 'codex' && CX.moment == null && !document.hidden) renderCodex();
+}

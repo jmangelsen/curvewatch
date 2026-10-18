@@ -76,12 +76,15 @@ for (const col of ['book TEXT', 'rules TEXT', 'gated INTEGER', 'score REAL', 'ma
   try { db.exec(`ALTER TABLE paper_trades ADD COLUMN ${col}`); } catch { /* exists */ }
 }
 for (const [t, c] of [['snapshots', 'gap INTEGER'], ['tokens', 'gap INTEGER'], ['alerts', 'gap INTEGER']]) { try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ } }
+try { db.exec('ALTER TABLE tokens ADD COLUMN image TEXT'); } catch { /* exists */ }
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_cfg ON paper_trades(cfg, status, exit_ts)'); } catch { /* ignore */ }
 
 export const q = {
   insertToken: db.prepare(`INSERT OR IGNORE INTO tokens (mint,name,symbol,uri,creator,created_at,create_slot,initial_buy_sol,initial_mcap,mayhem,pool)
     VALUES (@mint,@name,@symbol,@uri,@creator,@created_at,@create_slot,@initial_buy_sol,@initial_mcap,@mayhem,@pool)`),
   updateSocial: db.prepare(`UPDATE tokens SET has_twitter=?, has_telegram=?, has_website=? WHERE mint=?`),
+  updateImage: db.prepare('UPDATE tokens SET image=? WHERE mint=? AND image IS NULL'),
+  tokenImage: db.prepare('SELECT image, name FROM tokens WHERE mint=?'),
   updateInitialBuy: db.prepare(`UPDATE tokens SET initial_buy_sol=?, initial_mcap=? WHERE mint=?`),
   finalizeToken: db.prepare(`UPDATE tokens SET peak_mcap_1h=@peak, mcap_1h=@mcap, graduated=@grad, graduated_at=@gradAt,
     rugged=@rugged, unique_buyers_1h=@buyers, max_score=@maxScore, alerted=@alerted, finalized=1 WHERE mint=@mint`),

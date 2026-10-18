@@ -25,6 +25,7 @@
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-tab="live" data-short="Live">Live</button>
+    <button role="tab" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
     <button role="tab" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
@@ -108,6 +109,37 @@
         <div class="table-wrap"><table class="board responsive" id="rnDays"><thead><tr><th>Day</th><th class="num">Picks</th><th class="num">Scored</th><th class="num">Hits</th><th class="num">2×</th><th class="num">Random hits</th><th class="num">Random 2×</th></tr></thead><tbody></tbody></table></div>
       </article>
     </div>
+  </section>
+  <section id="tab-codex" class="tab-panel" hidden>
+    <div class="cx-hero" id="cxHero">
+      <div class="cx-state tile-drill" data-drill="codex_market" data-label="Time in market" role="button" tabindex="0" aria-label="Bot state: open time-in-market detail">
+        <div class="cx-orb" id="cxOrb"><i></i></div>
+        <div class="cx-state-text"><div class="cx-state-word" id="cxWord">—</div><div class="cx-state-sub" id="cxSub">connecting to the collector</div></div>
+      </div>
+      <div class="cx-kpis" id="cxKpis"></div>
+    </div>
+    <div class="cx-moment card" id="cxMoment">
+      <div class="cx-moment-head">
+        <div class="cx-moment-title"><span class="cx-live-badge" id="cxLiveBadge"><i></i>LIVE</span><span id="cxMomentLabel">any moment in the last 24 hours</span></div>
+        <div class="cx-moment-ctl"><button type="button" class="cx-btn" id="cxBackLive" hidden>Back to live</button><span class="hint" id="cxMomentHint">drag to travel</span></div>
+      </div>
+      <div class="cx-strip" id="cxStrip" role="img" aria-label="Open positions over the last 24 hours"></div>
+      <input type="range" id="cxRange" class="cx-range" min="0" max="1000" value="1000" step="1" aria-label="Moment in the last 24 hours">
+      <div class="cx-axis"><span id="cxAx0"></span><span id="cxAx1"></span><span id="cxAx2"></span><span id="cxAx3"></span><span>now</span></div>
+    </div>
+    <div class="cx-books" id="cxBooks" role="group" aria-label="Filter by book"></div>
+    <div class="cx-grid" id="cxGrid"></div>
+    <div class="cx-lower">
+      <article class="card cx-tape-card">
+        <div class="card-head"><h2>Tape</h2><span class="hint" id="cxTapeHint">entries, partials and exits as they happen</span></div>
+        <div class="cx-tape tile-drill" id="cxTape" data-drill="codex_tape" data-label="Trade tape" role="button" tabindex="0"></div>
+      </article>
+      <article class="card cx-day-card tile-drill" data-drill="codex_day" data-label="Today's closed trades" role="button" tabindex="0">
+        <div class="card-head"><h2>Today</h2><span class="hint" id="cxDayHint"></span></div>
+        <div class="cx-day" id="cxDay"></div>
+      </article>
+    </div>
+    <p class="small-note">Paper positions across every book, marked live from the curve or pool. Travelling back in time rebuilds marks from the recorded tape and is approximate. No order has ever been sent by this system.</p>
   </section>
   <section id="tab-grads" class="tab-panel" hidden>
     <div class="kpis" id="gKpis"></div>

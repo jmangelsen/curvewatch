@@ -19,7 +19,7 @@ import { VERDICTS } from './verdicts.js';
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners, picks, holderPoller }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners, picks, holderPoller, codex }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -59,6 +59,12 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     const d = engine.tokenDetail(req.params.mint);
     if (!d) return res.status(404).json({ error: 'unknown token' });
     res.json(d);
+  });
+  // Trading codex: live positions across every paper book, or the positions open at a past instant (?at=<ms>).
+  app.get('/api/codex', (req, res) => {
+    const at = Number(req.query.at);
+    if (Number.isFinite(at) && at > 0 && at < Date.now() - 5000) return res.json({ ...codex.at(at), notice: API_NOTICE });
+    res.json({ ...codex.now(), notice: API_NOTICE });
   });
   app.get('/api/paper', (req, res) => {
     res.json({ notice: API_NOTICE, config: { stopPct: config.paper.stopPct, tp1Multiple: config.paper.tp1Multiple, exitDelaySec: config.paper.exitDelaySec }, open: paper.openPositions(engine.getToken), recent: q.allPapers.all(100).map((r) => ({ ...r, events: JSON.parse(r.events || '[]') })), kill: paper.killRule(), books: paper.books(), market: gateView(), band: config.band, config: config.paper });
@@ -135,6 +141,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   engine.on('alert', (a) => push('alert', a));
   grads.on('alert', (a) => push('gradAlert', a));
   setInterval(() => { if (clients.size) { push('status', status()); push('radar', engine.radar(60)); } }, 2500);
+  setInterval(() => { if (clients.size) { try { push('codex', codex.pulse()); } catch (e) { log.warn('codex pulse', e.message); } } }, 2500);
   setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); while (grads.paperEvents.length) push('gradPaper', grads.paperEvents.shift()); }, 1000);
   setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
 
