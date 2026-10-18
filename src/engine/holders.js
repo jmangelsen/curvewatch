@@ -95,7 +95,13 @@ export class HolderPoller {
   /** Horde cadence for one watched graduate: minutes between counts, or null when it is outside the schedule. */
   static cadenceMin(st, now, cfg = H.horde) {
     if (!st) return null; const age = now - (st.pairCreatedAt || st.addedAt || now), HOUR = 3600000;
-    if (age < cfg.firstHours * HOUR) return cfg.everyMin;
+    if (age < cfg.firstHours * HOUR) {
+      // A graduate that has already run 3x from its first reading inside the first hours is the rare event the horde
+      // hypothesis is about (about four a day); count those every few minutes so the dip-and-reload phase is resolved.
+      const first = st.series?.[0]?.mcap || 0, nowMcap = st.last?.mcap || st.series?.[st.series.length - 1]?.mcap || 0;
+      if (first > 0 && nowMcap >= cfg.legMult * first) return cfg.legEveryMin;
+      return cfg.everyMin;
+    }
     if (age < cfg.laterHours * HOUR && (st.last?.mcap || 0) >= cfg.laterMinMcapUsd) return cfg.laterEveryMin;
     return null;
   }

@@ -160,7 +160,7 @@ export const config = {
     maxPages: num('HOLDERS_MAX_PAGES', 3), paceMs: num('HOLDERS_PACE_MS', 600), runnerMin: num('HOLDERS_RUNNER_MIN', 2500), dailyCalls: num('HOLDERS_DAILY_CALLS', 2600),
     // Horde schedule (Hypothesis 3): every new graduate every 20 min for its first 3 h, then hourly to 24 h while above $30k.
     // ~200 graduates/day -> ~2,600 calls/day -> ~1M Helius credits/month on the free plan (DAS = 10 credits, ~1.3 pages avg).
-    horde: { firstHours: num('HORDE_FIRST_HOURS', 3), everyMin: num('HORDE_EVERY_MIN', 20), laterHours: num('HORDE_LATER_HOURS', 24), laterEveryMin: num('HORDE_LATER_EVERY_MIN', 60), laterMinMcapUsd: num('HORDE_LATER_MIN_MCAP_USD', 30000) } },
+    horde: { firstHours: num('HORDE_FIRST_HOURS', 3), everyMin: num('HORDE_EVERY_MIN', 20), laterHours: num('HORDE_LATER_HOURS', 24), laterEveryMin: num('HORDE_LATER_EVERY_MIN', 60), laterMinMcapUsd: num('HORDE_LATER_MIN_MCAP_USD', 30000), legMult: num('HORDE_LEG_MULT', 3), legEveryMin: num('HORDE_LEG_EVERY_MIN', 5) } },
   // 24-hour gate: the bar a book must clear on a rolling day before any money is discussed. Written before looking.
   gate24h: { hours: num('GATE24_HOURS', 24), minN: num('GATE24_MIN_N', 300), minMeanPct: num('GATE24_MIN_MEAN_PCT', 0), minLoPct: num('GATE24_MIN_LO_PCT', -3) },
   killRule: {

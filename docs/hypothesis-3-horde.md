@@ -81,3 +81,40 @@ that actually did it is worth more than any proxy.
 Engineering already spent on the Studio features. Data: $0 (free tier). Operator time: one line in `.env`.
 Expected revenue: $0 until a book passes; the justification is defensible data (nobody else has a clean
 holder-count history for every pump.fun graduate at 15-minute resolution).
+
+## Case trace: `2bCC…Vpump` ("Trump $1 Coin", ticker 1), supplied by JM as a coin that "did it"
+
+Sources: sandbox database (155 post-graduation snapshots), DexScreener pairs, Helius holder count on 2026-10-18.
+
+| UTC, 2026-10-15 | Market cap | Trailing-hour tx | Note |
+|---|---|---|---|
+| 20:16:09 | launch | | TRUMP-quoted pump.fun curve. Screener saw it at 30 s, flagged `non-SOL quote`, recorded no features. |
+| 20:19:27 | | | Migrated to PumpSwap 3 min 18 s after launch: the whole curve was bought through in 198 s. |
+| 20:39:45 | $190k | 17,521 | First watch snapshot. Typical graduate at this age: a few hundred tx. |
+| 20:49 | $625k | 24,419 | 3.3× in ten minutes. |
+| 21:00 | $794k | 34,901 | First-leg top. |
+| 21:21 | $321k | 47,116 | −60% in 21 min while hourly tx kept climbing: the dip was absorbed, not abandoned. |
+| 23:03 | $906k | 12,441 | Reclaimed the first-leg top. |
+| 23:47 | $2.94M | 26,961 | Peak, 3 h 31 min after launch. |
+| 10-16 12:42 | $2.83M | 8,258 | Second peak. |
+| 10-18 15:10 | $374k | 431 | −87% from peak. 10,239 holders (Helius, 11 pages). |
+
+Multiples that actually existed: 15.5× from the first visible snapshot, 9.1× from the post-dip low, 4.7× from the
+first ten-minute reading after the leg. The "1000×" is measured from a launch price that only the launch bundle
+paid; outsiders could not have bought before migration. The tradeable event was a 9–15× over three hours with a
+60% drawdown in the middle that would have stopped out every fixed-stop entry in this project.
+
+What generalises, on the 14-day sandbox watch (3,792 graduates):
+
+- A ≥ 3× first leg within 3 h of migration happened on 57 labeled graduates (1.5%, about four a day). Buying at the
+  moment the leg is confirmed: 2× within 6 h 17.5%, median price at 6 h 0.33× entry.
+- The pattern this coin showed, a ≥ 40% dip within an hour of that leg's top while the trailing-hour transaction count
+  is still rising: n 45 snapshots on 24 coins, 2× within 6 h 26.7%, above entry at 6 h 37.8%, median 0.67×. The same
+  dip with transaction count falling: 14.0%, 14.0%, median 0.37×. Base: 4.7% and 50%. A hint from 24 coins, not evidence.
+- Quote token is not the story: 21% of the big movers were non-SOL curves against 20% of all watched graduates.
+
+Consequence for the collector: graduates that have run 3× inside the first hours are counted every 5 minutes
+instead of 20 (`horde.legMult`, `horde.legEveryMin`), roughly 150 extra calls a day, so the dip-and-reload hour is
+resolved in holders rather than transactions. H3d is added to the pre-registration: holder count rising through a
+≥ 40% dip after a ≥ 3× first leg predicts price above entry at 6 h; falsified if the top tercile of holder growth
+during the dip is below entry at 6 h as often as the bottom tercile.
