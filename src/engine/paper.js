@@ -53,6 +53,9 @@ export const STRATEGIES = {
   hold120: { id: 'hold120', label: 'Hold 120s', entry: `main or band signal before ${SC.hold120.checkpointSec}s of age; enter at the ${SC.hold120.checkpointSec}s checkpoint only if price ≥ signal price`,
     delaySec: 0, tpMult: P.tp1Multiple, tpFraction: 1, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, requireMinRet: 0, candidate: true,
     thesis: 'The alert fires on fading momentum; waiting for the fixed 2-minute checkpoint and requiring the price to have held removes the entries that were already rolling over.' },
+  scale: { id: 'scale', label: 'Scale-out', entry: `score ≥ ${config.scoring.alertScore}; sells 80% at +125%, keeps 20% behind a breakeven floor and the trail`,
+    delaySec: P.entryDelaySec, tpMult: 2.25, tpFraction: 0.8, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, beAfterTp: true, candidate: true,
+    note: 'Requested exit rule, tested as its own book against Main (same entries). Isolates the exit: any difference between the two books is the exit rule alone.' },
   timed: { id: 'timed', label: 'Timed 1h', entry: `main signal; no stop and no target, sell at ${SC.timed.holdMin} min (or curve close / idle)`,
     delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: 100, trailPct: 100, maxHoldMin: SC.timed.holdMin, candidate: true,
     thesis: 'About half of all trades hit the stop before the target. This variant rides the whole distribution for an hour; the graduates sweep found timed exits least bad, which is untested on the curve until now.' },
@@ -237,6 +240,8 @@ function checkExit(pos, t) {
   if (!pos.tp1Done && mult >= pos.tpMult) return trigger('tp', `take profit +${round((pos.tpMult - 1) * 100, 0)}%`);
   if (mult <= 1 - pos.stopPct / 100) return trigger('exit', `stop -${pos.stopPct}%`);
   if (pos.tp1Done && total <= pos.peakValue * (1 - S.trailPct / 100)) return trigger('exit', `trailing stop ${S.trailPct}%`);
+  // breakeven floor on the remainder: once profit is banked, the rest is never allowed to trade below the entry price
+  if (pos.tp1Done && S.beAfterTp && pos.tokens > 0 && value <= pos.sizeSol * (pos.tokensLeft / pos.tokens)) return trigger('exit', 'breakeven floor on remainder');
   if (heldMin >= S.maxHoldMin) return trigger('exit', 'max hold');
   if ((t - token.lastTradeAt) / 60000 >= P.idleExitMin) return trigger('exit', 'idle curve');
 }

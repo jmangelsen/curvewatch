@@ -783,7 +783,10 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 @media (max-width: 720px) { .gate-grid { gap: var(--space-2); } .gate-tile .value { font-size: var(--text-base); } }
 
 /* Runner board */
-.grid-runners { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); grid-template-areas: 'today live' 'score days'; }
+.grid-runners { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); grid-template-areas: 'picks picks' 'today live' 'score days'; }
+.rn-picks-card { grid-area: picks; } .rn-picks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); } .rn-picks > div { min-width: 0; }
+.rn-sub { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin: 0 0 var(--space-2); font-weight: 600; }
+.rn-holders { color: var(--accent); }
 .rn-today-card { grid-area: today; } .rn-live-card { grid-area: live; } .rn-score-card { grid-area: score; } .rn-days-card { grid-area: days; }
 .rn-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .rn-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 44px; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); cursor: pointer; transition: border-color .15s; }
@@ -797,12 +800,12 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .rn-score { font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
 .rn-score.up { color: var(--up); } .rn-score.muted { color: var(--text-muted); }
 #rnDays tbody tr[data-drill] { cursor: pointer; }
-@media (max-width: 900px) { .grid-runners { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'today' 'live' 'score' 'days'; } .rn-top small { max-width: 110px; } }
+@media (max-width: 900px) { .grid-runners { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'picks' 'today' 'live' 'score' 'days'; } .rn-picks { grid-template-columns: minmax(0, 1fr); } .rn-top small { max-width: 110px; } }
 
 /* Mobile calibration pass (2026-10-17) */
 .grid-runners > .card { min-width: 0; }
 .card.tile-drill { margin: 0; padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); } .card.tile-drill:hover { border-color: var(--accent); background: var(--surface); }
-.rn-today-card .hint, .rn-live-card .hint, .rn-score-card .hint { white-space: normal; }
+.rn-today-card .hint, .rn-live-card .hint, .rn-score-card .hint, .rn-picks-card .hint { white-space: normal; }
 @media (max-width: 720px) {
   .mini-kpis > div, .mctx > div { margin: 0; padding: 0; }
   .rn-row { grid-template-columns: 22px minmax(0, 1fr) 40px; gap: var(--space-2); }

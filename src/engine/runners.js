@@ -18,6 +18,7 @@ import { logger } from '../log.js';
 import { round } from '../util.js';
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 import { isGradRejected } from './rejects.js';
+import { holdersOf } from './holders.js';
 
 const log = logger('runners');
 const R = config.runners;
@@ -123,7 +124,7 @@ export class Runners extends EventEmitter {
       const born = tok?.created_at || st.pairCreatedAt || st.addedAt;
       const r = rankFeatures(f, { boosts: st.info?.boosts || 0 });
       rows.push({ mint: st.mint, symbol: st.symbol, name: st.name, score: r.score, parts: r.parts, reasons: r.reasons, flags: r.flags,
-        mcap: st.last.mcap, liq: st.last.liq, price: st.last.price, ageH: round((now - born) / HOUR, 2), vol1h: st.last.v1h || 0, vsMig: f.vsMig, gradScore: st.score, features: f });
+        mcap: st.last.mcap, liq: st.last.liq, price: st.last.price, ageH: round((now - born) / HOUR, 2), vol1h: st.last.v1h || 0, vsMig: f.vsMig, gradScore: st.score, features: f, holders: holdersOf(st.mint)?.holders ?? null });
     }
     rows.sort((a, b) => b.score - a.score || b.vol1h - a.vol1h);
     this.live = rows; this.liveAt = now; this.excluded = ex;

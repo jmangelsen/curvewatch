@@ -19,7 +19,7 @@ import { VERDICTS } from './verdicts.js';
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners, picks, holderPoller }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -75,6 +75,12 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
 
   // Post-graduation tracker
   app.get('/api/runners', (req, res) => res.json({ ...runners.view(), notice: API_NOTICE }));
+  // Conversational pick lists (same lists the Telegram bot serves). Served fresh; every serve is logged for a later scorecard.
+  app.get('/api/picks', (req, res) => {
+    const n = Math.min(10, Math.max(1, Number(req.query.n) || 5)), minHolders = req.query.minHolders != null ? Number(req.query.minHolders) : null;
+    const r = picks.reigniting(n, { minHolders: Number.isFinite(minHolders) ? minHolders : null, source: 'api' }), s = picks.soon(n, { source: 'api' });
+    res.json({ ts: Date.now(), reigniting: r, soon: s, holders: holderPoller?.status?.() || { enabled: false }, notice: API_NOTICE });
+  });
   app.get('/api/runners/day/:day', (req, res) => res.json(runners.dayView(String(req.params.day).slice(0, 10))));
   app.get('/api/grads', (req, res) => res.json({ ...grads.board(Math.min(200, Number(req.query.limit) || 80)), stats: grads.stats() }));
   app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));

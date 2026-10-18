@@ -276,6 +276,7 @@ export class Engine extends EventEmitter {
     this.counters.alerts++; this.hour().alerts++;
     paper.scheduleEntry(t, id, { book: 'main', score: s.score, features: f });
     paper.scheduleEntry(t, id, { book: 'timed', score: s.score, features: f });
+    paper.scheduleEntry(t, id, { book: 'scale', score: s.score, features: f });
     this.maybeHold120(t, s, f);
     this.maybeConfirm(t, s, f);
     this.maybeRandom(t);

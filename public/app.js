@@ -554,6 +554,26 @@ function renderIntel() {
 S.gFilter = 'rejected';
 async function loadRunners() {
   try { S.rn = await get('/api/runners'); renderRunners(); } catch (e) { console.warn(e); }
+  try { S.picks = await get('/api/picks'); renderPicks(); } catch (e) { console.warn(e); }
+}
+function renderPicks() {
+  const P = S.picks; if (!P) return;
+  const H = P.holders || {};
+  $('#rnPicksHint').textContent = `the same two lists the Telegram bot answers with · ${P.reigniting.examined} clean graduates and ${P.soon.examined} late-curve tokens examined · refreshed with the tab`;
+  const row = (x, i, meta, why) => `<div class="rn-row" data-drill="tok:${x.mint}" data-label="${esc(x.symbol || '')}" role="button" tabindex="0">
+      <div class="rn-rank">${i + 1}</div>
+      <div class="rn-main"><div class="rn-top"><span class="sym">${esc(x.symbol || '?')}</span><small>${esc(x.name || '')}</small></div>
+        <div class="rn-meta">${meta}</div><div class="rn-why">${why}</div></div>
+      <div class="rn-score ${x.score >= 60 ? 'up' : x.score < 30 ? 'muted' : ''}">${n(x.score, 0)}</div></div>`;
+  $('#rnReignite').innerHTML = P.reigniting.rows.length ? P.reigniting.rows.map((x, i) => row(x, i,
+    `<span>${usd(x.mcapUsd)}</span><span>pool ${usd(x.liqUsd)}</span><span>${n(x.ageH, 1)} h</span>${x.holders != null ? `<span class="rn-holders">${n(x.holders, 0)} holders</span>` : ''}`,
+    `${esc((x.reasons || []).slice(0, 3).join(' · ') || 'accelerating')}${(x.flags || []).length ? ` <span class="rn-flag">${esc(x.flags.slice(0, 2).join(' · '))}</span>` : ''}`)).join('')
+    : `<div class="empty"><strong>Nothing reigniting</strong>no clean graduate has volume above 1.2× its hourly pace or a breakout right now</div>`;
+  $('#rnSoon').innerHTML = P.soon.rows.length ? P.soon.rows.map((x, i) => row(x, i,
+    `<span>${n(x.progressPct, 0)}% of curve</span><span>${x.mcapUsd != null ? usd(x.mcapUsd) : '–'}</span><span>${n(x.uniqueBuyers, 0)} buyers</span><span>${n(x.holders, 0)} holders</span><span>${n(x.ageMin, 0)} min</span>`,
+    `${esc((x.reasons || []).slice(0, 3).join(' · '))}${(x.flags || []).length ? ` <span class="rn-flag">${esc(x.flags.slice(0, 2).join(' · '))}</span>` : ''}`)).join('')
+    : `<div class="empty"><strong>No late-curve token</strong>nothing past 35% of the curve with buyers in the last 10 minutes and no reject</div>`;
+  $('#rnPicksNote').innerHTML = `Ranked watch lists; every serve is logged (<code>pick_log</code>) so a scorecard can be built against what happened. ${H.enabled ? `Graduate holder counts on: ${n(H.counted, 0)} mints counted, ${n(H.errors, 0)} errors.` : 'Graduate holder counts are <b>off</b>: the server has no <code>HELIUS_API_KEY</code>, so the +2,500-holder filter cannot be applied yet. Curve-stage holder counts come from the trade tape and are shown.'} Base rates: real graduates lose 5–37% per 6 h in every band; 0.7% of curve signals ever reached +125%.`;
 }
 function renderRunners() {
   const v = S.rn; if (!v) return; const c = v.config, sc = v.scorecard.books, R = sc.rule, N = sc.random;
@@ -571,7 +591,7 @@ function renderRunners() {
   const item = (x, i, extra = '') => `<div class="rn-row" data-drill="tok:${x.mint}" data-label="${esc(x.symbol || '')}" role="button" tabindex="0">
       <div class="rn-rank">${i + 1}</div>
       <div class="rn-main"><div class="rn-top"><span class="sym">${esc(x.symbol || '?')}</span><small>${esc(x.name || '')}</small>${extra}</div>
-        <div class="rn-meta"><span>${usd(x.mcap)}</span><span>pool ${usd(x.liq)}</span><span>${n(x.ageH ?? x.age_h, 1)} h</span>${x.vsMig != null ? `<span>${n(x.vsMig, 1)}× mig</span>` : ''}</div>
+        <div class="rn-meta"><span>${usd(x.mcap)}</span><span>pool ${usd(x.liq)}</span><span>${n(x.ageH ?? x.age_h, 1)} h</span>${x.vsMig != null ? `<span>${n(x.vsMig, 1)}× mig</span>` : ''}${x.holders != null ? `<span class="rn-holders">${n(x.holders, 0)} holders</span>` : ''}</div>
         <div class="rn-why">${esc((x.reasons || []).slice(0, 3).join(' · ') || 'no positive signals')}${(x.flags || []).length ? ` <span class="rn-flag">${esc(x.flags.slice(0, 2).join(' · '))}</span>` : ''}</div></div>
       <div class="rn-score ${x.score >= 60 ? 'up' : x.score < 30 ? 'muted' : ''}">${n(x.score, 0)}</div></div>`;
   const rule = v.today.rows.filter((r) => r.book === 'rule');

@@ -133,6 +133,7 @@ export const config = {
     clean: { enabled: bool('CLEAN_ENABLED', true), maxBundlePct: num('CLEAN_MAX_BUNDLE_PCT', 25), maxTop10Pct: num('CLEAN_MAX_TOP10_PCT', 40) },
     hold120: { enabled: bool('HOLD120_ENABLED', true), checkpointSec: num('HOLD120_CHECKPOINT_SEC', 120) },
     timed: { enabled: bool('TIMED_ENABLED', true), holdMin: num('TIMED_HOLD_MIN', 60) },
+    scale: { enabled: bool('SCALE_ENABLED', true) },
     confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 38.5) },
   },
 
@@ -152,6 +153,9 @@ export const config = {
   runners: { enabled: bool('RUNNERS_ENABLED', true), picks: num('RUNNER_PICKS', 10), pickHour: num('RUNNER_PICK_HOUR', 9), minEligible: num('RUNNER_MIN_ELIGIBLE', 5),
     minAgeH: num('RUNNER_MIN_AGE_H', 2), maxAgeH: num('RUNNER_MAX_AGE_H', 8), minMcapUsd: num('RUNNER_MIN_MCAP_USD', 100000), maxMcapUsd: num('RUNNER_MAX_MCAP_USD', 750000),
     minLiqUsd: num('RUNNER_MIN_LIQ_USD', 20000), targetMcapUsd: num('RUNNER_TARGET_MCAP_USD', 1500000) },
+  // On-chain holder counts for graduates (Helius DAS getTokenAccounts). Off without a key; counts are then null, never zero.
+  holders: { apiKey: process.env.HELIUS_API_KEY || '', tickMs: num('HOLDERS_TICK_MS', 120000), perTick: num('HOLDERS_PER_TICK', 12), staleMin: num('HOLDERS_STALE_MIN', 20),
+    maxPages: num('HOLDERS_MAX_PAGES', 4), paceMs: num('HOLDERS_PACE_MS', 400), runnerMin: num('HOLDERS_RUNNER_MIN', 2500) },
   // 24-hour gate: the bar a book must clear on a rolling day before any money is discussed. Written before looking.
   gate24h: { hours: num('GATE24_HOURS', 24), minN: num('GATE24_MIN_N', 300), minMeanPct: num('GATE24_MIN_MEAN_PCT', 0), minLoPct: num('GATE24_MIN_LO_PCT', -3) },
   killRule: {

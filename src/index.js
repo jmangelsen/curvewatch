@@ -11,6 +11,8 @@ import { sendTelegram, tgEnabled, tgStats, esc as tgEsc } from './engine/telegra
 import { TELEGRAM_DAILY_BLOCK, telegramFullText } from './compliance.js';
 import { startTgBot } from './engine/tgBot.js';
 import { Runners } from './engine/runners.js';
+import { Picks } from './engine/picks.js';
+import { HolderPoller, holdersEnabled } from './engine/holders.js';
 import { fmtUsd } from './market.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
@@ -202,8 +204,16 @@ runners.on('picks', (o) => {
     '', `Target: ${fmtUsd(config.runners.targetMcapUsd)} within 48 h. Base rate for this list so far is on the Runners tab; in the registration sample 6% of eligible coins reached it and 72% halved within a day. A ranked watch set, not a forecast with demonstrated skill.`];
   sendTelegram(L.join('\n'));
 });
-startServer({ engine, status, grads, strong, runners, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners }), edgeView, edgeDetail, trackerView, rejectsView });
-startTgBot({ engine, grads, strong, status, runners }); // two-way lookups; no-op unless Telegram is configured
+const picks = new Picks({ engine, grads });
+// Holder counts: refresh the runner-band graduates and whatever the reignite list is looking at (key-gated; inert without HELIUS_API_KEY)
+const holderPoller = new HolderPoller({ grads, pick: () => {
+  const set = new Set(runners.live.map((x) => x.mint));
+  for (const x of picks.reigniting(15, { log: false }).rows) set.add(x.mint);
+  return [...set];
+} });
+holderPoller.start();
+startServer({ engine, status, grads, strong, runners, picks, holderPoller, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners }), edgeView, edgeDetail, trackerView, rejectsView });
+startTgBot({ engine, grads, strong, status, runners, picks }); // two-way lookups; no-op unless Telegram is configured
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);
 if (tgEnabled()) sendTelegram(`<b>Curvewatch online</b> · trade source ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

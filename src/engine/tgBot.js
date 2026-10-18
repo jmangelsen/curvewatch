@@ -13,6 +13,7 @@ import { TELEGRAM_FOOTER } from '../compliance.js';
 import { calibration } from '../stats.js';
 import { categoryOf, isGradRejected } from './rejects.js';
 
+import { holdersOf, holdersEnabled } from './holders.js';
 const log = logger('tgbot');
 const T = config.telegram;
 const MINT_RE = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
@@ -128,10 +129,46 @@ function finish(L, mint) {
   return L.join('\n');
 }
 
-const HELP = ['<b>Curvewatch bot</b>', 'Send a Pump.fun mint address or a pump.fun / DexScreener link and I reply with what Curvewatch has recorded about that token: stage, score and reasons, reject verdict, base rates for similar coins, pool state if it graduated, and this machine\'s paper record.',
-  '', '/runners – the live runner board (young graduates ranked for a $1.5M+ run) and its scorecard', '/status – collector and books in one line', '/help – this message', '', 'Strong signals, graduate alerts and the daily summary arrive here automatically.'].join('\n');
+/** Conversational intents. Keyword-based on purpose: deterministic, testable, no model in the loop. */
+export function intentOf(text) {
+  const t = text.toLowerCase();
+  if (/^\/(start|help)\b/.test(t)) return 'help';
+  if (/^\/runners\b/.test(t)) return 'runners';
+  if (/^\/status\b/.test(t) || /\b(status|how are (the )?(books|feeds)|collector)\b/.test(t)) return 'status';
+  if (/^\/picks\b/.test(t)) return 'picks';
+  const wantsRunner = /\b(runner|runners|potential|play|plays|watch ?list|tonight|session|heating|reignit\w*|picks?|what('s| is) (hot|moving|running)|top ?\d*)\b/.test(t);
+  const wantsSoon = /\b(soon|about to|close to|near(ly)?|almost)\b.*\b(grad\w*|migrat\w*|bond\w*)|\bgrads?\b|\bgraduat\w*/.test(t);
+  if (wantsRunner && wantsSoon) return 'picks';
+  if (wantsRunner) return 'reignite';
+  if (wantsSoon) return 'soon';
+  if (/\b(holders?|holder count)\b/.test(t)) return 'holders';
+  return null;
+}
 
-export function startTgBot({ engine, grads, strong, status, runners }) {
+function pickLines(picks, kind, n) {
+  const L = [];
+  if (kind === 'reignite' || kind === 'both') {
+    const r = picks.reigniting(n, { source: 'telegram' });
+    L.push(`<b>Top ${n} graduates reigniting</b> · ${r.examined} clean graduates examined (pool ≥ $20k, ≤ 72 h, no rejects)`);
+    L.push(...r.rows.map((x, i) => `${i + 1}. <b>${esc(x.symbol || x.mint.slice(0, 6))}</b> · ${fmtUsd(x.mcapUsd)} · pool ${fmtUsd(x.liqUsd)} · ${x.ageH} h · score ${x.score.toFixed(0)}${x.holders != null ? ` · ${x.holders.toLocaleString('en-US')} holders` : ''}${x.reasons.length ? `\n   ${esc(x.reasons.slice(0, 3).join(' · '))}` : ''}${x.flags.length ? `\n   ! ${esc(x.flags.slice(0, 2).join(' · '))}` : ''}\n   <code>${x.mint}</code>`));
+    if (!r.rows.length) L.push('Nothing is reigniting right now: no clean graduate has volume above 1.2× its hourly pace or a breakout.');
+    if (!r.holdersTracked) L.push('<i>Holder counts for graduates need HELIUS_API_KEY; without it the +2,500-holder filter cannot be applied.</i>');
+  }
+  if (kind === 'soon' || kind === 'both') {
+    if (L.length) L.push('');
+    const s = picks.soon(n, { source: 'telegram' });
+    L.push(`<b>Top ${n} soon to be grads</b> · ${s.examined} live curves past 35% examined`);
+    L.push(...s.rows.map((x, i) => `${i + 1}. <b>${esc(x.symbol || x.mint.slice(0, 6))}</b> · ${x.progressPct}% of curve · ${x.mcapUsd != null ? fmtUsd(x.mcapUsd) : `${x.mcapSol.toFixed(1)} SOL`} · ${x.uniqueBuyers} buyers · ${x.holders} holders · ${x.ageMin} min · score ${x.score.toFixed(0)}${x.flags.length ? `\n   ! ${esc(x.flags.slice(0, 2).join(' · '))}` : ''}\n   <code>${x.mint}</code>`));
+    if (!s.rows.length) L.push('No live curve past 35% with buyers in the last 10 minutes and no reject.');
+  }
+  L.push('', '<i>Ranked watch lists over recorded data; served picks are logged and scored later. Base rates so far: real graduates lose 5–37% per 6 h in every band, and only 0.7% of curve signals ever reached +125%. Not entry recommendations.</i>');
+  return L.join('\n');
+}
+
+const HELP = ['<b>Curvewatch bot</b>', 'Send a Pump.fun mint address or a pump.fun / DexScreener link and I reply with what Curvewatch has recorded about that token: stage, score and reasons, reject verdict, base rates for similar coins, pool state if it graduated, and this machine\'s paper record.',
+  '', '/runners – the live runner board (young graduates ranked for a $1.5M+ run) and its scorecard', '/picks – top 5 graduates reigniting and top 5 soon to be grads (or just ask: "send me a potential runner for tonight", "what is about to graduate")', '/status – collector and books in one line', '/help – this message', '', 'Strong signals, graduate alerts and the daily summary arrive here automatically.'].join('\n');
+
+export function startTgBot({ engine, grads, strong, status, runners, picks }) {
   if (!tgEnabled() || !T.botToken) return null;
   const allow = new Set([T.chatId, T.strongChatId].filter(Boolean).map(String));
   let offset = Number(Q.kv.get('tg_offset')?.v || 0), busy = false, failures = 0;
@@ -149,8 +186,16 @@ export function startTgBot({ engine, grads, strong, status, runners }) {
         const chat = String(msg.chat.id);
         if (!allow.has(chat)) { log.info(`ignored message from chat ${chat}`); continue; }
         const text = msg.text.trim();
-        if (/^\/(start|help)/.test(text)) { await reply(chat, HELP); continue; }
-        if (/^\/runners/.test(text)) {
+        const intent = intentOf(text);
+        if (intent === 'help') { await reply(chat, HELP); continue; }
+        if (intent && ['picks', 'reignite', 'soon', 'holders'].includes(intent)) {
+          if (!picks) { await reply(chat, 'Pick lists unavailable.'); continue; }
+          const n = Math.min(10, Math.max(3, Number((text.match(/top\s*(\d+)/i) || [])[1]) || 5));
+          if (intent === 'holders') { const m = extractMint(text); const hc = m ? holdersOf(m) : null; await reply(chat, m ? (hc ? `<b>${m.slice(0, 8)}…</b> · ${hc.holders.toLocaleString('en-US')}${hc.capped ? '+' : ''} holders · counted ${Math.round(hc.ageMin)} min ago` : holdersEnabled() ? 'Not counted yet for that mint (graduates in the runner band are refreshed every few minutes).' : 'Holder counts for graduates need HELIUS_API_KEY on the server.') : 'Send a mint with the word holders, e.g. "holders &lt;mint&gt;".'); continue; }
+          let out; try { out = pickLines(picks, intent === 'picks' ? 'both' : intent, n); } catch (e) { log.warn('picks', e.stack); out = `Could not build the lists: ${esc(e.message)}`; }
+          await reply(chat, out); log.info(`picks (${intent}) for chat ${chat}`); continue;
+        }
+        if (intent === 'runners') {
           const v = runners?.view?.(); if (!v) { await reply(chat, 'Runner board unavailable.'); continue; }
           const top = v.live.slice(0, Math.min(10, v.live.length)), sc = v.scorecard.books;
           const L = [`<b>Runner board · live</b> · ${v.eligible} eligible now (graduated, ${v.config.minAgeH}–${v.config.maxAgeH} h old, ${fmtUsd(v.config.minMcapUsd)}–${fmtUsd(v.config.maxMcapUsd)}, pool ≥ ${fmtUsd(v.config.minLiqUsd)}, no rejects)`,
@@ -159,7 +204,7 @@ export function startTgBot({ engine, grads, strong, status, runners }) {
             `Scorecard: rule ${sc.rule.hits}/${sc.rule.scored48} reached ${fmtUsd(v.config.targetMcapUsd)} in 48 h vs random ${sc.random.hits}/${sc.random.scored48}; doubled in 24 h: rule ${sc.rule.x2}/${sc.rule.scored24} vs random ${sc.random.x2}/${sc.random.scored24}. Today's frozen picks are on the dashboard.`];
           await reply(chat, L.join('\n')); continue;
         }
-        if (/^\/status/.test(text)) { const s = status?.(); await reply(chat, s ? `<b>Status</b> · ${s.feeds?.every((f) => f.healthy) ? 'feeds healthy' : 'a feed is unhealthy'} · ${s.engine?.tracked ?? '–'} tokens live · kill rule ${s.kill?.status || '–'} (${s.kill?.n ?? 0}/${s.kill?.needed ?? '–'}) · graduates ${s.gradKill?.status || '–'}` : 'status unavailable'); continue; }
+        if (intent === 'status') { const s = status?.(); await reply(chat, s ? `<b>Status</b> · ${s.feeds?.every((f) => f.healthy) ? 'feeds healthy' : 'a feed is unhealthy'} · ${s.engine?.tracked ?? '–'} tokens live · kill rule ${s.kill?.status || '–'} (${s.kill?.n ?? 0}/${s.kill?.needed ?? '–'}) · graduates ${s.gradKill?.status || '–'}` : 'status unavailable'); continue; }
         const mint = extractMint(text);
         if (!mint) { await reply(chat, 'Send a mint address (ends in <code>pump</code>) or a pump.fun / DexScreener link. /help for more.'); continue; }
         let card; try { card = tokenCard(mint, { engine, grads, strong }); } catch (e) { log.warn('card', e.stack); card = `Could not build a card for <code>${mint}</code>: ${esc(e.message)}`; }
