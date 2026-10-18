@@ -457,6 +457,30 @@ The **Codex** tab answers "is the bot in a trade, and on what" for any instant i
 - **Transport.** `GET /api/codex` (full payload) and `GET /api/codex?at=<ms>` (a moment); the SSE stream pushes a compact `codex` pulse every 2.5 s, with a 3 s poll fallback and a 20 s full refresh.
 - **Scope.** All books are paper. Positions on books that never traded are simply absent; the codex adds no new book, no new entry rule, and does not touch the fingerprinted engine files, so the Scale-out vs Main and Follow tests continue uninterrupted.
 
+## 5l. Codex terminal, dapp audit, Curve Studio (October 18, 2026)
+
+### Codex terminal view
+The Codex tab now opens as a trading terminal on screens 900 px and wider (the card view stays one toggle away and is the default on phones; the choice is remembered). Layout, top to bottom and left to right:
+
+- **Account bar.** State orb, then six live cells: open P&L, realised 24 h, profit factor (with average win and loss), max drawdown 24 h (with the worst losing run), exposure, time in market. Each is a drill.
+- **Blotter** (left). Positions / Closed 24 h / Tape tabs. Position rows show symbol and book, mark, P&L in USD, time held and a risk bar (red = distance to the stop, green = distance to the target); rows flash on moves, and the selected row drives the chart. Keyboard: `[` and `]` step through positions.
+- **Chart** (centre). TradingView's open-source `lightweight-charts` v5 (vendored under `public/vendor/`, Apache-2.0). Candles are built from the recorded trade tape in 5 s / 15 s / 1 m / 5 m buckets for curve positions; graduate positions get a line from the 10-minute snapshots. Entry (dashed), stop (red) and target (green) price lines with the live mark, trade markers for entries, partial take-profits and exits, a SOL volume histogram, log toggle (`L`), legend and a replay strip under the chart (the 24 h scrubber from the card view, so any moment can be loaded into the chart).
+- **Account panel** (right). Realised P&L curve for the last 24 h (baseline series, red below zero), closed / win rate / best / worst / today, then one bar per book sorted by P&L.
+- **Transport.** `GET /api/codex/chart?mint=&venue=&from=&to=&bucket=` (candles, markers, levels), `GET /api/codex/equity?hours=24` (cumulative realised P&L points, profit factor, drawdown, by book). Both read recorded rows only; nothing in the engine changed and the fingerprint is still `96f45eab`.
+
+### Dapp audit
+`docs/audit-2026-10-18.md` lists eleven findings with severity, evidence and status. Fixed in this release without touching a fingerprinted file: the graduate watcher now rebuilds its price series from stored snapshots on restart (before this, every restart censored or truncated six hours of 6 h labels), the mobile tab bar scrolls, and two CSS class collisions. Queued for after the weekend because they touch frozen files: the missing 900 s checkpoint, a `quote_ok` column so non-SOL curves stop counting as graduates in the Report tab, a column rename, Codex approx marks through `curveSell`, and a startup grace window for the health gap detector. The audit also quantifies the cost of restarts on production (five deploy restarts marked 71% of today's tokens gap-flagged): the deploy that ships this release is the last restart before Monday.
+
+### Curve Studio (tab "Studio")
+A read-only research view that compares every graduated coin against the field and lets a rule be tested on held-out time before anyone hard-codes it.
+
+- **Cohorts.** Finalized, gap-free, SOL-quoted tokens only (non-SOL quotes are 23% of all "graduates" and are excluded on purpose). Curve stage: Graduated / Doubled without graduating / Did not graduate, market cap in SOL at the 30 s – 10 min checkpoints. After graduation: Ran ≥ 2× / Held / Faded / Dead by where the price stood 6 h after the first post-pool snapshot, as a multiple of that snapshot.
+- **Chart.** p10–p90 and p25–p75 ribbons plus the median per cohort, with up to 300 individual paths overlaid (log y, SOL or USD). Hover highlights the nearest token and shows its outcome; tap opens its record. Legend chips toggle cohorts.
+- **What separates graduates.** Every numeric feature at the chosen checkpoint is cut into ten equal-count deciles; the list is ranked by the Wilson lower bound of the best decile's outcome rate, with lift, direction and a monotonicity score. Selecting a feature draws the decile chart with the base rate and confidence whiskers and pre-fills the rule tester with the best decile boundary.
+- **Rule tester.** Feature, operator, threshold, outcome (graduated / 2× / 3×). Reports matched n, hit rate versus base with a 95% interval, lift, the average capped max multiple, and the same numbers on the earlier and later halves of the window. A rule "holds" only when both halves show lift with the lower bound above base and at least 20 matches each. The output includes a config snippet that is explicitly not applied: a rule that passes here earns a pre-registered paper book, not a change to the live rules.
+- **Reject rules versus graduation.** Tokens grouped by the family of reason the scorer rejected them at the checkpoint, with graduation and 2× rates; families whose lower bound beats the pass group are highlighted because those rules are discarding graduates.
+- **Mechanics.** `src/studio.js` computes everything; `src/studioWorker.js` runs it on a worker thread with its own SQLite connection so a five-second cohort scan never blocks the trade loop; results are memoised for five minutes and kept warm. Endpoints: `GET /api/studio`, `/api/studio/curves`, `/api/studio/postgrad`, `/api/studio/features`, `/api/studio/rule` (query or JSON body), and `GET /api/drill/studio_*` for the tables behind every tile. Tests: `scripts/test-studio.js`.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.
