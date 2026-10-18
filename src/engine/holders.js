@@ -77,8 +77,7 @@ export class HolderPoller {
       const now = Date.now();
       const t = this.today(); let used = t.n;
       if (used >= H.dailyCalls) { if (!this._cappedDay || this._cappedDay !== t.k) { log.warn(`daily call cap ${H.dailyCalls} reached; holder counts pause until 00:00 UTC`); this._cappedDay = t.k; } return; }
-      const wanted = this.pick().filter((m) => { const c = Q.get.get(m); return !c || now - c.ts > H.staleMin * 60000; })
-        .sort((a, b) => (Q.get.get(a)?.ts || 0) - (Q.get.get(b)?.ts || 0)).slice(0, H.perTick);
+      const wanted = this.due(now).slice(0, H.perTick);
       for (const mint of wanted) {
         try {
           if (used >= H.dailyCalls) break;
@@ -93,5 +92,27 @@ export class HolderPoller {
       }
     } finally { this.busy = false; }
   }
-  status() { const t = this.today(); return { enabled: holdersEnabled(), calls: this.calls, callsToday: t.n, dailyCap: H.dailyCalls, errors: this.errors, lastErr: this.lastErr, counted: db.prepare('SELECT COUNT(*) n FROM holder_counts').get().n }; }
+  /** Horde cadence for one watched graduate: minutes between counts, or null when it is outside the schedule. */
+  static cadenceMin(st, now, cfg = H.horde) {
+    if (!st) return null; const age = now - (st.pairCreatedAt || st.addedAt || now), HOUR = 3600000;
+    if (age < cfg.firstHours * HOUR) return cfg.everyMin;
+    if (age < cfg.laterHours * HOUR && (st.last?.mcap || 0) >= cfg.laterMinMcapUsd) return cfg.laterEveryMin;
+    return null;
+  }
+  /** Mints due for a count: horde schedule first (youngest graduates first), then the runner/candidate picks on the stale rule. */
+  due(now = Date.now()) {
+    const out = [], seen = new Set();
+    const horde = [];
+    for (const st of this.grads?.watch?.values?.() || []) {
+      const cad = HolderPoller.cadenceMin(st, now); if (cad == null) continue;
+      const c = Q.get.get(st.mint); if (c && now - c.ts < cad * 60000) continue;
+      horde.push([now - (st.pairCreatedAt || st.addedAt || now), st.mint]);
+    }
+    horde.sort((a, b) => a[0] - b[0]);
+    for (const [, m] of horde) if (!seen.has(m)) { seen.add(m); out.push(m); }
+    const picks = (this.pick?.() || []).filter((m) => { const c = Q.get.get(m); return !c || now - c.ts > H.staleMin * 60000; }).sort((a, b) => (Q.get.get(a)?.ts || 0) - (Q.get.get(b)?.ts || 0));
+    for (const m of picks) if (!seen.has(m)) { seen.add(m); out.push(m); }
+    return out;
+  }
+  status() { const t = this.today(); return { enabled: holdersEnabled(), calls: this.calls, callsToday: t.n, dailyCap: H.dailyCalls, errors: this.errors, lastErr: this.lastErr, horde: H.horde, dueNow: holdersEnabled() ? this.due().length : null, counted: db.prepare('SELECT COUNT(*) n FROM holder_counts').get().n }; }
 }
