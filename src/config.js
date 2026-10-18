@@ -230,9 +230,9 @@ export const config = {
   health: { gapSec: num('HEALTH_GAP_SEC', 15), gapSecOverride: num('HEALTH_GAP_SEC_OVERRIDE', 0), restoreMaxDownSec: num('HEALTH_RESTORE_MAX_DOWN_SEC', 30) },
 
   retention: {
-    tradesDays: num('RETAIN_TRADES_DAYS', 14),
-    snapshotsDays: num('RETAIN_SNAPSHOTS_DAYS', 30),
-    walletsDays: num('RETAIN_WALLETS_DAYS', 30),
+    tradesDays: num('RETAIN_TRADES_DAYS', 60),
+    snapshotsDays: num('RETAIN_SNAPSHOTS_DAYS', 180),
+    walletsDays: num('RETAIN_WALLETS_DAYS', 365),
   },
 };
 

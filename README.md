@@ -422,6 +422,12 @@ Rule: a coin that fails any hard filter once is rejected for good (sticky). From
 - API: `GET /api/rejects?h=24`; drills `rej_curve`, `rej_grad`, `rej_missed_curve`, `rej_missed_grad`, `rej_blocked`, `rej_cat:<kind>:<category>`.
 - Caveats: the graduates paper book has no settings fingerprint, so its history mixes pre- and post-rule trades; about 500 graduate rejects recorded at the first restart carry the restart time, not the true first-reject time; non-SOL-quote coins' mcap is computed with SOL curve math and is unreliable.
 
+## 5h. Curve-stage entry rejected; data preservation (October 18, 2026)
+
+The pre-registered 24-hour gate for curve-stage entries is closed as **rejected**: Main book 116 trades, −14.6% per trade, 95% interval −21.6 to −7.6, not distinguishable from the random control (−12.4%). Full evidence and reasoning in `docs/decisions/2026-10-18-curve-stage-entry-rejected.md`. The verdict lives in `src/verdicts.js` and is shown on the gate card, in `/api/paper` (`books.verdict`) and `/api/status` (`verdicts`), so no surface presents the question as pending. Paper books keep running as data collection.
+
+Data preservation: retention defaults raised (`RETAIN_TRADES_DAYS=60`, `RETAIN_SNAPSHOTS_DAYS=180`, `RETAIN_WALLETS_DAYS=365`, `BACKUP_KEEP_DAYS=30`), and `retention()` now archives aged rows to `DATA_DIR/archive/<table>-<YYYY-MM>.csv.gz` before deleting them (`ARCHIVE_PRUNED=0` disables). The archive files are multi-member gzip and read as one stream with `zcat`, `gunzip` or pandas.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.

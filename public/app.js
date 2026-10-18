@@ -319,6 +319,12 @@ function renderGate() {
       <div class="label"><span>${esc(x.label)}</span>${x.candidate ? '<span class="cand-tag">candidate</span>' : ''}</div>
       <div class="value ${vcls}">${value}</div>
       <div class="sub">${sub}</div></div>`; }).join('');
+  const v = S.paper?.books?.verdict;
+  if (v && v.status !== 'open') {
+    $('#gateHint').textContent = `closed ${v.closedAt} · ${v.status} · tiles stay live as data collection`;
+    $('#gateNote').innerHTML = `<span class="down"><b>Hypothesis ${esc(v.status)} on ${esc(v.closedAt)}.</b></span> ${esc(v.conclusion)} <span class="faint">Evidence: ${esc(v.evidence)}</span>`;
+    return;
+  }
   const passed = g.order.filter((b) => g.books[b].status === 'PASS');
   $('#gateNote').textContent = passed.length ? `${passed.map((b) => g.books[b].label).join(', ')} passed the gate on the last full day. Leave the rule alone and see if it holds a second day before anything else.` :
     `No book has passed. A positive figure on fewer than ${c.minN} trades is inside the noise (about ±${(1.96 * 37 / Math.sqrt(27)).toFixed(0)} points at 27 trades, ±${(1.96 * 37 / Math.sqrt(c.minN)).toFixed(1)} at ${c.minN}). Tap a tile for the checks and the hour-by-hour path.`;

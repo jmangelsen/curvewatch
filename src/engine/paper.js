@@ -11,6 +11,7 @@ import { db, q } from '../db.js';
 import { curveBuy, curveSell, round } from '../util.js';
 import { logger } from '../log.js';
 import { gate, marketTag } from './marketgate.js';
+import { verdictFor } from '../verdicts.js';
 import { CFG } from '../version.js';
 import { countBlocked } from './rejects.js';
 const log = logger('paper');
@@ -381,7 +382,7 @@ export function books() {
       byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
   }
   const older = q.closedPapersAsc.all().filter((r) => r.cfg !== CFG || r.gap);
-  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
+  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
 }
 
 /** One-time backfill: label older closed trades (recorded before cause tracking) from the stored trade tape. */

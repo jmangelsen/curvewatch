@@ -14,6 +14,7 @@ import { logger } from './log.js';
 import { notify, tgEnabled } from './engine/telegram.js';
 import { buildReport } from './report.js';
 import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js';
+import { VERDICTS } from './verdicts.js';
 
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +44,7 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const cCal = new Map();
   const cAlertStats = cached(alertStats, 15000);
 
-  app.get('/api/status', (req, res) => res.json({ ...status(), notice: API_NOTICE }));
+  app.get('/api/status', (req, res) => res.json({ ...status(), notice: API_NOTICE, verdicts: VERDICTS }));
   app.get('/api/disclosures', (req, res) => res.json({ short: SHORT, notice: API_NOTICE, sections: SECTIONS, simulation: simulationParams(config), markdown: markdownBlock(config) }));
   app.get('/api/radar', (req, res) => res.json(engine.radar(Number(req.query.limit) || 80)));
   app.get('/api/alerts', (req, res) => {

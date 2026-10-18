@@ -1,6 +1,9 @@
 // SQLite (WAL) storage. Single-user, single-process, zero-ops: one file to back up.
 // The labeled dataset (tokens + snapshots + outcomes + wallet history) is the long-term asset.
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
 import { config } from './config.js';
 
 export const db = new Database(config.dbPath);
@@ -127,10 +130,35 @@ export const q = {
 
 export const tx = (fn) => db.transaction(fn);
 
+/**
+ * Age out raw rows, archiving them first. Nothing collected is thrown away: rows older than the retention window are
+ * appended to DATA_DIR/archive/<table>-<month>.csv.gz before the DELETE, so a future hypothesis can be back-tested on
+ * the full history (gzip CSV of trades is ~30 bytes per row, a few MB per day). ARCHIVE_PRUNED=0 disables the export.
+ */
 export function retention() {
   const d = 86400000, t = Date.now(), r = config.retention;
+  archiveBefore('trades', 'ts', t - r.tradesDays * d);
   db.prepare(`DELETE FROM trades WHERE ts < ?`).run(t - r.tradesDays * d);
+  archiveBefore('snapshots', 'ts', t - r.snapshotsDays * d);
   db.prepare(`DELETE FROM snapshots WHERE ts < ?`).run(t - r.snapshotsDays * d);
   db.prepare(`DELETE FROM wallets WHERE last_seen < ? AND wins = 0`).run(t - r.walletsDays * d);
   db.pragma('wal_checkpoint(TRUNCATE)');
+}
+
+export function archiveBefore(table, tsCol, cutoff) {
+  if ((process.env.ARCHIVE_PRUNED ?? '1') === '0') return 0;
+  const rows = db.prepare(`SELECT * FROM ${table} WHERE ${tsCol} < ? ORDER BY ${tsCol}`).all(cutoff);
+  if (!rows.length) return 0;
+  const dir = path.join(config.dataDir, 'archive'); fs.mkdirSync(dir, { recursive: true });
+  const cols = Object.keys(rows[0]);
+  const esc = (v) => (v == null ? '' : typeof v === 'string' && /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : String(v));
+  // one file per calendar month of the archived rows' timestamps; header written when the file is new
+  const byMonth = new Map();
+  for (const row of rows) { const m = new Date(row[tsCol]).toISOString().slice(0, 7); (byMonth.get(m) || byMonth.set(m, []).get(m)).push(row); }
+  for (const [m, part] of byMonth) {
+    const file = path.join(dir, `${table}-${m}.csv.gz`), fresh = !fs.existsSync(file);
+    const body = (fresh ? cols.join(',') + '\n' : '') + part.map((row) => cols.map((c) => esc(row[c])).join(',')).join('\n') + '\n';
+    fs.appendFileSync(file, zlib.gzipSync(body)); // concatenated gzip members decompress as one stream (gunzip, zcat, pandas)
+  }
+  return rows.length;
 }
