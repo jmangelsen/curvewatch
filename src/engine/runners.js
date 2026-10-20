@@ -18,6 +18,7 @@ import { logger } from '../log.js';
 import { round } from '../util.js';
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
 import { isGradRejected } from './rejects.js';
+import { selectionBlock } from './selection.js';
 import { holdersOf } from './holders.js';
 
 const log = logger('runners');
@@ -108,7 +109,7 @@ export class Runners extends EventEmitter {
     if (L.mcap > R.maxMcapUsd) return 'market cap above ceiling';
     if (!(L.liq >= R.minLiqUsd)) return 'pool too small';
     if (st.reject) return `graduate reject: ${st.reject}`;
-    if (isGradRejected(st.mint) || Q.curveRejected.get(st.mint)) return 'in a reject bucket';
+    if (isGradRejected(st.mint) || Q.curveRejected.get(st.mint)) return selectionBlock(st.mint) || 'in a reject bucket';
     if (st.creatorRugger) return 'creator is a known rugger';
     if ((Q.peakEver.get(st.mint)?.m || 0) >= R.targetMcapUsd) return 'already printed the target';
     return null;

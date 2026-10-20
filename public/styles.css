@@ -1173,3 +1173,5 @@ main :is(div, article):has(> .label):has(> .value) { cursor: pointer; touch-acti
 .hd-tbl tr[data-hd] { cursor: pointer; } .hd-tbl tr.is-sel td { background: color-mix(in oklab, var(--accent) 10%, transparent); } .hd-tbl tr.faint td { color: var(--text-muted); }
 .hd-tbl td .hint { font-size: var(--text-xs); color: var(--text-faint); }
 @media (max-width: 720px) { .st-horde-card .st-plot { height: 300px; } }
+
+.hd-sub { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-md); }

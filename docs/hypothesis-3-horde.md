@@ -118,3 +118,20 @@ instead of 20 (`horde.legMult`, `horde.legEveryMin`), roughly 150 extra calls a 
 resolved in holders rather than transactions. H3d is added to the pre-registration: holder count rising through a
 ≥ 40% dip after a ≥ 3× first leg predicts price above entry at 6 h; falsified if the top tercile of holder growth
 during the dip is below entry at 6 h as often as the bottom tercile.
+
+## Result, 2026-10-20: H3d hold is falsified. Not implemented as an entry.
+
+25 of 26 dip-case holder curves finished (the last loop died on a credential 401 and was stopped). 26 dip cases have a usable curve.
+
+| Slice | n | Reclaimed the pre-dip top | Above the dip price at 6 h | Median price at 6 h |
+|---|---|---|---|---|
+| Top tercile of holder growth through the dip | 8 | 63% | 25% | 0.19× |
+| Bottom tercile | 8 | 0% | 25% | 0.25× |
+| Reclaimed, any holder path | 7 | 100% | 43% | 0.54× |
+| Failed to reclaim | 19 | 0% | 16% | 0.25× |
+
+The pre-registered falsifier fired: the top tercile is above the dip at 6 h exactly as often as the bottom tercile, and its median price is worse. Holder growth predicts a reclaim of the old top. It does not predict a profitable hold.
+
+An exploratory scale-out (buy the dip, sell if the old top is reclaimed, stop −38.5%, 1.5% per side) is +62% on the top tercile and −26% on the bottom. That exit was not pre-registered, n is 8, and the snapshots are 10–30 minutes apart. It is not in the selection engine.
+
+FAUCET (`EZYm…pump`), added as a post-grad case: first watched print $57,272, low $6,138 (0.11×), peak $405,762 (7.08×). Similar non-SOL fades (first print $20k–$120k, fade to ≤40% inside 16 h): n 49, median peak 1.05×, median 24 h 0.10×, one other coin reached 5×. Selection decision: do not enter. Fingerprint remains `96f45eab`.

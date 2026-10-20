@@ -2497,7 +2497,7 @@ function stRej() {
 const HD = { data: null, mode: 'holders', log: true, focus: null, hover: null, paths: [], busy: 0 };
 async function loadHorde() {
   const id = ++HD.busy;
-  try { const d = await get('/api/studio/horde?days=30&hours=12'); if (id !== HD.busy) return; HD.data = d; if (!HD.focus) HD.focus = (d.cases.find((c) => c.holders && c.reclaimed) || d.cases.find((c) => c.holders) || d.cases[0])?.mint || null; hdKpis(); hdLegend(); hdDraw(); hdTable(); }
+  try { const d = await get('/api/studio/horde?days=30&hours=12'); if (id !== HD.busy) return; HD.data = d; if (!HD.focus) HD.focus = (d.cases.find((c) => c.holders && c.reclaimed) || d.cases.find((c) => c.holders) || d.cases[0])?.mint || null; hdKpis(); hdLegend(); hdDraw(); hdTable(); hdNonsol(); }
   catch (e) { if (id === HD.busy) $('#hdKpis').innerHTML = `<div class="empty"><strong>Horde cases unavailable</strong>${esc(e.message)}</div>`; }
 }
 const hdMin = (c, t) => (t - c.firstTs) / 60000;
@@ -2507,8 +2507,21 @@ function hdKpis() {
     + k('Holder curves', n(d.reconstructed, 0), d.reconstructed ? `${d.cases.filter((c) => c.holders && !c.holders.complete).length} still filling in` : 'run scripts/holder-timeline.py')
     + k('Holders through the dip, reclaimed', rv.reclaimed.medianDipHolderChangePct == null ? '–' : signed(rv.reclaimed.medianDipHolderChangePct, 0, '%'), `median · n ${rv.reclaimed.n}`)
     + k('Holders through the dip, failed', rv.failed.medianDipHolderChangePct == null ? '–' : signed(rv.failed.medianDipHolderChangePct, 0, '%'), `median · n ${rv.failed.n}`)
-    + (d.terciles ? k('H3d: top vs bottom tercile', `${d.terciles.top.reclaimedPct}% vs ${d.terciles.bottom.reclaimedPct}%`, `reloaded · holder growth through the dip ≥ ${signed(d.terciles.top.medianDipHolderChangePct, 0, '%')} vs ${signed(d.terciles.bottom.medianDipHolderChangePct, 0, '%')} median · n ${d.terciles.top.n} each · above entry at 6 h ${d.terciles.top.above6hPct}% vs ${d.terciles.bottom.above6hPct}%`)
+    + (d.terciles ? k('Price 6 h after the dip', `${n(d.terciles.top.medianPrice6hMult, 2)}× vs ${n(d.terciles.bottom.medianPrice6hMult, 2)}×`, `top vs bottom holder tercile · above the dip price ${d.terciles.top.above6hPct}% vs ${d.terciles.bottom.above6hPct}% · n ${d.terciles.top.n} each`)
       : k('H3d read', 'too few', `needs ≥ 6 dip cases with holder curves (${rv.reclaimed.n + rv.failed.n} so far)`));
+  const dec = $('#hdDecision');
+  if (dec) dec.innerHTML = `<p class="st-note"><b>Selection: do not enter.</b> ${esc(d.decision?.reason || 'No entry rule is enabled from this panel.')} Reclaim rate ${d.terciles ? d.terciles.top.reclaimedPct + '% vs ' + d.terciles.bottom.reclaimedPct + '%' : 'n/a'} is a path fact, not an exit you can bank without a pre-registered scale-out.</p>`;
+}
+function hdNonsol() {
+  const box = $('#hdNonsol'), ns = HD.data?.nonsol; if (!box) return;
+  if (!ns) { box.innerHTML = ''; return; }
+  const f = ns.spotlight, sm = ns.similarSummary || {}, row = (c, spot) => `<tr class="${spot ? 'is-sel' : ''}"><td><b>${esc(c.symbol)}</b>${spot ? ' <span class="hint">this coin</span>' : ''}</td><td class="num">${usd(c.firstMcap)}</td><td class="num">${usd(c.lowMcap)}</td><td class="num">${n(c.fade, 2)}×</td><td class="num">${usd(c.peakMcap)}</td><td class="num">${n(c.peakMult, 2)}×</td><td class="num">${c.p24 == null ? '–' : n(c.p24, 2) + '×'}</td></tr>`;
+  box.innerHTML = `<h3 class="hd-sub">FAUCET against similar non-SOL fades</h3>
+    <p class="st-note">${esc(ns.selection?.reason || '')} Similar set: first print $20k–$120k, then a fade to 40% or less inside 16 h. n ${sm.n || 0}, median peak ${n(sm.medianPeakMult, 2)}×, median 24 h ${n(sm.medianP24, 2)}×, 5× from the first print ${sm.x5 || 0}.</p>
+    <div class="table-wrap"><table class="board hd-tbl"><thead><tr><th>Coin</th><th class="num">First</th><th class="num">Low</th><th class="num">Fade</th><th class="num">Peak</th><th class="num">Peak ×</th><th class="num">24 h ×</th></tr></thead><tbody>
+    ${f ? row(f, true) : '<tr><td colspan="7">FAUCET is not in this database yet</td></tr>'}
+    ${(ns.similar || []).map((c) => row(c, false)).join('')}
+    </tbody></table></div>`;
 }
 function hdLegend() {
   $('#hdLegend').innerHTML = `<span><i style="background:${stCss('--up', '#1fbf8f')}"></i>reclaimed the top within 6 h</span><span><i style="background:${stCss('--down', '#e5484d')}"></i>did not</span><span><i style="background:${stCss('--text-faint', '#888')};opacity:.6"></i>no holder curve yet (cap only)</span><span class="st-lgnote">x = minutes after the first post-migration reading · ▲ leg top · ▼ dip · thick = selected · tap a row to select, tap the line to open the token</span>`;

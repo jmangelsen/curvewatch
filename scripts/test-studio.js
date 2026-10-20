@@ -85,4 +85,17 @@ t('drills: every studio key returns a titled table', () => {
     assert.equal(h.reclaimedVsFailed.failed.n, 0, 'FAIL has no holder curve so it is not in the comparison');
   });
 }
+t('non-SOL compare: a deep fade is counted, and selection stays off', () => {
+  const t1 = now - 2 * 86400000;
+  insTok.run('NSFADE', 'Fade', 'NSF', t1, 40000, 1, 1, t1 + 60000, 0);
+  insSnap.run('NSFADE', 30, t1, 40000, 0, 'non-SOL quote', null, 40000, 40000, 40000, 40000, 1);
+  db.prepare('INSERT INTO grad_watch (mint, symbol, name, source, added_at, active) VALUES (?,?,?,?,?,1)').run('NSFADE', 'NSF', 'fade', 'migration', t1);
+  const ins = db.prepare('INSERT INTO grad_snapshots (mint, ts, price, mcap, liq, labeled, censored) VALUES (?,?,?,?,?,1,0)');
+  [[0, 40000], [2, 8000], [8, 6000], [20, 5000], [26, 4000]].forEach(([h, m]) => ins.run('NSFADE', t1 + h * 3600000, m / 1e9, m, 5000));
+  const ns = S.nonsolCompare({ days: 21 });
+  assert.equal(ns.selection.enter, false);
+  assert.equal(ns.similarSummary.n, 1);
+  assert.equal(ns.similarSummary.x5, 0);
+  assert.equal(S.horde({ days: 30 }).decision.enter, false);
+});
 console.log(`${n} studio tests passed`);

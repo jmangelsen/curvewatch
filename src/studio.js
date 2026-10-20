@@ -322,6 +322,46 @@ export function horde({ days = 30, hours = 12 } = {}) {
   // H3d falsifier: split the dip cases into terciles of holder growth through the dip; the top tercile must reload more often than the bottom
   const byGain = [...withH].sort((a, b) => a.dipHolderChangePct - b.dipHolderChangePct), k = Math.floor(byGain.length / 3);
   const terciles = byGain.length >= 6 ? { bottom: grp(byGain.slice(0, k)), middle: grp(byGain.slice(k, byGain.length - k)), top: grp(byGain.slice(byGain.length - k)) } : null;
-  return { days, hours, n: cases.length, withDip: cases.filter((c) => c.dipTs).length, reconstructed: cases.filter((c) => c.holders).length, reclaimedVsFailed: { reclaimed: grp(withH.filter((c) => c.reclaimed)), failed: grp(withH.filter((c) => !c.reclaimed)) }, terciles, cases,
+  const decision = {
+    enter: false,
+    hold6h: terciles && terciles.top.above6hPct === terciles.bottom.above6hPct ? 'falsified' : 'inconclusive',
+    reason: 'Buying the dip and holding 6 h is not selected. The top holder-growth tercile was above the dip price at 6 h as often as the bottom tercile, and its median price was lower. A scale-out at the old top is positive on 8 in-sample coins and is not a rule.',
+  };
+  return { days, hours, n: cases.length, withDip: cases.filter((c) => c.dipTs).length, reconstructed: cases.filter((c) => c.holders).length, reclaimedVsFailed: { reclaimed: grp(withH.filter((c) => c.reclaimed)), failed: grp(withH.filter((c) => !c.reclaimed)) }, terciles, decision, nonsol: nonsolCompare({ days: 21 }), cases,
     note: 'holders(t) is reconstructed from current token accounts (first/last touch); closed accounts are invisible, partial sells are not timed. Sampled coins are scaled by the kept fraction.' };
+}
+
+const FAUCET = 'EZYmWw5ZhNAAsm3RVrPUQJZkJu6W31YZFjV5LvW4pump';
+function pathOf(a) {
+  const t0 = a[0].ts, first = a[0].mcap;
+  const early = a.filter((r) => r.ts - t0 <= 16 * HOUR);
+  const day = a.filter((r) => r.ts - t0 <= 24 * HOUR);
+  const min = Math.min(...early.map((r) => r.mcap));
+  const max = Math.max(...a.map((r) => r.mcap));
+  const at = (h) => a.find((r) => r.ts >= t0 + h * HOUR);
+  return { firstTs: t0, firstMcap: Math.round(first), lowMcap: Math.round(min), peakMcap: Math.round(max), fade: +(min / first).toFixed(2), peakMult: +(max / first).toFixed(2), p6: at(6) ? +(at(6).mcap / first).toFixed(2) : null, p24: at(24) ? +(at(24).mcap / first).toFixed(2) : null, snaps: a.length };
+}
+/** Non-SOL graduates versus FAUCET. Similar = first print $20k–$120k and a fade to 40% or less inside 16 h. */
+export function nonsolCompare({ days = 21 } = {}) {
+  const since = Date.now() - days * 86400000;
+  const flagged = new Set(db.prepare("SELECT DISTINCT mint FROM snapshots WHERE reject = 'non-SOL quote'").all().map((r) => r.mint));
+  flagged.add(FAUCET);
+  const rows = db.prepare(`SELECT s.mint, s.ts, s.mcap, w.symbol, w.name FROM grad_snapshots s JOIN grad_watch w ON w.mint = s.mint WHERE s.mcap > 0 AND s.ts > ? ORDER BY s.mint, s.ts`).all(since);
+  const by = new Map();
+  for (const r of rows) { if (!flagged.has(r.mint)) continue; let a = by.get(r.mint); if (!a) { a = []; by.set(r.mint, a); } a.push(r); }
+  const all = [];
+  for (const [mint, a] of by) {
+    if (a.length < 4) continue;
+    const p = pathOf(a);
+    all.push({ mint, symbol: a[0].symbol || mint.slice(0, 6), name: a[0].name, ...p, spotlight: mint === FAUCET });
+  }
+  const similar = all.filter((c) => c.firstMcap >= 20000 && c.firstMcap <= 120000 && c.fade <= 0.4 && c.mint !== FAUCET);
+  const med = (xs) => { const v = xs.filter((x) => x != null).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+  const sum = (s) => ({ n: s.length, medianFade: med(s.map((c) => c.fade)), medianPeakMult: med(s.map((c) => c.peakMult)), medianP24: med(s.map((c) => c.p24)), x3: s.filter((c) => c.peakMult >= 3).length, x5: s.filter((c) => c.peakMult >= 5).length });
+  const faucet = all.find((c) => c.mint === FAUCET) || null;
+  return {
+    days, spotlight: faucet, similar: similar.sort((a, b) => b.peakMult - a.peakMult).slice(0, 12),
+    similarSummary: sum(similar), allNonSol: sum(all.filter((c) => c.mint !== FAUCET)),
+    selection: { enter: false, reason: 'Not selected. Similar non-SOL fades do not have positive expectancy. FAUCET is the exception, not the base rate.' },
+  };
 }
