@@ -1,0 +1,60 @@
+/* Structure tab — trade-structure scoring matrix. Scoped under .sx */
+.sx { display: grid; gap: var(--space-4); }
+.sx-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-4); justify-content: space-between; }
+.sx-head h1 { margin: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: -.02em; }
+.sx-head p { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--text-muted); max-width: 78ch; }
+.sx-ctl { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sx-ctl select, .sx-ctl input[type=search] { font: inherit; font-size: var(--text-xs); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; min-height: 32px; }
+.sx-ctl input[type=search] { width: 15ch; font-family: var(--font-mono); }
+.sx-ctl label { display: inline-flex; gap: 6px; align-items: center; font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; }
+.sx-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sx-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-3); }
+.sx-kpis .kpi .value { font-size: var(--text-lg); }
+.sx-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.sx-plot { position: relative; }
+.sx-plot svg { width: 100%; height: auto; display: block; overflow: visible; }
+.sx-plot .ax { stroke: var(--border); }
+.sx-plot .gl { stroke: var(--grid); }
+.sx-plot .tk { fill: var(--text-faint); font: 10px var(--font-mono); }
+.sx-plot .al { fill: var(--text-muted); font: 11px var(--font-body); }
+.sx-plot .q { fill: var(--text-faint); font: 10px var(--font-body); letter-spacing: .06em; text-transform: uppercase; }
+.sx-plot circle.pt { cursor: pointer; transition: r .15s var(--ease), stroke-width .15s; stroke: var(--bg); stroke-width: 1; }
+.sx-plot circle.pt.flag { fill-opacity: .08 !important; stroke-dasharray: 2 2; stroke-width: 1.2; }
+.sx-plot circle.pt.is-sel { stroke: var(--text); stroke-width: 2; }
+.sx-plot circle.pt:hover { stroke: var(--text); stroke-width: 1.5; }
+.sx-tip { position: absolute; pointer-events: none; background: var(--surface-3); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: var(--text-xs); font-family: var(--font-mono); white-space: nowrap; box-shadow: var(--shadow); z-index: 3; }
+.sx-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2); }
+.sx-ramp { width: 120px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--down), var(--accent), var(--up)); }
+.sx-detail { display: grid; gap: var(--space-4); }
+.sx-detail .empty { color: var(--text-faint); font-size: var(--text-sm); padding: var(--space-8) 0; text-align: center; }
+.sx-dt { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.sx-dt h3 { margin: 0; font-size: var(--text-lg); font-weight: 600; }
+.sx-dt .links { margin-left: auto; display: flex; gap: var(--space-2); }
+.sx-dt .links a { font-size: var(--text-xs); padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; min-height: 28px; display: inline-flex; align-items: center; }
+.sx-scores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
+.sx-score { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+.sx-score b { display: block; font-family: var(--font-mono); font-size: var(--text-lg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.sx-score span { font-size: var(--text-xs); color: var(--text-muted); }
+.sx-sec h4 { margin: 0 0 var(--space-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.sx-bar { display: grid; grid-template-columns: 13ch 1fr 7ch; gap: var(--space-2); align-items: center; font-size: var(--text-xs); padding: 3px 0; }
+.sx-bar .lb { color: var(--text-muted); }
+.sx-bar .v { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.sx-track { position: relative; height: 8px; border-radius: 4px; background: var(--surface-3); }
+.sx-track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.sx-track em { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-faint); border-radius: 1px; }
+.sx-note { font-size: var(--text-xs); color: var(--text-faint); margin: var(--space-1) 0 0; max-width: 70ch; }
+.sx-flags { display: flex; flex-wrap: wrap; gap: 4px; }
+.sx table.board td.sym { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.sx table.board tr.is-sel { background: var(--accent-soft); }
+.sx table.board tr.unranked td { color: var(--text-faint); }
+.sx table.board th[data-k] { cursor: pointer; user-select: none; }
+.sx table.board th[aria-sort] { color: var(--text); }
+.sx .cell-bar { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: var(--surface-3); vertical-align: middle; margin-left: 6px; position: relative; overflow: hidden; }
+.sx .cell-bar i { position: absolute; inset: 0 auto 0 0; background: var(--info); }
+.sx-tablecard .table-wrap { max-height: 560px; overflow: auto; }
+.sx-err { padding: var(--space-6); border: 1px dashed var(--border); border-radius: var(--radius-lg); color: var(--text-muted); font-size: var(--text-sm); }
+.sx-err code { white-space: pre-wrap; }
+@media (max-width: 1100px) { .sx-grid { grid-template-columns: 1fr; } .sx-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .sx-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sx-scores { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sx-bar { grid-template-columns: 11ch 1fr 6ch; } .sx-ctl input[type=search] { width: 100%; } .sx-ctl { width: 100%; } }
+.sx-kpis .kpi::after { display: none; }
+.sx-plot .q { paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }

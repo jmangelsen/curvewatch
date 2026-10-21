@@ -12,6 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="structure/structure-v1.css">
 </head>
 <body>
 <header class="top">
@@ -28,6 +29,7 @@
     <button role="tab" class="pri" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
     <button role="tab" class="pri" aria-selected="false" data-tab="studio" data-short="Studio">Studio</button>
     <button role="tab" aria-selected="false" data-tab="scoring" data-short="Scores">Scores</button>
+    <button role="tab" aria-selected="false" data-tab="structure" data-short="Structure">Structure</button>
     <button role="tab" class="pri" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
@@ -114,6 +116,7 @@
     </div>
   </section>
   <section id="tab-scoring" class="tab-panel" hidden><div id="scoringRoot"></div></section>
+  <section id="tab-structure" class="tab-panel" hidden><div id="structureRoot"></div></section>
   <section id="tab-studio" class="tab-panel studio" hidden>
     <div class="st-head">
       <div class="st-title"><h1>Curve Studio</h1><p>Every graduated coin against the field. Compare paths, find what separates them, test a rule on held-out time before it touches the rules. Research view: nothing here trades or changes a setting.</p></div>
@@ -523,6 +526,7 @@
     <div class="ns-group"><h3>Research</h3>
       <button type="button" class="ns-item" data-go="studio"><b>Studio</b><span>curve cohorts, separators, rule tester</span></button>
       <button type="button" class="ns-item" data-go="scoring"><b>Scores</b><span>metrics, sortable coins, research weights</span></button>
+      <button type="button" class="ns-item" data-go="structure"><b>Structure</b><span>whale share, wallet concentration, impact per SOL</span></button>
       <button type="button" class="ns-item" data-go="edge"><b>Edge Lab</b><span>pre-registered hypotheses and their pass map</span></button>
       <button type="button" class="ns-item" data-go="perf"><b>Performance</b><span>paper books, terminal, benchmarks</span></button>
       <button type="button" class="ns-item" data-go="report"><b>Report</b><span>the written economics, by day</span></button></div>
@@ -538,5 +542,6 @@
 <script src="app.js" type="module"></script>
 <script src="late-accumulation-v1.js" type="module"></script>
 <script src="scoring/scoring-v1.js" type="module"></script>
+<script src="structure/structure-v1.js" type="module"></script>
 </body>
 </html>
