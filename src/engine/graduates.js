@@ -141,7 +141,7 @@ export class Graduates extends EventEmitter {
     // migration or backfill row should be rare; raise GRAD_MAX_WATCH if the log shows it happening.
     const rank = (s) => (String(s.source || '').startsWith('dex-') ? 0 : 1) * 1e12 + (s.last?.liq ?? 0);
     let worst = null;
-    for (const s of this.watch.values()) { if (!worst || rank(s) < rank(worst)) worst = s; }
+    for (const s of this.watch.values()) { if (this.lateProtected?.has(s.mint)) continue; if (!worst || rank(s) < rank(worst)) worst = s; }
     if (worst) this.drop(worst.mint, `evicted (watchlist full, ${worst.source || 'unknown'} source)`);
   }
   drop(mint, reason) {

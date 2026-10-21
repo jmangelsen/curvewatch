@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
+import { scoringDashboard } from './scoringDashboard.js';
 import { tapeMarks } from './drill.js';
 import { studioCall } from './studioWorker.js';
 import { runGradBacktest } from './engine/gradBacktest.js';
@@ -21,7 +22,7 @@ import { VERDICTS } from './verdicts.js';
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners, picks, holderPoller, codex }) {
+export function startServer({ engine, status, grads, strong, gateView, healthData, fillsView, benchmarks, drill, edgeView, edgeDetail, trackerView, rejectsView, runners, picks, holderPoller, late, codex }) {
   const app = express();
   app.disable('x-powered-by');
 
@@ -80,6 +81,12 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const warm = () => Promise.all([studioCall('overview', { days: 14 }), studioCall('features', { days: 14, cp: 60 }), studioCall('postgrad', { days: 14, lines: 300 })]).catch((e) => log.warn('studio warm', e.message));
   setTimeout(warm, 20000).unref?.(); setInterval(warm, 270000).unref?.();
   app.get('/api/studio', sj('overview'));
+  app.get('/api/scoring', (req,res)=>res.json(scoringDashboard(engine, status().solUsd, req.query.largeUsd)));
+  app.get('/api/studio/late', (req, res) => late ? res.json(late.view()) : res.status(503).json({ error:'Late experiment not initialized' }));
+  app.get('/api/studio/late/:id', (req, res) => {
+    const id=Number(req.params.id), result=Number.isSafeInteger(id) && id>0 && late?.detail(id);
+    return result ? res.json(result) : res.status(404).json({error:'Cohort not found'});
+  });
   app.get('/api/studio/curves', sj('curves'));
   app.get('/api/studio/postgrad', sj('postgrad'));
   app.get('/api/studio/horde', async (req, res) => { try { res.json(await studioCall('horde', { days: Math.max(1, Math.min(90, Number(req.query.days) || 30)), hours: Math.max(3, Math.min(24, Number(req.query.hours) || 12)) })); } catch (e) { log.warn('studio horde', e.message); res.status(500).json({ error: e.message }); } });

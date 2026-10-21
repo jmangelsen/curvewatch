@@ -1,5 +1,44 @@
 # Curvewatch
 
+## Source release and deployment blueprint
+
+This repository contains the collector, SQLite schema and additive migrations, dashboard, Studio comparisons, current scoring/reject implementation, deployment tooling, and the React/Tailwind scoring workbench. It is paper-only and requires no wallet private key. The existing strategy/settings fingerprint is **`96f45eab`**; environment overrides to fingerprinted settings can intentionally produce a different fingerprint.
+
+### Exact local setup and collector start
+
+Use **Node.js 20.x** and npm. Run from the repository root:
+
+```bash
+npm ci
+cp -n .env.example .env
+# Edit .env locally; all example values are blank. Never commit the populated file.
+npm run build:scoring
+npm run env:check
+npm test
+DATA_DIR=./data PORT=8080 NODE_ENV=production node src/index.js
+```
+
+The exact collector start command is the last line above. The database is **`$DATA_DIR/curvewatch.db`**, default **`./data/curvewatch.db`** relative to the repository working directory, with SQLite WAL companion files. On the existing VPS it is **`/opt/curvewatch/data/curvewatch.db`**. All databases, environment files and private keys are excluded from Git.
+
+Verify the default-settings fingerprint without editing strategy code:
+
+```bash
+node --input-type=module -e "const { CFG } = await import('./src/version.js'); console.log(CFG)"
+```
+
+Runtime schema creation and additive migrations live in `src/db.js` and the owning modules in `src/engine/`. There is no separate migration command: initialization runs at startup. Do not replace a nonempty database with a seed copy. Back up the production database before releases; `deploy/backup.sh` uses SQLite's backup mechanism.
+
+### Existing VPS and new research modules
+
+The existing installation is managed by systemd as `curvewatch`; use `systemctl status curvewatch` and `journalctl -u curvewatch` for monitoring. A server deployment requires one coordinated restart; dashboard-only files can be delivered with `deploy/hot-static.sh`. Restarts can gap-flag existing paper data, so a Git push is not a deployment authorization by itself. Preserve `/opt/curvewatch/.env` and the production database.
+
+- **Scoring workbench:** Source in `scoring-ui/`, React 19 and Tailwind CSS 3, built by Vite into `public/scoring/`. Its sortable measurements and weight sliders are read-only research controls, not live trading weights.
+- **Late accumulation:** Source in `src/engine/lateAccumulation.js`, with an independent code/config registration hash and additive `late_*` tables. Existing books and fingerprinted files are untouched. No qualifying entries occur without new exact holder history; install `HELIUS_API_KEY` securely on the collector and wait for the prospective two-hour history. Never paste or commit the key.
+- **Coverage and rollback:** Missing prices, pool switches and restarts censor the new experiment's open arms. Restore the previous code release and restart once to roll back; preserve data and the additive tables. No new cron job or webhook is required.
+- **Published-site data:** Do not republish the separate hosted backend with seed data until its existing local records have been exported. The user's preservation instruction remains in force.
+
+The remaining sections record prior research and historical releases; historical metrics or estimates are not a statement of current expected returns.
+
 A 24/7 Pump.fun screener that watches every launch, scores tokens during their first 15 minutes on the bonding curve, alerts you on Telegram, and paper-trades every alert under realistic conditions. It records every launch as labeled data so you can tell whether the score actually predicts anything.
 
 It is a **discovery tool with an honest scorekeeper**. It does not place trades, and it never holds a private key.

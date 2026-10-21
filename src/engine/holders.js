@@ -16,11 +16,16 @@ const H = config.holders;
 try { db.exec('ALTER TABLE grad_snapshots ADD COLUMN holders INTEGER'); } catch { /* already there */ }
 db.exec(`CREATE TABLE IF NOT EXISTS holder_counts (mint TEXT PRIMARY KEY, holders INTEGER, capped INTEGER DEFAULT 0, ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS holder_history (mint TEXT NOT NULL, ts INTEGER NOT NULL, holders INTEGER, PRIMARY KEY (mint, ts))`);
+for (const table of ['holder_counts','holder_history']) {
+  for (const col of ["method TEXT DEFAULT 'legacy-accounts'", 'capped INTEGER']) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some(x=>x.name===col.split(' ')[0])) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
+  }
+}
 const Q = {
-  get: db.prepare('SELECT holders, capped, ts FROM holder_counts WHERE mint = ?'),
-  put: db.prepare('INSERT INTO holder_counts (mint, holders, capped, ts) VALUES (?, ?, ?, ?) ON CONFLICT(mint) DO UPDATE SET holders = excluded.holders, capped = excluded.capped, ts = excluded.ts'),
+  get: db.prepare('SELECT holders, capped, ts, method FROM holder_counts WHERE mint = ?'),
+  put: db.prepare("INSERT INTO holder_counts (mint, holders, capped, ts, method) VALUES (?, ?, ?, ?, 'owners-v1') ON CONFLICT(mint) DO UPDATE SET holders = excluded.holders, capped = excluded.capped, ts = excluded.ts, method = excluded.method"),
   hist: db.prepare('SELECT ts, holders FROM holder_history WHERE mint = ? ORDER BY ts'),
-  histIns: db.prepare('INSERT INTO holder_history (mint, ts, holders) VALUES (?, ?, ?)'),
+  histIns: db.prepare("INSERT OR IGNORE INTO holder_history (mint, ts, holders, capped, method) VALUES (?, ?, ?, ?, 'owners-v1')"),
 };
 
 export const holdersEnabled = () => Boolean(H.apiKey);
@@ -28,7 +33,7 @@ export const holdersEnabled = () => Boolean(H.apiKey);
 /** Count token accounts with a non-zero balance for a mint. Returns { holders, capped } or null on failure. */
 export async function countHolders(mint, { maxPages = H.maxPages, onCall = null } = {}) {
   if (!holdersEnabled()) return null;
-  let total = 0, page = 1, capped = 0;
+  const owners = new Set(); let page = 1, capped = 0;
   for (; page <= maxPages; page++) {
     onCall?.();
     const r = await fetch(`https://mainnet.helius-rpc.com/?api-key=${H.apiKey}`, {
@@ -36,12 +41,17 @@ export async function countHolders(mint, { maxPages = H.maxPages, onCall = null 
       body: JSON.stringify({ jsonrpc: '2.0', id: 'cw', method: 'getTokenAccounts', params: { mint, limit: 1000, page, options: { showZeroBalance: false } } }),
     }).then((x) => x.json());
     if (r.error) throw new Error(r.error.message || JSON.stringify(r.error));
-    const n = r.result?.token_accounts?.length || 0;
-    total += n;
+    const accounts = r.result?.token_accounts;
+    if (!Array.isArray(accounts)) throw new Error('invalid holder response: missing accounts');
+    const n = accounts.length;
+    for (const account of accounts) {
+      if (!account.owner) throw new Error('holder response missing owner');
+      if (BigInt(String(account.amount || '0')) > 0n) owners.add(account.owner);
+    }
     if (n < 1000) break;
     if (page === maxPages) capped = 1;
   }
-  return { holders: total, capped };
+  return { holders: owners.size, capped };
 }
 
 /** Cached read: the last count for a mint, with its age, or null if never counted (or the module is off). */
@@ -65,7 +75,7 @@ export function holderGrowth(mint, windowMin = 60) {
  * oldest count first, within a request budget. Also stamps the latest grad_snapshots row so the label pipeline keeps it.
  */
 export class HolderPoller {
-  constructor({ pick, grads }) { this.pick = pick; this.grads = grads; this.timer = null; this.busy = false; this.calls = 0; this.errors = 0; this.lastErr = null; }
+  constructor({ pick, grads, priority = () => [] }) { this.pick = pick; this.grads = grads; this.priority = priority; this.timer = null; this.busy = false; this.calls = 0; this.errors = 0; this.lastErr = null; }
   start() { if (!holdersEnabled()) { log.info('off (no HELIUS_API_KEY): graduate holder counts stay unknown'); return; } this.timer = setInterval(() => this.tick(), H.tickMs); setTimeout(() => this.tick(), 15000); log.info(`on · up to ${H.perTick} mints per ${H.tickMs / 1000}s tick, refresh after ${H.staleMin} min, cap ${H.dailyCalls} calls/day`); }
   stop() { clearInterval(this.timer); }
   /** Calls made today (UTC), persisted so a restart does not reset the budget. */
@@ -81,12 +91,17 @@ export class HolderPoller {
       for (const mint of wanted) {
         try {
           if (used >= H.dailyCalls) break;
-          const r = await countHolders(mint, { onCall: () => { used++; this.calls++; } });
-          this.bump(t.k, used);
+          const r = await countHolders(mint, { onCall: () => {
+            // Charge attempts before sending, including retries/errors. A fresh UTC day has its own budget.
+            const budget = this.today();
+            if (budget.n >= H.dailyCalls) throw new Error('daily holder budget reached');
+            this.bump(budget.k, budget.n + 1); used++; this.calls++;
+          } });
           if (!r) continue;
-          Q.put.run(mint, r.holders, r.capped, Date.now()); Q.histIns.run(mint, Date.now(), r.holders);
+          const ts=Date.now();
+          db.transaction(()=>{ Q.put.run(mint, r.holders, r.capped, ts); Q.histIns.run(mint, ts, r.holders, r.capped); })();
           const st = this.grads?.watch?.get(mint); if (st) { st.holders = r.holders; st.holdersCapped = Boolean(r.capped); st.holdersAt = Date.now(); }
-          db.prepare('UPDATE grad_snapshots SET holders = ? WHERE id = (SELECT id FROM grad_snapshots WHERE mint = ? ORDER BY ts DESC LIMIT 1)').run(r.holders, mint);
+          db.prepare('UPDATE grad_snapshots SET holders = ? WHERE mint=? AND ts = (SELECT MAX(ts) FROM grad_snapshots WHERE mint = ?)').run(r.holders, mint, mint);
         } catch (e) { this.errors++; this.lastErr = e.message; if (this.errors % 10 === 1) log.warn(`${mint.slice(0, 8)}: ${e.message}`); if (/401|403|api key/i.test(e.message)) break; }
         await new Promise((res) => setTimeout(res, H.paceMs));
       }
@@ -108,6 +123,11 @@ export class HolderPoller {
   /** Mints due for a count: horde schedule first (youngest graduates first), then the runner/candidate picks on the stale rule. */
   due(now = Date.now()) {
     const out = [], seen = new Set();
+    // Reserve at most six slots for the new experiment, sharing (not expanding) the existing request budget.
+    const priority = [...new Set(this.priority())].filter(m=>{
+      const c=Q.get.get(m); return !c || now-c.ts>=60*60000;
+    }).sort((a,b)=>(Q.get.get(a)?.ts||0)-(Q.get.get(b)?.ts||0)).slice(0,6);
+    for(const m of priority) { seen.add(m); out.push(m); }
     const horde = [];
     for (const st of this.grads?.watch?.values?.() || []) {
       const cad = HolderPoller.cadenceMin(st, now); if (cad == null) continue;

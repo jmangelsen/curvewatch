@@ -14,6 +14,7 @@ import { Runners } from './engine/runners.js';
 import { Picks } from './engine/picks.js';
 import { makeCodex } from './codex.js';
 import { HolderPoller, holdersEnabled } from './engine/holders.js';
+import { LateAccumulation } from './engine/lateAccumulation.js';
 import { fmtUsd } from './market.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
@@ -206,15 +207,17 @@ runners.on('picks', (o) => {
   sendTelegram(L.join('\n'));
 });
 const picks = new Picks({ engine, grads });
+const late = new LateAccumulation({ grads, holdersEnabled: holdersEnabled() });
+late.start();
 // Holder counts: refresh the runner-band graduates and whatever the reignite list is looking at (key-gated; inert without HELIUS_API_KEY)
-const holderPoller = new HolderPoller({ grads, pick: () => {
+const holderPoller = new HolderPoller({ grads, priority: () => late.priorityMints(), pick: () => {
   const set = new Set(runners.live.map((x) => x.mint));
   for (const x of picks.reigniting(15, { log: false }).rows) set.add(x.mint);
   return [...set];
 } });
 holderPoller.start();
 const codex = makeCodex({ engine, grads });
-startServer({ engine, status, grads, strong, runners, picks, holderPoller, codex, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners, codex }), edgeView, edgeDetail, trackerView, rejectsView });
+startServer({ engine, status, grads, strong, runners, picks, holderPoller, late, codex, gateView, healthData, fillsView, benchmarks, drill: makeDrill({ engine, grads, edgeView, edgeDetail, runners, codex }), edgeView, edgeDetail, trackerView, rejectsView });
 startTgBot({ engine, grads, strong, status, runners, picks }); // two-way lookups; no-op unless Telegram is configured
 feeds.forEach((f) => f.start());
 log.info(`curvewatch started · trade source: ${config.tradeSource} · alert score ≥ ${config.scoring.alertScore}`);

@@ -1,0 +1,3 @@
+# Reviewed false positive: empty HELIUS_API_KEY= followed by HOLDERS_TICK_MS=120000.
+# Gitleaks generic-api-key incorrectly joins the two lines. Exact finding only.
+54acc352d75af001cef986027893c48d63c23f24:.env.example:generic-api-key:185

@@ -27,6 +27,7 @@
     <button role="tab" class="pri" aria-selected="true" data-tab="live" data-short="Live">Live</button>
     <button role="tab" class="pri" aria-selected="false" data-tab="codex" data-short="Codex">Codex<span class="cx-tabdot" id="cxTabDot" hidden></span></button>
     <button role="tab" class="pri" aria-selected="false" data-tab="studio" data-short="Studio">Studio</button>
+    <button role="tab" aria-selected="false" data-tab="scoring" data-short="Scores">Scores</button>
     <button role="tab" class="pri" aria-selected="false" data-tab="grads" data-short="Grads">Graduates</button>
     <button role="tab" aria-selected="false" data-tab="runners" data-short="Runners">Runners</button>
     <button role="tab" aria-selected="false" data-tab="perf" data-short="Perf">Performance</button>
@@ -112,6 +113,7 @@
       </article>
     </div>
   </section>
+  <section id="tab-scoring" class="tab-panel" hidden><div id="scoringRoot"></div></section>
   <section id="tab-studio" class="tab-panel studio" hidden>
     <div class="st-head">
       <div class="st-title"><h1>Curve Studio</h1><p>Every graduated coin against the field. Compare paths, find what separates them, test a rule on held-out time before it touches the rules. Research view: nothing here trades or changes a setting.</p></div>
@@ -122,6 +124,19 @@
       </div>
     </div>
     <div class="st-kpis" id="stKpis"></div>
+    <article class="card late-card" id="latePanel" aria-label="Late accumulation paper experiment">
+      <div class="card-head"><div><span class="late-eyebrow">H4 / PROSPECTIVE PAPER EXPERIMENT</span><h2>Let accumulation earn the extra time.</h2></div><button type="button" class="btn" id="lateRefresh">Refresh</button></div>
+      <p class="late-intro">The same qualifying entry, five independent exits. Compare 6, 12, 24 and 36 hours with a partial-profit runner. No real orders. No extension of existing books.</p>
+      <div id="lateStatus" role="status">Loading experiment registration…</div>
+      <div class="late-tiles" id="lateTiles"></div>
+      <div class="late-horizons" id="lateHorizons"></div>
+      <details class="late-rules"><summary>Entry logic, costs and data safeguards</summary><div id="lateRules"></div></details>
+      <div class="late-columns">
+        <section><h3>Entry diagnostics</h3><p class="late-muted">These are research observations, not trades. Select a row to see why it cannot enter.</p><div id="lateCandidates"></div></section>
+        <section><h3>Prospective cohorts</h3><p class="late-muted">All arms share one entry. Select a cohort for its fills and exit history.</p><div id="lateCohorts"></div></section>
+      </div>
+      <p class="late-muted" id="lateVerdict"></p>
+    </article>
     <article class="card st-chart-card">
       <div class="card-head">
         <h2 id="stChartTitle">Curve comparison</h2>
@@ -507,6 +522,7 @@
       <button type="button" class="ns-item" data-go="grads"><b>Graduates</b><span>pools after the curve, strong signals</span></button></div>
     <div class="ns-group"><h3>Research</h3>
       <button type="button" class="ns-item" data-go="studio"><b>Studio</b><span>curve cohorts, separators, rule tester</span></button>
+      <button type="button" class="ns-item" data-go="scoring"><b>Scores</b><span>metrics, sortable coins, research weights</span></button>
       <button type="button" class="ns-item" data-go="edge"><b>Edge Lab</b><span>pre-registered hypotheses and their pass map</span></button>
       <button type="button" class="ns-item" data-go="perf"><b>Performance</b><span>paper books, terminal, benchmarks</span></button>
       <button type="button" class="ns-item" data-go="report"><b>Report</b><span>the written economics, by day</span></button></div>
@@ -520,5 +536,7 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="vendor/lightweight-charts.js"></script>
 <script src="app.js" type="module"></script>
+<script src="late-accumulation-v1.js" type="module"></script>
+<script src="scoring/scoring-v1.js" type="module"></script>
 </body>
 </html>
