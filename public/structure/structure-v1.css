@@ -5,7 +5,7 @@
 .sx-head p { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--text-muted); max-width: 78ch; }
 .sx-ctl { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .sx-ctl select, .sx-ctl input[type=search] { font: inherit; font-size: var(--text-xs); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; min-height: 32px; }
-.sx-ctl input[type=search] { width: 15ch; font-family: var(--font-mono); }
+.sx-ctl input[type=search] { width: 20ch; font-family: var(--font-mono); }
 .sx-ctl label { display: inline-flex; gap: 6px; align-items: center; font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; }
 .sx-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .sx-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-3); }
