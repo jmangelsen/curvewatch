@@ -54,4 +54,13 @@ assert.equal(at2.positions[0].markPct, null, 'no recorded trade before that inst
 // a moment 5 h ago: flat
 assert.equal(codex.at(now - 5 * H).inTrade, false);
 assert.equal(typeof paper.STRATEGIES.main.label, 'string');
-console.log('5 codex tests passed');
+// Two banked stages must both appear in the past-moment ledger.
+ins.run('MintC','CCC','open',now-.5*H,50,.2,1,.25,.17,null,null,null,null,JSON.stringify([
+  {t:now-.4*H,type:'tp1',sol:.11,fractionOfRemaining:.5},
+  {t:now-.3*H,type:'tp1',sol:.06,fractionOfRemaining:.5},
+]),'capital');
+db.prepare('INSERT INTO trades (mint, ts, is_buy, sol, tok, vsol, vtok) VALUES (?,?,?,?,?,?,?)').run('MintC',now-.2*H,1,1,1,30,6e8);
+const multi=codex.at(now-.1*H).positions.find(x=>x.symbol==='CCC');
+assert.ok(Math.abs(multi.realizedSol-.17)<1e-10);
+assert.ok(Math.abs(multi.markSol-(.17+.2*.25*(1-1.25/100)))<1e-10);
+console.log('6 codex tests passed');

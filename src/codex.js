@@ -116,8 +116,9 @@ export function makeCodex({ engine, grads }) {
       const m = meta(r.mint, engine.getToken(r.mint)), S = curveExitRule(r.book), tr = Q.curveMarkAt.get(r.mint, ts);
       const mcap = tr ? mcapOf(tr.vsol, tr.vtok) : null;
       // partial sells before ts (tp1) are read from the event log so the mark respects what had already been banked
-      const ev = parseEvents(r.events).filter((e) => e.t <= ts), tp1 = ev.find((e) => e.type === 'tp1');
-      const frac = tp1 ? (1 - (paper.STRATEGIES[r.book]?.tpFraction ?? 0.5)) : 1, realized = tp1 ? tp1.sol : 0;
+      const ev = parseEvents(r.events).filter((e) => e.t <= ts), partials = ev.filter((e) => e.type === 'tp1'), tp1 = partials[0];
+      const frac = partials.reduce((left,e) => left * (1 - (e.fractionOfRemaining ?? paper.STRATEGIES[r.book]?.tpFraction ?? 0.5)), 1);
+      const realized = partials.reduce((sum,e) => sum + (e.sol || 0), 0);
       const gross = mcap && r.entry_mcap ? mcap / r.entry_mcap : null;
       const markSol = gross != null ? realized + r.size_sol * frac * gross * (1 - config.paper.feePct / 100) : null;
       const pk = Q.curvePeakAt.get(r.mint, r.entry_ts, ts), peakMcap = pk ? mcapOf(pk.vsol, pk.vtok) : null;

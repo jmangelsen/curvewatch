@@ -16,6 +16,7 @@ import { sequentialVerdict, confidenceSequence } from './seqtest.js';
 const SEQ_PASS_MARGIN = 0.02, SEQ_MIN_TRADES = 20; // pre-registered: PASS needs the anytime 95% lower bound above +2% per trade after cost
 import { CFG } from '../version.js';
 import { countBlocked } from './rejects.js';
+import { CAPITAL_POLICY, cappedStop, capitalAction } from './capitalPolicy.js';
 const log = logger('paper');
 const P = config.paper;
 const SC = config.strategies;
@@ -27,6 +28,10 @@ export const COST = (1 - P.feePct / 100) ** 2 * (1 - P.extraSlippagePct / 100);
 export const STRATEGIES = {
   main: { id: 'main', label: 'Main', entry: `score ≥ ${config.scoring.alertScore}`, delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin,
     thesis: 'The full score (flow, buyers, holder spread, creator history) is high enough to alert.' },
+  capital: { id: 'capital', label: 'Capital protection', entry: `same Main entry; bank 50% at +10% net equity, another 25% of original units at +20%; then +2% total-equity floor / 12% trail`,
+    delaySec: P.entryDelaySec, tpMult: CAPITAL_POLICY.firstTarget, tpFraction: CAPITAL_POLICY.firstFraction,
+    stopPct: P.stopPct, trailPct: CAPITAL_POLICY.trailPct, maxHoldMin: P.maxHoldMin, capitalProtection: true, candidate: true,
+    thesis: 'Prospective exit-only challenger. Earlier partials may reduce giveback, but can cut winners; no positive edge established.' },
   band: { id: 'band', label: 'Band', entry: `score first lands in ${config.band.lo}–${config.band.hi}`, delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin,
     thesis: 'Enter before the score peaks; 72+ looked late in labeled snapshots.' },
   flow: { id: 'flow', label: 'Flow', entry: `score ≥ ${SC.flow.minScore}, 60s net inflow ≥ ${SC.flow.minFlow60Sol} SOL, median buy ≥ ${SC.flow.minMedianBuySol} SOL`, delaySec: P.entryDelaySec,
@@ -56,10 +61,12 @@ export const STRATEGIES = {
   scale: { id: 'scale', label: 'Scale-out', entry: `score ≥ ${config.scoring.alertScore}; sells 80% at +125%, keeps 20% behind a breakeven floor and the trail`,
     delaySec: P.entryDelaySec, tpMult: 2.25, tpFraction: 0.8, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, beAfterTp: true, candidate: true,
     note: 'Requested exit rule, tested as its own book against Main (same entries). Isolates the exit: any difference between the two books is the exit rule alone.' },
-  timed: { id: 'timed', label: 'Timed 1h', entry: `main signal; no stop and no target, sell at ${SC.timed.holdMin} min (or curve close / idle)`,
+  timed: { id: 'timed', label: 'Timed 1h (47% stop)', entry: `main signal; no target, 47% loss trigger, sell at ${SC.timed.holdMin} min (or curve close / idle)`,
     delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: 100, trailPct: 100, maxHoldMin: SC.timed.holdMin, candidate: true,
     thesis: 'About half of all trades hit the stop before the target. This variant rides the whole distribution for an hour; the graduates sweep found timed exits least bad, which is untested on the curve until now.' },
 };
+// User-authorized safety ceiling. Keep tighter stops; never widen an existing one.
+for (const S of Object.values(STRATEGIES)) S.stopPct = cappedStop(S.stopPct);
 export const BOOKS = Object.keys(STRATEGIES).filter((b) => b === 'main' || b === 'followctl' ? SC.follow?.enabled !== false || b === 'main' : SC[b]?.enabled !== false);
 
 // ---- schema additions ----
@@ -98,6 +105,8 @@ export function scheduleEntry(token, alertId, { book = 'main', score = null, fea
   const S = STRATEGIES[book];
   if (!P.enabled || !S || !BOOKS.includes(book) || open.has(key(book, token.mint)) || pendingEntries.some((e) => e.book === book && e.mint === token.mint)) return;
   pendingEntries.push({ mint: token.mint, alertId, book, score, features: pickFeatures(features || token.lastFeatures), signalMcap: token.mcap, signalTs: Date.now(), at: Date.now() + (delaySec ?? S.delaySec) * 1000, token });
+  // Mirror the exact Main signal, reserve state and delay; no separate selection rule.
+  if (book === 'main') scheduleEntry(token, alertId, { book: 'capital', score, features, delaySec });
 }
 
 // Restored positions whose token is no longer in the engine's memory (process restart): a minimal curve mirror,
@@ -136,7 +145,12 @@ export function restoreOpen(getToken, { downSec = null } = {}) {
       if (!last || !(last.vsol > 0)) { q.voidPaper.run(Date.now(), row.id); v++; log.warn(`voided open paper trade ${row.id} (${row.symbol}): no recorded curve state`); continue; }
       t = new Ghost(row.mint, row.symbol, last); ghosts.set(row.mint, t);
     }
-    const pos = rowToPos(row); pos.gap = flagged; open.set(key(pos.book, row.mint), pos);
+    const pos = rowToPos(row); pos.gap = flagged;
+    if (row.stop_pct > CAPITAL_POLICY.maxStopPct) {
+      pos.events.push({ t: Date.now(), type: 'risk_policy', policy: CAPITAL_POLICY.id, previousStopPct: row.stop_pct, stopPct: pos.stopPct, note: 'User-authorized trigger ceiling; realized fills can be worse.' });
+      db.prepare('UPDATE paper_trades SET stop_pct=?, events=? WHERE id=?').run(pos.stopPct, JSON.stringify(pos.events), pos.id);
+    }
+    open.set(key(pos.book, row.mint), pos);
     Qx.restored.run({ id: row.id, gap: flagged || null }); n++;
   }
   if (n || v) log.info(`restored ${n} open paper trades${flagged && n ? ` (flagged: down ${downSec == null ? '?' : Math.round(downSec)}s)` : ''}, voided ${v}`);
@@ -152,7 +166,8 @@ const rowToPos = (r) => {
   const S = STRATEGIES[r.book || 'main'] || STRATEGIES.main;
   return { id: r.id, book: r.book || 'main', alertId: r.alert_id, mint: r.mint, symbol: r.symbol, entryTs: r.entry_ts, entryMcap: r.entry_mcap, sizeSol: r.size_sol, tokens: r.tokens, tokensLeft: r.tokens_left,
     realized: r.realized_sol || 0, peakValue: r.peak_value || r.size_sol, troughValue: r.trough_value || r.size_sol, peakTs: r.peak_ts || r.entry_ts, maxDrop: r.max_drop_pct || 0, lastMark: null,
-    tp1Done: (r.realized_sol || 0) > 0, signalMcap: r.signal_mcap, gap: r.gap || 0, tpMult: r.tp_mult || S.tpMult, stopPct: r.stop_pct || S.stopPct, S, events: JSON.parse(r.events || '[]') };
+    tp1Done: (r.realized_sol || 0) > 0, capitalStage: JSON.parse(r.events || '[]').filter(e => e.type === 'tp1').length,
+    signalMcap: r.signal_mcap, gap: r.gap || 0, tpMult: r.tp_mult || S.tpMult, stopPct: cappedStop(r.stop_pct || S.stopPct), S, events: JSON.parse(r.events || '[]') };
 };
 
 export function tick(getToken) {
@@ -177,7 +192,7 @@ export function tick(getToken) {
     const tokens = curveBuy(token.vsol, token.vtok, P.sizeSol, P.feePct) * (1 - P.extraSlippagePct / 100);
     const gated = gate.enforcing ? 1 : 0;
     const pos = { book: e.book, S, alertId: e.alertId, mint: e.mint, symbol: token.symbol, entryTs: t, entryMcap: token.mcap, sizeSol: P.sizeSol, tokens, tokensLeft: tokens, realized: 0,
-      peakValue: P.sizeSol, troughValue: P.sizeSol, peakTs: t, maxDrop: 0, lastMark: null, tp1Done: false, gated, signalMcap: e.signalMcap, tpMult: S.tpMult, stopPct: S.stopPct,
+      peakValue: P.sizeSol, troughValue: P.sizeSol, peakTs: t, maxDrop: 0, lastMark: null, tp1Done: false, capitalStage: 0, gated, signalMcap: e.signalMcap, tpMult: S.tpMult, stopPct: S.stopPct,
       events: [{ t, type: 'entry', mcap: round(token.mcap, 1) }] };
     pos.id = Number(q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: t, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, tokens, events: JSON.stringify(pos.events),
       book: e.book, rules: P.rules, gated, score: e.score, market: JSON.stringify(marketTag()) }).lastInsertRowid);
@@ -218,12 +233,19 @@ function checkExit(pos, t) {
   const mult = total / pos.sizeSol;
   // a triggered exit fills after the reaction delay, at whatever the curve price is then
   if (pos.pendingExit) {
+    // A pending partial must not sell only half after the position has crossed its loss trigger.
+    // Preserve the original deadline rather than inventing an instantaneous fill.
+    if (pos.pendingExit.kind === 'tp' && mult <= 1 - cappedStop(pos.stopPct) / 100) {
+      pos.pendingExit.kind = 'exit';
+      pos.pendingExit.reason = `stop -${cappedStop(pos.stopPct)}% during pending profit order`;
+      Qx.trigger.run((mult - 1) * 100, pos.id);
+    }
     if (t >= pos.pendingExit.at) {
       const pe = pos.pendingExit; pos.pendingExit = null;
       if (pe.kind === 'tp') {
-        const frac = S.tpFraction ?? P.tp1Fraction, sellTok = pos.tokensLeft * frac, got = valueOf(pos, token, sellTok);
-        pos.tokensLeft -= sellTok; pos.realized += got; pos.tp1Done = true;
-        pos.events.push({ t, type: 'tp1', sol: round(got, 4), mcap: round(token.mcap, 1), trigger: round((pe.mult - 1) * 100, 1) });
+        const frac = pe.fraction ?? S.tpFraction ?? P.tp1Fraction, sellTok = pos.tokensLeft * frac, got = valueOf(pos, token, sellTok);
+        pos.tokensLeft -= sellTok; pos.realized += got; pos.tp1Done = true; pos.capitalStage = (pos.capitalStage || 0) + 1;
+        pos.events.push({ t, type: 'tp1', sol: round(got, 4), mcap: round(token.mcap, 1), trigger: round((pe.mult - 1) * 100, 1), fractionOfRemaining: frac, reason: pe.reason });
         if (pos.tokensLeft <= 1e-9) { closePos(pos, null, pe.reason); return; }
         persist(pos);
       } else closePos(pos, token, pe.reason);
@@ -231,15 +253,20 @@ function checkExit(pos, t) {
     return;
   }
   const heldMin = (t - pos.entryTs) / 60000;
-  const trigger = (kind, reason) => {
+  const trigger = (kind, reason, fraction = null) => {
     Qx.trigger.run((mult - 1) * 100, pos.id);
-    if (P.exitDelaySec <= 0) { pos.pendingExit = { at: t, kind, reason, mult }; checkExit(pos, t); return; }
-    pos.pendingExit = { at: t + P.exitDelaySec * 1000, kind, reason, mult };
+    if (P.exitDelaySec <= 0) { pos.pendingExit = { at: t, kind, reason, mult, fraction }; checkExit(pos, t); return; }
+    pos.pendingExit = { at: t + P.exitDelaySec * 1000, kind, reason, mult, fraction };
   };
   if (token.graduated) { closePos(pos, token, 'graduated (sold at curve close)'); return; }
-  if (!pos.tp1Done && mult >= pos.tpMult) return trigger('tp', `take profit +${round((pos.tpMult - 1) * 100, 0)}%`);
-  if (mult <= 1 - pos.stopPct / 100) return trigger('exit', `stop -${pos.stopPct}%`);
-  if (pos.tp1Done && total <= pos.peakValue * (1 - S.trailPct / 100)) return trigger('exit', `trailing stop ${S.trailPct}%`);
+  if (S.capitalProtection) {
+    const action = capitalAction({ multiple: mult, peakMultiple: pos.peakValue / pos.sizeSol, stage: pos.capitalStage || 0, remainingFraction: pos.tokensLeft / pos.tokens, stopPct: pos.stopPct });
+    if (action) return trigger(action.kind, action.reason, action.fraction);
+  } else {
+    if (mult <= 1 - cappedStop(pos.stopPct) / 100) return trigger('exit', `stop -${cappedStop(pos.stopPct)}%`);
+    if (!pos.tp1Done && mult >= pos.tpMult) return trigger('tp', `take profit +${round((pos.tpMult - 1) * 100, 0)}%`);
+    if (pos.tp1Done && total <= pos.peakValue * (1 - S.trailPct / 100)) return trigger('exit', `trailing stop ${S.trailPct}%`);
+  }
   // breakeven floor on the remainder: once profit is banked, the rest is never allowed to trade below the entry price
   if (pos.tp1Done && S.beAfterTp && pos.tokens > 0 && value <= pos.sizeSol * (pos.tokensLeft / pos.tokens)) return trigger('exit', 'breakeven floor on remainder');
   if (heldMin >= S.maxHoldMin) return trigger('exit', 'max hold');
@@ -273,7 +300,6 @@ function closePos(pos, token, reason) {
   pos.realized += got; pos.tokensLeft = 0;
   const pnl = pos.realized - pos.sizeSol;
   const pnlPct = (pnl / pos.sizeSol) * 100;
-  ghosts.delete(pos.mint);
   if (pos.realized < pos.troughValue) pos.troughValue = pos.realized;
   pos.events.push({ t, type: 'exit', reason, sol: round(got, 4), mcap: token ? round(token.mcap, 1) : null });
   persist(pos, { status: 'closed', exitTs: t, exitReason: reason, pnlSol: pnl, pnlPct });
@@ -281,6 +307,8 @@ function closePos(pos, token, reason) {
     slipPct: pos.signalMcap ? (pos.entryMcap / pos.signalMcap - 1) * 100 : null, heldMin: (t - pos.entryTs) / 60000, peakAfterMin: (pos.peakTs - pos.entryTs) / 60000 });
   Qx.cause.run({ id: pos.id, cause: c.cause, detail: c.detail, trough: pos.troughValue, peakTs: pos.peakTs, maxDrop: pos.maxDrop });
   open.delete(key(pos.book, pos.mint));
+  // Restored books share one curve mirror. One early exit must not strand the other books.
+  if (!BOOKS.some(b => open.has(key(b, pos.mint)))) ghosts.delete(pos.mint);
   paperEvents.push({ type: 'exit', pos: { ...pub(pos, token), pnlSol: pnl, pnlPct, reason, cause: c.cause, causeDetail: c.detail } });
   log.info(`EXIT [${pos.book}] ${pos.symbol} ${reason} pnl ${round(pnl, 4)} SOL (${round(pnlPct, 1)}%) · ${c.cause}`);
 }
@@ -398,7 +426,8 @@ export function books() {
       byMarket: { WARM: brief(killStatsFrom(byState(rows, 'WARM'))), COLD: brief(killStatsFrom(byState(rows, 'COLD'))), UNKNOWN: brief(killStatsFrom(byState(rows, 'UNKNOWN'))) } };
   }
   const older = q.closedPapersAsc.all().filter((r) => r.cfg !== CFG || r.gap);
-  return { rules: P.rules, cfg: CFG, order: BOOKS, books: out, paired: { scale: pairedBooks('scale', 'main') }, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), verdicts: VERDICTS, seqRule: { alpha: 0.05, passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES, hypothesisBooks: ['follow', 'followctl'] }, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
+  return { rules: P.rules, cfg: CFG, capitalPolicy: { ...CAPITAL_POLICY, warning: '47% is the widest permitted loss trigger, not a guaranteed realized-loss cap. Gaps and slippage can fill worse.' },
+    order: BOOKS, books: out, paired: { scale: pairedBooks('scale', 'main'), capital: pairedBooks('capital', 'main') }, gate: gate24h(), verdict: verdictFor('curve-stage-entry'), verdicts: VERDICTS, seqRule: { alpha: 0.05, passMargin: SEQ_PASS_MARGIN, minTrades: SEQ_MIN_TRADES, hypothesisBooks: ['follow', 'followctl'] }, legacyV1: brief(killStatsFrom(older)), excluded: { olderVersions: older.filter((r) => r.cfg !== CFG).length, gap: older.filter((r) => r.cfg === CFG && r.gap).length } };
 }
 
 /** One-time backfill: label older closed trades (recorded before cause tracking) from the stored trade tape. */

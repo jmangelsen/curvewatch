@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { config } from './config.js';
 import { db, q } from './db.js';
 
-const files = ['engine/score.js', 'engine/token.js', 'engine/paper.js', 'engine/engine.js'];
+const files = ['engine/score.js', 'engine/token.js', 'engine/paper.js', 'engine/engine.js', 'engine/capitalPolicy.js'];
 const code = files.map((f) => { try { return readFileSync(new URL(`./${f}`, import.meta.url), 'utf8'); } catch { return ''; } }).join('\n');
 const settings = { paper: config.paper, strategies: config.strategies, band: config.band, scoring: config.scoring, lifecycle: config.lifecycle, killRule: config.killRule };
 export const CFG = createHash('sha1').update(JSON.stringify(settings)).update(code).digest('hex').slice(0, 8);

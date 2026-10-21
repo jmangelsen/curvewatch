@@ -35,12 +35,12 @@ function curveBase(days) {
     const since = Date.now() - days * DAY;
     const rows = db.prepare(`SELECT s.mint, s.checkpoint cp, s.mcap, s.max_mcap_after mx, s.graduated_after g, s.reject rj, s.score, t.symbol, t.created_at ca, t.graduated_at ga, t.initial_mcap im
       FROM snapshots s JOIN tokens t ON t.mint = s.mint
-      WHERE s.max_mcap_after IS NOT NULL AND t.finalized = 1 AND COALESCE(t.gap, 0) = 0 AND t.created_at > ? AND s.mint NOT IN (${NONSOL})`).all(since);
+      WHERE s.max_mcap_after IS NOT NULL AND t.finalized = 1 AND COALESCE(t.gap, 0) = 0 AND t.created_at > ? AND s.mint NOT IN (${NONSOL})`).iterate(since);
     const byMint = new Map();
     for (const x of rows) {
       let m = byMint.get(x.mint);
-      if (!m) { m = { mint: x.mint, symbol: x.symbol, ca: x.ca, ga: x.ga, im: x.im, g: 0, path: {}, mx: {}, rj: {}, score: {} }; byMint.set(x.mint, m); }
-      m.path[x.cp] = x.mcap; m.mx[x.cp] = x.mx; m.rj[x.cp] = x.rj; m.score[x.cp] = x.score; if (x.g) m.g = 1;
+      if (!m) { m = { mint: x.mint, symbol: x.symbol, ca: x.ca, ga: x.ga, im: x.im, g: 0, path: new Map(), mx: new Map(), rj: new Map(), score: new Map() }; byMint.set(x.mint, m); }
+      m.path.set(x.cp,x.mcap); m.mx.set(x.cp,x.mx); m.rj.set(x.cp,x.rj); m.score.set(x.cp,x.score); if (x.g) m.g = 1;
     }
     return { since, tokens: [...byMint.values()] };
   });
@@ -50,23 +50,23 @@ export function curves({ days = 14, lines = 300 } = {}) {
   const { tokens } = curveBase(days);
   const grads = tokens.filter((t) => t.g), non = tokens.filter((t) => !t.g);
   // 2x runners: never graduated but doubled from the 60 s mark (the tradeable "almost" cohort)
-  const x2 = non.filter((t) => t.path[60] > 0 && t.mx[60] >= 2 * t.path[60]);
-  const band = (set) => CPS.map((cp) => { const q = qs(set.map((t) => t.path[cp]).filter((v) => v > 0)); return { cp, ...q }; });
+  const x2 = non.filter((t) => t.path.get(60) > 0 && t.mx.get(60) >= 2 * t.path.get(60));
+  const band = (set) => CPS.map((cp) => { const q = qs(set.map((t) => t.path.get(cp)).filter((v) => v > 0)); return { cp, ...q }; });
   const cohorts = {
     grad: { label: 'Graduated', n: grads.length, band: band(grads) },
     x2: { label: 'Doubled, no graduation', n: x2.length, band: band(x2) },
     non: { label: 'Did not graduate', n: non.length, band: band(non) },
   };
   // separation per checkpoint: how much of the grad cohort sits above the field's 90th percentile
-  const separation = CPS.map((cp, i) => { const p90 = cohorts.non.band[i].p90, gl = grads.map((t) => t.path[cp]).filter((v) => v > 0); return { cp, gradMedian: r(cohorts.grad.band[i].p50, 1), fieldMedian: r(cohorts.non.band[i].p50, 1), gradAboveFieldP90Pct: gl.length ? r((gl.filter((v) => v > p90).length / gl.length) * 100, 1) : null }; });
+  const separation = CPS.map((cp, i) => { const p90 = cohorts.non.band[i].p90, gl = grads.map((t) => t.path.get(cp)).filter((v) => v > 0); return { cp, gradMedian: r(cohorts.grad.band[i].p50, 1), fieldMedian: r(cohorts.non.band[i].p50, 1), gradAboveFieldP90Pct: gl.length ? r((gl.filter((v) => v > p90).length / gl.length) * 100, 1) : null }; });
   const pick = (set, n, newestFirst = true) => (newestFirst ? [...set].sort((a, b) => b.ca - a.ca) : set.filter((_, i) => i % Math.max(1, Math.floor(set.length / n)) === 0)).slice(0, n)
-    .map((t) => ({ mint: t.mint, symbol: t.symbol, g: t.g, ca: t.ca, tGradSec: t.g && t.ga ? Math.round((t.ga - t.ca) / 1000) : null, path: CPS.map((cp) => [cp, t.path[cp] ?? null]), peak: Math.max(...CPS.map((cp) => t.mx[cp] || 0)), rejectedAt: CPS.find((cp) => t.rj[cp]) ?? null, firstReject: famOf(CPS.map((cp) => t.rj[cp]).find(Boolean) || null) }));
+    .map((t) => ({ mint: t.mint, symbol: t.symbol, g: t.g, ca: t.ca, tGradSec: t.g && t.ga ? Math.round((t.ga - t.ca) / 1000) : null, path: CPS.map((cp) => [cp, t.path.get(cp) ?? null]), peak: Math.max(...CPS.map((cp) => t.mx.get(cp) || 0)), rejectedAt: CPS.find((cp) => t.rj.get(cp)) ?? null, firstReject: famOf(CPS.map((cp) => t.rj.get(cp)).find(Boolean) || null) }));
   const ttg = grads.map((t) => (t.ga && t.ca ? (t.ga - t.ca) / 60000 : null)).filter((v) => v != null && v >= 0);
   const ttgQ = qs(ttg);
   const bins = [[0, 5], [5, 10], [10, 20], [20, 40], [40, 60], [60, 180], [180, 1440], [1440, 1e9]];
   const ttgHist = bins.map(([a, b]) => ({ label: b >= 1e9 ? '> 1 day' : b > 60 ? `${a / 60}–${b / 60} h` : `${a}–${b} min`, n: ttg.filter((v) => v >= a && v < b).length }));
   // graduates lost to the reject rules at each checkpoint
-  const rejectCost = CPS.map((cp) => { const g = grads.filter((t) => cp in t.path); const rejected = g.filter((t) => t.rj[cp]); return { cp, grads: g.length, rejectedGrads: rejected.length, pct: g.length ? r((rejected.length / g.length) * 100, 1) : null }; });
+  const rejectCost = CPS.map((cp) => { const g = grads.filter((t) => t.path.has(cp)); const rejected = g.filter((t) => t.rj.get(cp)); return { cp, grads: g.length, rejectedGrads: rejected.length, pct: g.length ? r((rejected.length / g.length) * 100, 1) : null }; });
   return { days, generatedAt: Date.now(), solUsd: market.solUsd, cps: CPS, n: tokens.length, cohorts, separation,
     lines: { grad: pick(grads, lines), x2: pick(x2, Math.min(150, lines)), non: pick(non, Math.min(150, lines), false) },
     timeToGrad: { n: ttg.length, p25: r(ttgQ.p25, 1), p50: r(ttgQ.p50, 1), p75: r(ttgQ.p75, 1), hist: ttgHist }, rejectCost,
@@ -124,9 +124,9 @@ function featRows(cp, days) {
     // Horde features: holder counts at earlier checkpoints (from the same trade tape) so growth, not level, can be tested.
     const earlier = CPS.filter((c) => c < cp);
     const hmap = new Map();
-    if (earlier.length) for (const h of db.prepare(`SELECT mint, checkpoint cp, json_extract(features, '$.holders') h FROM snapshots WHERE checkpoint IN (${earlier.join(',')}) AND features IS NOT NULL AND ts > ?`).all(since)) { let m = hmap.get(h.mint); if (!m) { m = {}; hmap.set(h.mint, m); } m[h.cp] = h.h; }
+    if (earlier.length) for (const h of db.prepare(`SELECT mint, checkpoint cp, json_extract(features, '$.holders') h FROM snapshots WHERE checkpoint IN (${earlier.join(',')}) AND features IS NOT NULL AND ts > ?`).iterate(since)) { let m = hmap.get(h.mint); if (!m) { m = new Map(); hmap.set(h.mint, m); } m.set(h.cp,h.h); }
     return rows.map((x) => { let f = {}; try { f = JSON.parse(x.f) || {}; } catch { /* skip */ }
-      const hs = hmap.get(x.mint) || {}, h0 = hs[30], h60 = hs[60], h120 = hs[120], hNow = Number(f.holders);
+      const hs = hmap.get(x.mint), h0 = hs?.get(30), h60 = hs?.get(60), h120 = hs?.get(120), hNow = Number(f.holders);
       const horde = {};
       if (cp >= 120 && Number.isFinite(h60) && Number.isFinite(hNow)) { horde.hordeGain60 = hNow - h60; horde.hordeRate60 = (hNow - h60) / ((cp - 60) / 60); }
       if (cp >= 300 && Number.isFinite(h120) && Number.isFinite(hNow)) horde.hordeGain120 = hNow - h120;

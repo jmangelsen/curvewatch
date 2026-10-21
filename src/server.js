@@ -77,9 +77,8 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   // ---- Curve Studio (read-only research; computed on a worker thread) ----
   const sq = (req) => ({ days: Math.max(1, Math.min(90, Number(req.query.days) || 14)), cp: [30, 60, 120, 180, 300, 600].includes(Number(req.query.cp)) ? Number(req.query.cp) : 60, lines: Math.max(0, Math.min(600, Number(req.query.lines ?? 300))), outcome: ['grad', 'x2', 'x3'].includes(req.query.outcome) ? req.query.outcome : 'grad' });
   const sj = (fn) => async (req, res) => { try { res.json(await studioCall(fn, { ...sq(req), ...(req.body || {}), ...(req.query.feature ? { feature: req.query.feature, op: req.query.op, threshold: req.query.threshold } : {}) })); } catch (e) { log.warn('studio', e.message); res.status(400).json({ error: e.message }); } };
-  // keep the default view warm so a visitor never waits on the cold scan (memo TTL is 5 min; refresh just under it)
-  const warm = () => Promise.all([studioCall('overview', { days: 14 }), studioCall('features', { days: 14, cp: 60 }), studioCall('postgrad', { days: 14, lines: 300 })]).catch((e) => log.warn('studio warm', e.message));
-  setTimeout(warm, 20000).unref?.(); setInterval(warm, 270000).unref?.();
+  // Studio is on-demand: repeatedly warming full-history reports can starve a 1-vCPU collector.
+  // Worker deadlines below remain bounded; cached views are reused after a visitor requests them.
   app.get('/api/studio', sj('overview'));
   app.get('/api/scoring', (req,res)=>res.json(scoringDashboard(engine, status().solUsd, req.query.largeUsd)));
   app.get('/api/studio/late', (req, res) => late ? res.json(late.view()) : res.status(503).json({ error:'Late experiment not initialized' }));

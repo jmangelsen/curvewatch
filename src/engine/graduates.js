@@ -18,6 +18,7 @@ import { killStatsFrom } from './paper.js';
 import { notify } from './telegram.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
+import { CAPITAL_POLICY, cappedStop } from './capitalPolicy.js';
 
 const log = logger('grads');
 const QUOTE_MINTS = new Set(['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 'So11111111111111111111111111111111111111112']);
@@ -418,17 +419,18 @@ export class Graduates extends EventEmitter {
   }
   /** Exit decision for one position. Returns 'tp1', a close reason, or null. Pure, so the tests can drive it directly. */
   exitRule(pos, mult, total, heldMin) {
+    if (mult <= 1 - CAPITAL_POLICY.maxStopPct / 100) return `loss ceiling -${CAPITAL_POLICY.maxStopPct}% (observed quote; fill may be worse)`;
     if (pos.book === 'trail') {
       // Trailing book: hard stop until the position is up trailArmMultiple, then a trailing stop from the running peak. No clock
       // besides a long ceiling. The question it answers: do the fixed book's 6 h hold and partial take-profit cut the winners short?
       const armed = pos.peak >= pos.sizeSol * GP.trailArmMultiple;
-      if (!armed && mult <= 1 - GP.stopPct / 100) return `stop -${GP.stopPct}%`;
+      if (!armed && mult <= 1 - cappedStop(GP.stopPct) / 100) return `stop -${cappedStop(GP.stopPct)}%`;
       if (armed && total <= pos.peak * (1 - GP.trailBookPct / 100)) return `trailing stop ${GP.trailBookPct}% (from ${round(pos.peak / pos.sizeSol, 2)}×)`;
       if (heldMin >= GP.trailMaxHoldMin) return `max hold ${GP.trailMaxHoldMin / 60} h`;
       return null;
     }
     if (!pos.tp1Done && mult >= GP.tp1Multiple) return 'tp1';
-    if (mult <= 1 - GP.stopPct / 100) return `stop -${GP.stopPct}%`;
+    if (mult <= 1 - cappedStop(GP.stopPct) / 100) return `stop -${cappedStop(GP.stopPct)}%`;
     if (pos.tp1Done && total <= pos.peak * (1 - GP.trailPct / 100)) return `trailing stop ${GP.trailPct}%`;
     if (heldMin >= GP.maxHoldMin) return 'max hold';
     return null;

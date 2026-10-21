@@ -28,6 +28,10 @@ t('trail book: no TP1, no 6 h clock, hard stop while unarmed', () => {
   assert.equal(g.exitRule(pos('trail'), 0.6, 0.12, 10), 'stop -38.5%');
   assert.equal(g.exitRule(pos('trail', { peak: 0.23 }), 0.6, 0.12, 10), 'stop -38.5%', 'peak 1.15x is below the 1.2x arm, so the hard stop still applies');
 });
+t('47% loss ceiling applies even after a trailing book is armed', () => {
+  assert.match(g.exitRule(pos('trail', {peak:0.5}),0.5,0.1,10), /loss ceiling -47%/);
+  assert.match(g.exitRule(pos('fixed'),0.5,0.1,10), /loss ceiling -47%/);
+});
 t('trail book: once armed at 1.2x, exits 30% below the running peak and never on the hard stop', () => {
   const p = pos('trail', { peak: 0.5 }); // peaked at 2.5x
   assert.equal(g.exitRule(p, 1.8, 0.36, 10), null, '0.36 > 0.35 (70% of peak): still in');

@@ -4,9 +4,12 @@ import { parentPort, workerData } from 'node:worker_threads';
 import Database from 'better-sqlite3';
 import { HYPOTHESES, HORIZONS, PASS_BAR, windowsOf } from './hypotheses.js';
 import { evaluate, netOf, eta, histogram } from './stats.js';
+import { streamReplay } from './replayStream.js';
+import { exitLabelStore } from './exitLabels.js';
 
 const { dbPath, reg, cost, replayCfg } = workerData;
 const t0 = Date.now();
+const diagnostic = stage => { if(workerData.diagnostics) console.error(JSON.stringify({stage,heapMb:Math.round(process.memoryUsage().heapUsed/1048576),ms:Date.now()-t0})); };
 const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 db.pragma('busy_timeout = 5000');
 // Bound the scan to a rolling window so the worker's heap stays flat as the database grows.
@@ -14,11 +17,12 @@ const WINDOW_DAYS = Number(process.env.EDGE_WINDOW_DAYS || 10), SINCE = Date.now
 
 // ---------- 1. forward-return labels ----------
 const entryCps = [...new Set(HORIZONS.map((h) => h.entry))], exitCps = [...new Set(HORIZONS.map((h) => h.exit))];
-const exitMcap = new Map(); // mint -> { cp: mcap }
+const exitMcap = exitLabelStore(exitCps);
 for (const r of db.prepare(`SELECT mint, checkpoint c, mcap FROM snapshots WHERE checkpoint IN (${exitCps.join(',')}) AND COALESCE(gap,0) = 0 AND ts >= ${SINCE}`).iterate()) {
-  let o = exitMcap.get(r.mint); if (!o) exitMcap.set(r.mint, (o = {})); o[r.c] = r.mcap;
+  exitMcap.put(r.mint,r.c,r.mcap);
 }
 const tok = new Map();
+diagnostic('exit labels loaded');
 for (const r of db.prepare(`SELECT t.mint, t.symbol, t.graduated, t.graduated_at, t.peak_mcap_1h, t.mcap_1h, t.finalized, COALESCE(t.gap,0) gap
   FROM tokens t WHERE t.created_at >= ${SINCE} AND t.mint IN (SELECT mint FROM snapshots WHERE features IS NOT NULL AND ts >= ${SINCE})`).iterate()) tok.set(r.mint, r);
 
@@ -30,6 +34,7 @@ try {
   }
 } catch { /* tracker tables not created yet */ }
 const NO_TR = [];
+diagnostic('token and wallet context loaded');
 const quality = { entries: 0, exitSnapshot: 0, exitGraduated: 0, exitFinal: 0, pending: 0, excludedGap: 0, badMcap: 0 };
 const samples = Object.fromEntries(HORIZONS.map((h) => [h.id, []])); // horizon -> [{ mint, ts, gross, f, s }]
 // sticky rejects: a coin rejected at or before a checkpoint is never sampled from then on (no look-ahead: only earlier rejects count)
@@ -43,7 +48,7 @@ for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features
     if (h.entry !== r.c) continue;
     quality.entries++;
     if (!(r.mcap > 0)) { quality.badMcap++; continue; }
-    let exit = exitMcap.get(r.mint)?.[h.exit], kind = 'snap';
+    let exit = exitMcap.get(r.mint,h.exit), kind = 'snap';
     // a token-level gap flag (restart mid-window) only matters when we would fall back to its final label
     if (exit == null && T?.gap) { quality.excludedGap++; continue; }
     if (exit == null) {
@@ -57,6 +62,7 @@ for (const r of db.prepare(`SELECT mint, checkpoint c, ts, mcap, score, features
 }
 
 // ---------- 2. evaluate ----------
+diagnostic('entry samples loaded');
 const tests = HYPOTHESES.flatMap((hy) => windowsOf(hy, HORIZONS).map((hz) => ({ hy, hz, key: `${hy.id}@${hz.id}` })));
 const m = tests.filter((t) => !t.hy.reference).length;
 const out = [];
@@ -83,12 +89,11 @@ for (const { hy, hz, key } of tests) {
 }
 
 // ---------- 3. exit replay on recorded paper trades (tape) ----------
+diagnostic('hypotheses evaluated');
 function replay() {
   const R = db.prepare(`SELECT id, mint, book, entry_ts, signal_ts, exit_ts FROM paper_trades WHERE status = 'closed' AND COALESCE(gap,0) = 0 AND signal_ts IS NOT NULL ORDER BY entry_ts DESC LIMIT 2500`).all();
   const q = db.prepare('SELECT ts, vsol, vtok FROM trades WHERE mint = ? AND ts BETWEEN ? AND ? ORDER BY ts, slot');
   const FEE = replayCfg.feePct / 100, SLIP = replayCfg.slipPct / 100, SIZE = replayCfg.sizeSol, DELAY = replayCfg.exitDelaySec * 1000;
-  const data = [];
-  for (const r of R) { const t = q.all(r.mint, r.signal_ts - 120000, r.signal_ts + 2400000).filter((x) => x.vsol > 0 && x.vtok > 0); if (t.length >= 5) data.push({ r, t }); }
   const at = (t, ts) => { let lo = 0, hi = t.length - 1, i = -1; while (lo <= hi) { const mid = (lo + hi) >> 1; if (t[mid].ts <= ts) { i = mid; lo = mid + 1; } else hi = mid - 1; } return i; };
   const buyTok = (s) => { const inn = SIZE * (1 - FEE); return (s.vtok - (s.vsol * s.vtok) / (s.vsol + inn)) * (1 - SLIP); };
   const sellSol = (tk, s) => (s.vsol - (s.vsol * s.vtok) / (s.vtok + tk)) * (1 - FEE) * (1 - SLIP);
@@ -116,15 +121,18 @@ function replay() {
     { id: 'tstop30', label: `Stop −${replayCfg.stopPct}% + exit at 30 s if not up`, P: { tp: TP, stop: S, tstop: 30 } },
     { id: 'oct14', label: 'Oct 14 best: signal entry, −10% stop, +8% target, 30 s time stop', P: { entry: 'signal', tp: 1.08, stop: 0.1, tstop: 30 } },
   ];
-  const res = rules.map((ru) => {
-    const v = []; for (const d of data) { const x = sim(d, ru.P); if (x != null) v.push({ ts: d.r.entry_ts, net: x * 100 }); }
+  const streamed = streamReplay(R, rules,
+    r => q.all(r.mint,r.signal_ts-120000,r.signal_ts+2400000).filter(x=>x.vsol>0&&x.vtok>0), sim);
+  const res = rules.map((ru,i) => {
+    const v = streamed.values[i];
     v.sort((a, b) => a.ts - b.ts);
     const e = evaluate(v, { m: 1, bar: { ...PASS_BAR, minTokens: 50 } });
     return { id: ru.id, label: ru.label, n: e.n, meanPct: e.meanPct, lo95: e.n > 1 ? e.meanPct - 1.96 * (e.sdPct / Math.sqrt(e.n)) : null, winPct: e.winPct, halves: e.halves };
   });
-  return { trades: R.length, withTape: data.length, rules: res };
+  return { trades: R.length, withTape: streamed.withTape, rules: res };
 }
 let rep = null; try { rep = replay(); } catch (e) { rep = { error: e.message }; }
+diagnostic('replay completed');
 
 db.close();
 parentPort.postMessage({ ok: true, ms: Date.now() - t0, m, quality, tests: out, replay: rep, samples: Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, v.length])) });

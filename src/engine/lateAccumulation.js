@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { db } from '../db.js';
+import { CAPITAL_POLICY } from './capitalPolicy.js';
 
 const MIN = 60000, HOUR = 60 * MIN;
 export const LATE_RULE = Object.freeze({
@@ -13,7 +14,7 @@ export const LATE_RULE = Object.freeze({
   minLiqRetention: 0.8, minPriceHourRatio: 0.9, maxPriceHourRatio: 1.5,
   warmupH: 2, quoteFreshSec: 120, maxGapMin: 15, holderFreshMin: 75,
   sizeUsd: 50, bankrollPerArmUsd: 1000, maxOpenCohorts: 10,
-  stopPct: 35, feePct: 1, slippagePct: 2, partialMultiple: 2,
+  stopPct: 35, maxNetLossTriggerPct: CAPITAL_POLICY.maxStopPct, feePct: 1, slippagePct: 2, partialMultiple: 2,
   partialFraction: 0.5, trailPct: 30, horizons: [6, 12, 24, 36],
 });
 export const LATE_VERSION = createHash('sha256').update(JSON.stringify(LATE_RULE))
@@ -153,6 +154,7 @@ export class LateAccumulation {
     a.min_equity=Math.min(a.min_equity,eq); a.peak_equity=Math.max(a.peak_equity,eq);
     a.max_drawdown=Math.max(a.max_drawdown,1-eq/a.peak_equity);
     let reason = this.rejected(c.mint,st) ? 'new safety reject' : p.liq<Math.max(10000,c.entry_liq*0.5) ? 'liquidity deterioration' :
+      eq <= r.sizeUsd*(1-r.maxNetLossTriggerPct/100) ? 'observed net loss ceiling -47% (not guaranteed fill)' :
       p.price<=c.entry_price*(1-r.stopPct/100) ? 'observed stop' :
       a.arm==='managed36h' && a.partial && p.price<=a.peak*(1-r.trailPct/100) ? 'observed runner trail' :
       p.t>=c.entry_at+a.horizon*HOUR ? 'time exit' : null;
