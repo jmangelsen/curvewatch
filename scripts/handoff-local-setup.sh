@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local workstation setup for Grok Build. Clones the private repo, runs tests in an env-free tree,
-# and reads the fingerprint against a throwaway DB so no real data is touched.
+# and reads the fingerprint with a throwaway DATA_DIR. version.js does not open the DB; config.js still reads .env.
 set -euo pipefail
 DIR=${DIR:-$HOME/curvewatch}
 [ -d "$DIR/.git" ] || git clone -b grok-handoff git@github.com:jmangelsen/curvewatch.git "$DIR"

@@ -2,7 +2,7 @@
 
 ## Source release and deployment blueprint
 
-This repository contains the collector, SQLite schema and additive migrations, dashboard, Studio comparisons, current scoring/reject implementation, deployment tooling, and the React/Tailwind scoring workbench. It is paper-only and requires no wallet private key. The existing strategy/settings fingerprint is **`96f45eab`**; environment overrides to fingerprinted settings can intentionally produce a different fingerprint.
+This repository contains the collector, SQLite schema and additive migrations, dashboard, Studio comparisons, current scoring/reject implementation, deployment tooling, and the React/Tailwind scoring workbench. It is paper-only and requires no wallet private key. The default-settings fingerprint of this source tree is **`52746d10`**. `96f45eab` and `4033fed1` are closed cohorts and must not be pooled with it. `4033fed1` evidence ends at the restart that deploys this tree. Environment overrides of fingerprinted settings produce a different fingerprint.
 
 ### Exact local setup and collector start
 
@@ -15,15 +15,17 @@ cp -n .env.example .env
 npm run build:scoring
 npm run env:check
 npm test
+# Set DASHBOARD_PASSWORD in .env first. Without it every route except /health is denied.
+# Local UI with no password: CURVEWATCH_ALLOW_UNAUTHENTICATED=1 (development only; never on the VPS).
 DATA_DIR=./data PORT=8080 NODE_ENV=production node src/index.js
 ```
 
 The exact collector start command is the last line above. The database is **`$DATA_DIR/curvewatch.db`**, default **`./data/curvewatch.db`** relative to the repository working directory, with SQLite WAL companion files. On the existing VPS it is **`/opt/curvewatch/data/curvewatch.db`**. All databases, environment files and private keys are excluded from Git.
 
-Verify the default-settings fingerprint without editing strategy code:
+Verify the default-settings fingerprint without editing strategy code. Run this only against a throwaway directory, never inside `/opt/curvewatch`. Importing `src/version.js` loads `src/config.js`, which reads `.env` from the working directory and creates `DATA_DIR`. It does not open the database and it does not write a cohort row.
 
 ```bash
-node --input-type=module -e "const { CFG } = await import('./src/version.js'); console.log(CFG)"
+DATA_DIR=$(mktemp -d) node --input-type=module -e "const { CFG } = await import('./src/version.js'); console.log(CFG)"
 ```
 
 Runtime schema creation and additive migrations live in `src/db.js` and the owning modules in `src/engine/`. There is no separate migration command: initialization runs at startup. Do not replace a nonempty database with a seed copy. Back up the production database before releases; `deploy/backup.sh` uses SQLite's backup mechanism.
@@ -74,7 +76,7 @@ It is a **discovery tool with an honest scorekeeper**. It does not place trades,
 | PumpPortal trade feed, all tokens | ~6M events/day × 0.01 SOL/10k ≈ **6 SOL/day** | why the default trade source is `rpc`, not PumpPortal |
 | Public Solana RPC | $0, but drops about once a minute | 2 parallel connections cover the gaps |
 | Paid RPC (optional) | Helius Developer $49/mo + streaming credits (20 credits/MB) | at ~50 GB/day, metered streaming costs far more than the plan. Use paid RPC as primary only once the kill rule passes |
-| VPS | 2 vCPU / 4 GB RAM, ~$6–25/mo | RAM in use: ~100–200 MB |
+| VPS | 1 vCPU / 2 GB RAM (the `provision-do.sh` size) | Studio full-history reports can time out on one core |
 | Build time to production | done (this repo); ~1–2 h to deploy | |
 | Revenue | none; a personal trading tool | value depends entirely on whether an edge shows up |
 
@@ -82,10 +84,19 @@ It is a **discovery tool with an honest scorekeeper**. It does not place trades,
 
 | Status | Meaning |
 |---|---|
-| `COLLECTING` | fewer than 50 closed trades |
-| `FAIL` | average return per trade ≤ 0 |
-| `MARGINAL` | positive average, but the 95% confidence interval includes zero |
-| `PASS` | the whole interval is above zero |
+| `COLLECTING` | fewer than 50 closed trades on this fingerprint |
+| `FAIL` | at least 50 closed trades and the average return per trade is ≤ 0 |
+| `MARGINAL` | average is positive, but at least one PASS check below is missing |
+| `PASS` | all four checks hold on this book's own cohort |
+
+PASS (`killRule` / `killStatsFrom`) requires every one of these. A 95% interval above zero is not enough:
+
+1. At least 50 closed trades (`KILL_MIN_TRADES`), gap-flagged and enforced-gate rows excluded.
+2. The 99% lower bound of mean P&L per trade is above zero (`KILL_CONFIDENCE`, default 0.99).
+3. Both halves by exit time are positive, and each half has at least 10 trades.
+4. The book beats its control: the 95% lower bound of the mean difference is above zero, and the control has at least 30 closed trades. Main and capital use the `random` book. The unpriced book uses `unpricedctl`. The control books themselves have no control check.
+
+The anytime +2% sequence, the paired capital comparison, and the 24-hour gate are separate screens. They are not this PASS.
 
 **Do not put money in before `PASS`.**
 
@@ -109,7 +120,7 @@ Within 10 seconds the Live tab shows launches. Alerts fire a few times per hour 
 ## 3. Deployment blueprint (24/7 on a VPS)
 
 ### 3.1 Provision
-1. Create an Ubuntu 24.04 VPS with 2 vCPU and 4 GB RAM (Hetzner, DigitalOcean, Vultr, or similar). Use a US region close to you; latency doesn't matter much for a human-in-the-loop screener.
+1. Create an Ubuntu 24.04 VPS with 1 vCPU and 2 GB RAM (Hetzner, DigitalOcean, Vultr, or similar). `deploy/provision-do.sh` requests `s-1vcpu-2gb`. Use a US region close to you; latency doesn't matter much for a human-in-the-loop screener. Studio full-history reports can time out on that host; use a shorter `?days=` window.
 2. Add your SSH key and note the IP address.
 
 ### 3.2 Fastest path: one command
@@ -163,7 +174,7 @@ curl -s localhost:8080/health            # {"ok":true,...}
   ```bash
   docker compose --profile https up -d
   ```
-  Caddy issues the certificate automatically. Basic auth protects the dashboard; `/health` stays public for monitors.
+  Caddy issues the certificate and proxies to the app. It does not check a password. The Node process does: set `DASHBOARD_PASSWORD` (any username, constant-time compare). `/health` stays open for monitors. With no password, every other route is denied unless `CURVEWATCH_ALLOW_UNAUTHENTICATED=1`, which is a local-dev opt-out and must not be set on the VPS. The process binds `127.0.0.1` unless `BIND_HOST` is set. Docker sets `BIND_HOST=0.0.0.0` because Compose publishes that port on the host's loopback only.
 
 ### 3.6 Scheduled jobs
 ```bash
@@ -179,7 +190,7 @@ Copy the backups off the box occasionally: `scp root@IP:/opt/curvewatch/backups/
 ```bash
 cd /opt/curvewatch && git pull && docker compose up -d --build
 ```
-Open paper positions are voided on restart (honest: in-memory curve state is lost), and voided trades don't count toward the kill rule.
+Open paper positions are restored from the last recorded curve state. If the process was down longer than `HEALTH_RESTORE_MAX_DOWN_SEC` (default 30s), those positions are gap-flagged and finish outside the kill rule. Pending entries that had not filled are dropped. A restart is not zero-downtime.
 
 ### 3.7b One-command DigitalOcean provisioning (API)
 
@@ -218,7 +229,7 @@ tail -3 /var/log/curvewatch-backup.log                         # last backups
 | PumpPortal down | launches still arrive from on-chain create events | nothing |
 | All trade feeds down > 3 min | Telegram "feed unhealthy"; healthcheck pings stop, so you get an email | `docker compose logs --tail 200 curvewatch`; restart |
 | Process crash / OOM | Docker `restart: unless-stopped` (or systemd `Restart=always`) | check logs; memory is capped at 768 MB heap |
-| Disk growth | retention: trades 14 d, snapshots 30 d (rejected tokens store no features), losing wallets 30 d; WAL checkpoint every 6 h | `du -sh data/`; expect roughly 1–3 GB at steady state (trade tape dominates) |
+| Disk growth | retention: trades 60 d, snapshots 180 d (rejected tokens store no features), wallets 365 d; WAL checkpoint every 6 h | `du -sh data/`; the trade tape dominates |
 | Metadata gateway blocks | per-token fallback across two Pinata gateways | if `Metadata ok/fail` (Intel → System) degrades, add a gateway in `src/engine/metadata.js` |
 | Pump.fun protocol upgrade changes the event layout | decoder only reads the stable leading fields, and the self-test pins a real mainnet sample | run `npm run selftest`; if decode fails, update `src/sources/decode.js` |
 
@@ -278,7 +289,7 @@ The social and dev-buy weights are anchored to published survival analysis (Tele
 
 **Graduates tab.** Tracks tokens that already migrated off the bonding curve to PumpSwap and scores them for a second leg (volume pace vs. the hourly average, buy pressure, higher lows, breakouts, liquidity trend, survival). The base rate is hostile: of 11,303 migrations studied by [Belphor](https://www.belphor.com/data/migration-outcomes), 93% later traded at 20% or less of their migration price, 14% reached +50%, and 4.1% reached +200%. So the tab ignores the first 20 minutes after migration, requires $12k+ liquidity, and runs its own paper book and kill rule. Data is from the DexScreener public API (`tokens/v1`, 300 req/min; profiles and boosts 60/min, [docs](https://docs.dexscreener.com/api/reference)).
 
-**Strong signals.** A regular alert means "this scores well". A strong signal means "in your own recorded history, setups that scored like this reached +25% net of fees and slippage before falling 20%, at least 45% of the time, over 30+ independent tokens". Until that history exists, it fires only at score ≥ 85 (curve) or ≥ 82 (graduates), and each message says UNCALIBRATED. It's capped at 4 per hour. Every strong signal is graded afterwards as hit, stopped or flat on the Performance tab. Expect that the calibrated condition is rarely met: if no score band clears 45%, the system is telling you it has no +25% edge.
+**Strong signals.** A regular alert means "this scores well". A strong signal means "in your own recorded history, setups that scored like this reached +25% net of fees and slippage before falling 38.5%, at least 45% of the time, over 30+ independent tokens". Until that history exists, it fires only at score ≥ 85 (curve) or ≥ 82 (graduates), and each message says UNCALIBRATED. It's capped at 4 per hour. Every strong signal is graded afterwards as hit, stopped or flat on the Performance tab. Expect that the calibrated condition is rarely met: if no score band clears 45%, the system is telling you it has no +25% edge.
 
 **USD.** All money is shown in USD, converted at the live SOL/USD price from the deepest SOL/USDC pool on DexScreener (refreshed every 60 s). Internally the curve math stays in SOL.
 
@@ -294,7 +305,7 @@ Diagnosis from replaying every recorded trade on 60 alerted tokens (the replay r
 | v2 exits (all out at +25% net, −20% net stop) | 37% | −7.4% |
 | v2, entering at 0 s instead of 15 s | 33% | −8.3% |
 
-Breakeven for +25% / −20% net is a 44% win rate. Labeled snapshots scoring 65–72 reached it first 39% of the time (31 tokens, 95% CI 24–56%), and 72+ only 19% (21 tokens). So the alert threshold fires late.
+That table is the October 13 replay, which used a −20% net stop. The live stop is 38.5% (capped at 47%). Breakeven win rate is `stop / (target + stop)`. For the live +25% target and −38.5% stop that is about 60.6%, not the 44% that belonged to +25% / −20%. Labeled snapshots scoring 65–72 reached +25% net before −20% net 39% of the time in that old study (31 tokens, 95% CI 24–56%), and 72+ only 19% (21 tokens). The alert threshold still fires late. The 44% figure is not the live breakeven.
 
 - **v2 exits** are now the default (`PAPER_RULES=v2`). The kill rule counts v2 trades only. v1 trades stay visible as history.
 - **Band book**: a parallel paper book that enters the first time a token's live score lands in 65–72. It has the same exits and costs and its own kill rule.
@@ -305,7 +316,7 @@ Breakeven for +25% / −20% net is a 44% win rate. Labeled snapshots scoring 65�
 ## 5d. Strategy lab, trade terminal, report (October 14, 2026)
 
 ### Calibration that drove these changes
-About 4.3 hours of labeled data (7,479 labeled, unrejected snapshots; 122 alerts). "Hit" = the token reached +25% net before −20% net from that snapshot.
+About 4.3 hours of labeled data (7,479 labeled, unrejected snapshots; 122 alerts). "Hit" in this section means the token reached +25% net before −20% net from that snapshot. That −20% label is the October 14 study, not the live 38.5% stop.
 
 | Score band | Hit rate | Note |
 |---|---|---|
@@ -317,7 +328,7 @@ About 4.3 hours of labeled data (7,479 labeled, unrejected snapshots; 122 alerts
 | 72–80 | 19% | 63 tokens |
 | 80+ | 38% | 8 tokens, too few to trust |
 
-- Above 50, the score barely separates winners from losers. Breakeven for +25%/−20% exits is 44%.
+- Above 50, the score barely separates winners from losers. Breakeven for the study's +25%/−20% exits was 44%. Live breakeven at +25%/−38.5% is about 60.6%.
 - Only 60s net inflow and median buy size separated winners in both halves. score ≥ 50 & inflow ≥ 12.6 SOL & median buy ≥ 0.387 SOL hit 40% in each half (30 tokens, 95% range 25–58%). The cutoffs were chosen on the full set, so expect some shrinkage. → Flow book.
 - Replay of 143 live v2 paper trades (actual: −19.5% per trade). Waiting 60s, entering only if price ≥ signal, and taking +20% gross gave 38% win and −8.1% per trade, consistent in both halves. → Confirm book. Still negative.
 - Anti-chase filters and breakeven stops did not help in replay.
@@ -326,10 +337,12 @@ About 4.3 hours of labeled data (7,479 labeled, unrejected snapshots; 122 alerts
 ### Books
 | Book | Entry | Exits (net of costs) | Breakeven win rate |
 |---|---|---|---|
-| Main | score ≥ 72 | +25% / −20%, 60 min | 44% |
-| Band | score first lands in 65–72 | same | 44% |
-| Flow | score ≥ 50, 60s inflow ≥ 12.6 SOL, median buy ≥ 0.387 SOL | same | 44% |
-| Confirm | main or band signal, wait 60s, only if price ≥ signal | +20% gross (≈ +13.5% net) / −20% | ~60% |
+| Main | score ≥ 72 | +25% / −38.5%, 60 min | ~61% |
+| Band | score first lands in 65–72 | same | ~61% |
+| Flow | score ≥ 50, 60s inflow ≥ 12.6 SOL, median buy ≥ 0.387 SOL | same | ~61% |
+| Confirm | main or band signal, wait 60s, only if price ≥ signal | +20% gross (≈ +13.5% net) / −38.5% | ~74% |
+| Unpriced | non-rejected at 120s, unpriced score ≥ 60 | same as Main | ~61% |
+| Capital | same entry as Main | banks 50% at +10% equity, then floor and trail; see `docs/HANDOFF.md` | not a fixed target |
 
 Every trade stores the signal price and time, entry slippage, entry features, best and worst point, the largest single drop, and a cause:
 TARGET, GRADUATED, SMALL WIN, NO FOLLOW-THROUGH (selection), GAVE BACK (exit), LATE ENTRY (speed), DUMP (holder risk), STALLED (activity died). Confirm skips are stored with status `skipped` and a reason. Older trades are labeled once at startup from the trade tape (marked "labeled after the fact").
@@ -345,7 +358,7 @@ TARGET, GRADUATED, SMALL WIN, NO FOLLOW-THROUGH (selection), GAVE BACK (exit), L
 
 ### Performance work
 - Rejected snapshots (~70%) no longer store feature JSON. Snapshots were 52 MB of a 94 MB DB after 6 hours.
-- Snapshot retention is now 30 days (was 90).
+- Snapshot retention was cut to 30 days in this pass (from 90). Current defaults are later: trades 60 days, snapshots 180 days, wallets 365 days (section 5h).
 - The strong-signal history query is cached for 10 minutes and uses a partial index: 72 ms → 0.5 ms. Uncached, it would have grown to seconds per alert.
 
 ### Connecting Telegram
@@ -505,7 +518,7 @@ The Codex tab now opens as a trading terminal on screens 900 px and wider (the c
 - **Blotter** (left). Positions / Closed 24 h / Tape tabs. Position rows show symbol and book, mark, P&L in USD, time held and a risk bar (red = distance to the stop, green = distance to the target); rows flash on moves, and the selected row drives the chart. Keyboard: `[` and `]` step through positions.
 - **Chart** (centre). TradingView's open-source `lightweight-charts` v5 (vendored under `public/vendor/`, Apache-2.0). Candles are built from the recorded trade tape in 5 s / 15 s / 1 m / 5 m buckets for curve positions; graduate positions get a line from the 10-minute snapshots. Entry (dashed), stop (red) and target (green) price lines with the live mark, trade markers for entries, partial take-profits and exits, a SOL volume histogram, log toggle (`L`), legend and a replay strip under the chart (the 24 h scrubber from the card view, so any moment can be loaded into the chart).
 - **Account panel** (right). Realised P&L curve for the last 24 h (baseline series, red below zero), closed / win rate / best / worst / today, then one bar per book sorted by P&L.
-- **Transport.** `GET /api/codex/chart?mint=&venue=&from=&to=&bucket=` (candles, markers, levels), `GET /api/codex/equity?hours=24` (cumulative realised P&L points, profit factor, drawdown, by book). Both read recorded rows only; nothing in the engine changed and the fingerprint is still `96f45eab`.
+- **Transport.** `GET /api/codex/chart?mint=&venue=&from=&to=&bucket=` (candles, markers, levels), `GET /api/codex/equity?hours=24` (cumulative realised P&L points, profit factor, drawdown, by book). Both read recorded rows only. This UI pass did not itself change the engine; the source fingerprint has since moved, and the default for this tree is `52746d10`.
 
 ### Dapp audit
 `docs/audit-2026-10-18.md` lists eleven findings with severity, evidence and status. Fixed in this release without touching a fingerprinted file: the graduate watcher now rebuilds its price series from stored snapshots on restart (before this, every restart censored or truncated six hours of 6 h labels), the mobile tab bar scrolls, and two CSS class collisions. Queued for after the weekend because they touch frozen files: the missing 900 s checkpoint, a `quote_ok` column so non-SOL curves stop counting as graduates in the Report tab, a column rename, Codex approx marks through `curveSell`, and a startup grace window for the health gap detector. The audit also quantifies the cost of restarts on production (five deploy restarts marked 71% of today's tokens gap-flagged): the deploy that ships this release is the last restart before Monday.
@@ -526,6 +539,10 @@ A read-only research view that compares every graduated coin against the field a
 - **Reject rules versus graduation.** Tokens grouped by the family of reason the scorer rejected them at the checkpoint, with graduation and 2× rates; families whose lower bound beats the pass group are highlighted because those rules are discarding graduates.
 - **Mechanics.** `src/studio.js` computes everything; `src/studioWorker.js` runs it on a worker thread with its own SQLite connection so a five-second cohort scan never blocks the trade loop; results are memoised for five minutes and kept warm. Endpoints: `GET /api/studio`, `/api/studio/curves`, `/api/studio/postgrad`, `/api/studio/features`, `/api/studio/rule` (query or JSON body), and `GET /api/drill/studio_*` for the tables behind every tile. Tests: `scripts/test-studio.js`.
 
+## 5m. Unpriced checkpoint book (2026-10-28)
+
+Pre-registration: `docs/decisions/2026-10-28-unpriced-checkpoint.md`. A separate paper book, `unpriced`, scores every non-rejected token once at 120 seconds. The score is flow relative to how far price has already extended, plus the checkpoint price versus the early-buyer VWAP. It enters at score ≥ 60. `unpricedctl` is a random non-rejected token in the same 120–150 second window. Main, capital, and the existing `random` book are unchanged. PASS is the kill rule in section 1, against `unpricedctl`, with at least 50 closed trades. Until that PASS, it is not an edge.
+
 ## 6. Known limitations (red team)
 
 1. **Speed.** Sniper bots buy in the create slot. The alert waits 45 s by design, and your reaction adds ~15 s more. In live tests, prices moved 20%+ in the 15 s between alert and paper entry. The edge, if any, has to come from selection, not speed.
@@ -534,7 +551,7 @@ A read-only research view that compares every graduated coin against the field a
 4. **Outcome labels stop at graduation for the curve price.** Post-graduation prices are checked on DexScreener at 6 h and 24 h for alerted tokens only. The paper trader conservatively sells at curve close.
 5. **Smart-wallet "wins" approximate** each wallet's exit opportunity by the token's peak after their entry. That's generous, so require many observations before trusting it.
 6. **Public RPC is best-effort.** Missed trades during reconnects slightly distort holder maps. Two parallel connections mitigate this; a paid RPC fixes it.
-7. **Restarts** wipe in-memory curve state. Open paper trades are voided (not guessed) and tokens in their first hour lose their outcome labels.
+7. **Restarts** wipe in-memory curve state. Open paper trades are restored from the last tape print and gap-flagged when the downtime is long; positions with no recorded curve state are voided. Pending entries are dropped. Tokens in their first hour lose their outcome labels.
 
 ---
 
@@ -549,7 +566,8 @@ src/sources/pumpportal.js free create + migration streams; optional metered trad
 src/engine/token.js      per-token state + feature extraction (bundles, holders, flow)
 src/engine/score.js      hard rejects + weighted evidence
 src/engine/engine.js     lifecycle, snapshots, alerts, outcome labeling
-src/engine/paper.js      paper trader + kill rule (95% CI on expectancy)
+src/engine/paper.js      paper trader + kill rule (99% bound, halves, control)
+src/engine/unpriced.js   checkpoint book: flow not yet priced, plus its control
 src/engine/intel.js      creator reputation + smart-wallet learning
 src/engine/metadata.js   token metadata → Telegram/X/website detection
 src/engine/telegram.js   rate-limited Telegram delivery

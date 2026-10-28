@@ -35,8 +35,10 @@ import { benchmarks } from './benchmarks.js';
 import { makeDrill } from './drill.js';
 import { startEdgeLab, edgeView, edgeDetail } from './edgelab/index.js';
 import { startTracker, trackerView } from './engine/smartTracker.js';
-import { CFG, CFG_SINCE, cfgHistory } from './version.js';
+import { CFG, CFG_SINCE, cfgHistory, recordCohortStart } from './version.js';
 
+recordCohortStart(q, db); // fingerprint clock; not a side effect of importing version.js
+paper.recordBookSince();
 initRejects(); // sticky rejects bucket (backfills once from history)
 
 const log = logger('main');

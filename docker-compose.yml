@@ -7,6 +7,7 @@ services:
     environment:
       - DATA_DIR=/data
       - BACKUP_DIR=/backups
+      - BIND_HOST=0.0.0.0
     volumes:
       - ./data:/data
       - ./backups:/backups:ro      # lets the Health tab report backup age
