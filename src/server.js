@@ -20,6 +20,7 @@ import { notify, tgEnabled } from './engine/telegram.js';
 import { buildReport } from './report.js';
 import { tradeList, tradeDetail, strategyReport, timeline } from './terminal.js';
 import { VERDICTS } from './verdicts.js';
+import { registerRiskRoute } from './bundle/http.js';
 
 const log = logger('http');
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,8 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     if (!d) return res.status(404).json({ error: 'unknown token' });
     res.json(d);
   });
+  // Bundle risk (risk.v1). Same password gate as the rest of the dashboard. Does not change the paper fingerprint.
+  registerRiskRoute(app, { engine, solUsd: () => status().solUsd });
   // Trading codex: live positions across every paper book, or the positions open at a past instant (?at=<ms>).
   app.get('/api/codex', (req, res) => {
     const at = Number(req.query.at);
