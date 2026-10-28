@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Curvewatch — bundle risk for Pump.fun launches</title>
+  <meta name="description" content="Curvewatch is a paper-only Pump.fun research collector. This page checks a mint for launch bundles: same-slot wallets, supply still credited to them, and a rug-zone band that stays unvalidated until it is tested.">
+  <meta name="theme-color" content="#0b0d0f">
+  <meta property="og:title" content="Curvewatch — bundle risk for Pump.fun launches">
+  <meta property="og:description" content="A research-only bundle check for Pump.fun mints. Paper trading. No wallet. No orders. Rug-zone figures stay unvalidated until they are backtested and tracked prospectively.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/inter-regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#lookup">Skip to the mint check</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="#14181c"/>
+          <circle cx="16" cy="16" r="11" stroke="#e4e7ea" stroke-opacity=".35" stroke-width="1.5"/>
+          <path d="M6.5 23C12.5 22 17 18 20.5 10" stroke="#e4e7ea" stroke-width="2.2" stroke-linecap="round"/>
+          <circle cx="21" cy="9.5" r="2.6" fill="#f2b23e"/>
+        </svg>
+        <span>
+          <span class="brand-name">Curvewatch</span>
+          <span class="brand-sub">Paper research</span>
+        </span>
+      </a>
+      <nav class="nav" aria-label="Page">
+        <a href="#lookup">Check</a>
+        <a href="#measure">Measures</a>
+        <a href="#engine">Collector</a>
+        <a href="#flow">Flow</a>
+        <a href="#method">Method</a>
+        <a href="#status">Status</a>
+        <a href="https://github.com/jmangelsen/curvewatch">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="wrap hero">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="kicker">Pump.fun bundle risk</p>
+          <h1>Check a mint for wallets that bought the launch together.</h1>
+          <p class="lede">Curvewatch is a research-only monitor, trade collector, and paper-strategy dashboard for Pump.fun. This page is a risk reading on that tape: same-slot buyers, the supply the tape still credits to them, and a market-cap band for a later coordinated sell.</p>
+          <p class="risk-line">Risk signal only. A bundle reading is not a guarantee that anyone will sell, and a quiet reading is not a clearance. Unvalidated until it is backtested and tracked prospectively. Not financial advice.</p>
+          <p class="fine">The collector holds no wallet keys and places no trades. This page has no account and no wallet. Stack: Node.js 20, Express, SQLite.</p>
+        </div>
+
+        <div class="hero-tool" id="lookup">
+          <form id="lookup-form" class="lookup">
+            <label class="field">
+              <span>Mint address</span>
+              <input id="mint" name="mint" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Mint or token link" aria-describedby="mode-line lookup-status">
+            </label>
+            <button id="lookup-submit" class="btn-primary" type="submit">Check mint</button>
+          </form>
+          <div class="tool-actions">
+            <button id="show-example" class="btn-quiet" type="button">Show the fictional example</button>
+          </div>
+          <p id="mode-line" class="mode-line">Demo mode. No risk API is configured, so the panel is a fictional example.</p>
+          <p id="lookup-status" class="lookup-status" role="status"></p>
+        </div>
+      </div>
+      <div id="panel">
+        <noscript>
+          <p>JavaScript is off, so the lookup cannot run. With no risk API configured, the page would show a fictional example: six example wallets, 22.8% of supply still credited, 71.2% of launch buy volume, and an example market-cap band of $125,000–$190,000 with confidence unvalidated. Those figures are invented. Shared funders are not collected by the engine.</p>
+        </noscript>
+      </div>
+    </div>
+
+    <section class="section" id="measure" aria-labelledby="measure-title">
+      <div class="wrap">
+        <p class="section-kicker">01 — Measures</p>
+        <h2 id="measure-title">What a reading is allowed to claim</h2>
+        <p class="intro">The panel is shaped around the bundle detector that already exists, plus two fields the collector does not compute. The JSON shape is <code>GET /api/risk/:mint</code>, contract <code>risk.v1</code>, documented in <code>site/README.md</code>. That route is not implemented in this repository.</p>
+        <div class="cards">
+          <article class="card">
+            <p class="idx">SAME-SLOT BUYS</p>
+            <h3>Implemented</h3>
+            <p><code>Token.features()</code> in <code>src/engine/token.js</code> sums SOL bought by wallets other than the creator in the create slot and the next slot. If the create slot was never seen, the same sum uses buys within 1.5 seconds of the recorded create time. <code>bundlePct</code> is that SOL divided by all buy volume on the tape. <code>bundleWallets</code> is the count. The scorer hard-rejects when the share is at least 55% and the count is at least 3. A share of at least 25% is a partial-bundle penalty. Those defaults live in config and can be overridden by environment variables, so a live response must echo the thresholds it applied.</p>
+          </article>
+          <article class="card">
+            <p class="idx">SUPPLY STILL CREDITED</p>
+            <h3>Derivable, not yet emitted</h3>
+            <p>The engine keeps a wallet-to-token map from curve trades and divides holder totals by a 1,000,000,000 supply. The published feature vector does not emit the bundle wallets' share. The risk contract asks a future route to sum balances for the wallets inside the bundle window. Transfers off those wallets are invisible, so the share can be understated after a fan-out. After the active window the map is dropped, and the share comes back empty.</p>
+          </article>
+          <article class="card">
+            <p class="idx">SHARED FUNDERS</p>
+            <h3>Not collected</h3>
+            <p>A trade record has a wallet, a slot, a size, and a time. It does not have a funding parent. Coordinated timing, in this collector, is the slot window itself. There is no second cluster model. The shared-funder block in the panel is a reserved place. Rows there are not detections, and demo rows are excluded from the totals.</p>
+          </article>
+          <article class="card">
+            <p class="idx">RUG ZONE</p>
+            <h3>Unvalidated</h3>
+            <p>No code estimates a market cap at which bundle wallets sell. The contract leaves <code>rugZone</code> empty for a real response. Demo mode draws a round dollar band so the layout can be seen, with confidence left unvalidated. A later estimator would need a pre-registered backtest and then a prospective record on launches it had not already seen. Until that exists, a band is not a forecast.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="engine" aria-labelledby="engine-title">
+      <div class="wrap">
+        <p class="section-kicker">02 — Collector</p>
+        <h2 id="engine-title">Curvewatch is the engine behind the check</h2>
+        <p class="intro">The lookup reads a research collector. It watches Pump.fun launches, stores the tape, scores the first minutes on the bonding curve, and runs paper books under stated fees, slippage, and delay. It is paper-only. It holds no wallet key and places no order.</p>
+        <div class="cards">
+          <article class="card">
+            <p class="idx">01</p>
+            <h3>Launch monitoring</h3>
+            <p>Redundant Solana log subscriptions see creates, trades, and completes, with a slot number on each trade. PumpPortal supplies create and migration streams. Metadata is read for social links. Every launch is stored so a later label can be attached. The bundle window depends on those slot numbers.</p>
+          </article>
+          <article class="card">
+            <p class="idx">02</p>
+            <h3>Scoring</h3>
+            <p>During the first minutes on the curve, a weighted score and a set of hard rejects decide what may alert. Rejects include serial launchers, creator sells, bundled launches, top-10 concentration, wash trading, a late curve, and non-SOL quotes. A coin that fails once stays out of alerts and out of paper entries. The bundled-launch reject is one of those filters. It is not a clock for a later sell.</p>
+          </article>
+          <article class="card">
+            <p class="idx">03</p>
+            <h3>Paper books</h3>
+            <p>Alerts are entered on paper, late, at the curve price, with a fee, extra slippage, and a reaction delay. Parallel books test pre-registered entry and exit rules. Fills are compared with real wallets on the same token. Positions open during a data gap are flagged and left out of the statistics. Nothing is sent to a chain.</p>
+          </article>
+          <article class="card">
+            <p class="idx">04</p>
+            <h3>Kill rule and evidence gate</h3>
+            <p>The built-in labels are collecting (under 50 closed trades), fail (average return at or below zero), marginal (a positive average whose 95% interval includes zero), and pass (the whole interval above zero). A stricter bar used when several books are tested together also asks for a 99% lower bound above zero, both halves of the test positive, and a better average than a matched random control. The project's rule is to keep money out until a pass on that book's own cohort. Changing a fingerprinted rule starts a new test.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="flow" aria-labelledby="flow-title">
+      <div class="wrap">
+        <p class="section-kicker">03 — Flow</p>
+        <h2 id="flow-title">How a launch becomes a row</h2>
+        <p class="intro">The operator dashboard and the optional Telegram lookup stay private. This website does not link to a deployment.</p>
+        <ol class="pipeline" aria-label="Data flow from chain feeds to a risk reading">
+          <li>
+            <span class="dot" aria-hidden="true">1</span>
+            <h3>Feeds</h3>
+            <p>Two Solana <code>logsSubscribe</code> connections on the Pump.fun program, with the slot on every trade. PumpPortal for creates and migrations. Token metadata for social links.</p>
+          </li>
+          <li>
+            <span class="dot" aria-hidden="true">2</span>
+            <h3>Engine, in memory</h3>
+            <p>Per mint: trades, balances reconstructed from those trades, features, a score on a short interval, snapshots from 30 seconds through 15 minutes, paper entries and exits, and outcome labels.</p>
+          </li>
+          <li>
+            <span class="dot" aria-hidden="true">3</span>
+            <h3>Bundle window</h3>
+            <p>Non-creator buys in the create slot and the next slot. That sum, its wallet count, and the buy-volume share are the detector this lookup is built on.</p>
+          </li>
+          <li>
+            <span class="dot" aria-hidden="true">4</span>
+            <h3>SQLite</h3>
+            <p>Tokens, snapshots, alerts, paper trades, creators, and wallets, in WAL mode. Gap-flagged rows stay in the file and stay out of the statistics. Closed paper rows are not rewritten.</p>
+          </li>
+          <li>
+            <span class="dot" aria-hidden="true">5</span>
+            <h3>Operator readouts</h3>
+            <p>A private dashboard, an optional Telegram card for an allowlisted chat, and a health check. They are for whoever runs the collector.</p>
+          </li>
+          <li class="is-proposed">
+            <span class="dot" aria-hidden="true">6</span>
+            <h3>Risk API, proposed</h3>
+            <p><code>GET /api/risk/:mint</code> would return contract <code>risk.v1</code>. It is not implemented here. With the API setting empty, the panel stays in demo mode and shows fictional rows.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="method" aria-labelledby="method-title">
+      <div class="wrap">
+        <p class="section-kicker">04 — Method</p>
+        <h2 id="method-title">Methodology and honesty</h2>
+        <p class="intro">The collector's research rules apply to this lookup. A tidy panel does not promote a replay into evidence.</p>
+        <div class="method-grid">
+          <article class="card">
+            <h3>Separate cohorts</h3>
+            <p>Strategy, scoring, and the paper engine are fingerprinted. Each paper trade stores that fingerprint, and the current test uses only the current fingerprint. The pre-21 October 2026 curve cohort (<code>96f45eab</code>) and the later capital-policy cohort (<code>4033fed1</code>) stay separate. They are not pooled.</p>
+          </article>
+          <article class="card">
+            <h3>Prospective validation</h3>
+            <p>A rule is written down before the trades that count. The pre-registered hypothesis lab counts tokens launched after a test is registered. Editing a definition starts that test at zero. A replay of an old tape describes the past. It does not validate the rule. Historical comparisons in the capital-protection note are descriptive, and their intervals are not a pass.</p>
+          </article>
+          <article class="card">
+            <h3>Random control</h3>
+            <p>At each signal, a matched token of similar age and size is paper-traded with the same exits and costs. The stricter kill rule asks the book to beat that control, not merely to print a positive average. Curve-stage entry failed that kind of comparison and is closed.</p>
+          </article>
+          <article class="card">
+            <h3>This page's own limits</h3>
+            <p>Same-slot buy volume is a measured filter. Supply share is a tape reconstruction and misses transfers. Shared funders are absent. The rug zone has no published backtest and no prospective scorecard. Demo numbers are labeled fictional so they cannot be mistaken for either.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="status" aria-labelledby="status-title">
+      <div class="wrap">
+        <p class="section-kicker">05 — Status</p>
+        <h2 id="status-title">Paper only. Experiments are collecting.</h2>
+        <p class="intro">Repository documents through 21 October 2026. This page is not a live feed and can lag the collector. The figures in the demo panel are not these results.</p>
+        <ul class="status-list">
+          <li>Paper only. The collector holds no wallet key and places no order. Nothing on this website is a live strategy.</li>
+          <li>Hypothesis 1, curve-stage entry, was closed as rejected on 18 October 2026. The main paper book was negative and was not distinguishable from its random control. The books continued as data collection. Memo: <a href="https://github.com/jmangelsen/curvewatch/blob/main/docs/decisions/2026-10-18-curve-stage-entry-rejected.md">curve-stage entry rejected</a>.</li>
+          <li>Capital-protection exit overlays are descriptive historical comparisons. At the 21 October 2026 verification the new book had zero completed prospective paired comparisons. Note: <a href="https://github.com/jmangelsen/curvewatch/blob/main/docs/capital-protection-v1.md">capital protection v1</a>.</li>
+          <li>A smart-wallet follow book was pre-registered separately and remains its own question. Memo: <a href="https://github.com/jmangelsen/curvewatch/blob/main/docs/decisions/2026-10-18-hypothesis-2-smart-follow.md">hypothesis 2</a>.</li>
+          <li>Holder growth on the curve lined up with graduation in one historical window and did not show a positive average under the project's stop and target. The pre-registered post-graduation hold claim (H3d) was falsified and was not turned into an entry. Note: <a href="https://github.com/jmangelsen/curvewatch/blob/main/docs/hypothesis-3-horde.md">hypothesis 3</a>.</li>
+          <li>Published decisions do not report a prospective pass. A rug-zone band on this website is not one.</li>
+        </ul>
+        <div class="table-wrap" tabindex="0" aria-label="Recorded curve-stage paper sample, scroll horizontally if needed">
+          <table>
+            <caption>Recorded curve-stage sample queried 18 October 2026. Gap-flagged and gated entries excluded. A closed paper result, not a forecast, and not the demo panel.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Book</th>
+                <th scope="col" class="num">Trades</th>
+                <th scope="col" class="num">Mean per trade</th>
+                <th scope="col">95% interval</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Main</th>
+                <td class="num">116</td>
+                <td class="num">−14.6%</td>
+                <td>−21.6 to −7.6</td>
+              </tr>
+              <tr>
+                <th scope="row">Random control</th>
+                <td class="num">100</td>
+                <td class="num">−12.4%</td>
+                <td>−16.1 to −8.6</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine">Main minus random control was −2.2 points, interval −10.2 to +5.7. The difference was not distinguishable. Source: the decision memo linked above.</p>
+        <p><a href="https://github.com/jmangelsen/curvewatch">Source on GitHub</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Curvewatch output is research. It is not financial advice, not an offer, and not a recommendation to buy or sell a token. A bundle flag does not mean a sell will happen. The absence of a flag does not mean a launch is safe. Bonding-curve tokens are adversarial, and most of them go to zero. Paper fills leave out failed transactions, latency, and liquidity that disappears. Figures marked demo or illustrative are not measurements.</p>
+      <p><a href="https://github.com/jmangelsen/curvewatch">github.com/jmangelsen/curvewatch</a></p>
+      <p class="font-note">Inter © The Inter Project Authors. JetBrains Mono © The JetBrains Mono Project Authors. Both under the SIL Open Font License. Latin subsets are in <code>site/fonts/</code>.</p>
+    </div>
+  </footer>
+
+  <script src="config.js" defer></script>
+  <script src="demo-data.js" defer></script>
+  <script src="main.js" defer></script>
+</body>
+</html>
