@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { q, tx, db } from '../db.js';
 import { Token } from './token.js';
 import { score } from './score.js';
+import { considerUnpriced, pickUnpricedControl } from './unpriced.js';
 import { enqueueMetadata } from './metadata.js';
 import { creatorRep, recordLaunch, recordCreatorOutcome, learnWallets, flushWallets, getSmartSet } from './intel.js';
 import * as paper from './paper.js';
@@ -31,6 +32,7 @@ export class Engine extends EventEmitter {
     this.alertTrackers = new Map(); // alertId -> {mint, s}
     this.tradeWriteQueue = [];
     this.startedAt = Date.now();
+    this._unpricedSignals = [];
   }
 
   getToken = (mint) => this.tokens.get(mint);
@@ -141,6 +143,7 @@ export class Engine extends EventEmitter {
           if (!t.alertId && !s.reject && !t.rejectedHard && s.score >= S.alertScore && age >= S.minAgeSec && age <= S.maxAgeSec) this.fireAlert(t, f, s);
           this.maybeBandEntry(t, s, age, f);
           this.maybeFlowEntry(t, s, age, f);
+          this.maybeUnpriced(t, s, age, f);
         } else {
           t.toLite();
           if (!t.alertId && !paper.isOpen(mint)) this.pp?.unwatchTrades(mint);
@@ -155,6 +158,10 @@ export class Engine extends EventEmitter {
       if (t.finalized && (!t.alertId || t.alertFinal) && age >= horizon && !paper.isOpen(mint)) {
         this.tokens.delete(mint); this.pp?.unwatchTrades(mint);
       }
+    }
+    if (this._unpricedSignals.length) {
+      const signals = this._unpricedSignals.splice(0);
+      for (const sig of signals) this.maybeUnpricedControl(sig);
     }
     if (snapRows.length) { tx(() => { for (const r of snapRows) q.insertSnapshot.run(r); })(); this.counters.snapshots += snapRows.length; }
     // Expire pending buffers
@@ -219,6 +226,28 @@ export class Engine extends EventEmitter {
     pick.randomAt = now;
     this.startRecording(pick);
     paper.scheduleEntry(pick, null, { book, score: pick.lastScore.score, features: pick.lastFeatures });
+  }
+
+  /**
+   * Unpriced book: every non-rejected token is scored once at a fixed checkpoint. Entries above the
+   * frozen threshold are paper-bought. The matched control is a different book from `random`.
+   */
+  maybeUnpriced(t, s, age, f) {
+    const decision = considerUnpriced(t, { age, rejected: !!(s.reject || t.rejectedHard), features: f, now: Date.now() });
+    if (!decision.enter) return;
+    this.startRecording(t);
+    paper.scheduleEntry(t, t.alertId || null, { book: 'unpriced', score: decision.scored.score, features: { ...f, ...decision.scored.features } });
+    this._unpricedSignals.push(t);
+    this.counters.unpricedEntries = (this.counters.unpricedEntries || 0) + 1;
+  }
+
+  maybeUnpricedControl(sig) {
+    if (config.strategies.unpricedctl?.enabled === false) return;
+    const pick = pickUnpricedControl(this.tokens.values(), sig, Date.now());
+    if (!pick) { this.counters.unpricedNoMatch = (this.counters.unpricedNoMatch || 0) + 1; return; }
+    pick.unpricedCtlAt = Date.now();
+    this.startRecording(pick);
+    paper.scheduleEntry(pick, null, { book: 'unpricedctl', score: pick.unpricedScore ?? pick.lastScore?.score ?? null, features: pick.lastFeatures });
   }
 
   /**

@@ -64,15 +64,19 @@ export const STRATEGIES = {
   timed: { id: 'timed', label: 'Timed 1h (47% stop)', entry: `main signal; no target, 47% loss trigger, sell at ${SC.timed.holdMin} min (or curve close / idle)`,
     delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: 100, trailPct: 100, maxHoldMin: SC.timed.holdMin, candidate: true,
     thesis: 'About half of all trades hit the stop before the target. This variant rides the whole distribution for an hour; the graduates sweep found timed exits least bad, which is untested on the curve until now.' },
+  // ---- pre-registered 2026-10-28: momentum not yet priced, fixed checkpoint. Does not change Main, capital, or random. ----
+  unpriced: { id: 'unpriced', label: 'Unpriced', entry: `non-rejected token at ${SC.unpriced.checkpointSec}s; flow-per-extension and early-VWAP score ≥ ${SC.unpriced.minScore}`,
+    delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, candidate: true,
+    thesis: 'Main fires on the first crossing of 72, after the run. This book scores every non-rejected token once, at a fixed age, and buys only when flow has not yet been paid for in price.' },
+  unpricedctl: { id: 'unpricedctl', label: 'Unpriced control', entry: `control: at each Unpriced entry, a random other non-rejected token in the same ${SC.unpriced.checkpointSec}s window (age within ${SC.unpriced.matchWindowSec}s)`,
+    delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, control: true, candidate: true,
+    thesis: 'Not a strategy. Same checkpoint, same exits, random token. Unpriced has no edge unless killRule beats this book.' },
 };
 // User-authorized safety ceiling. Keep tighter stops; never widen an existing one.
 for (const S of Object.values(STRATEGIES)) S.stopPct = cappedStop(S.stopPct);
 export const BOOKS = Object.keys(STRATEGIES).filter((b) => b === 'main' || b === 'followctl' ? SC.follow?.enabled !== false || b === 'main' : SC[b]?.enabled !== false);
 
-// ---- schema additions ----
-for (const col of ['signal_mcap REAL', 'signal_ts INTEGER', 'features TEXT', 'trough_value REAL', 'peak_ts INTEGER', 'max_drop_pct REAL', 'cause TEXT', 'cause_detail TEXT', 'tp_mult REAL', 'stop_pct REAL', 'entry_slip_pct REAL', 'skip_reason TEXT', 'cfg TEXT', 'gap INTEGER', 'restored INTEGER', 'fill_n INTEGER', 'fill_real_pct REAL', 'exit_fill_n INTEGER', 'exit_real_pct REAL', 'trigger_pct REAL']) {
-  try { db.exec(`ALTER TABLE paper_trades ADD COLUMN ${col}`); } catch { /* exists */ }
-}
+// Column migrations live in db.js and run when that module loads, before these statements are prepared.
 const Qx = {
   enrich: db.prepare(`UPDATE paper_trades SET signal_mcap=@signalMcap, signal_ts=@signalTs, features=@features, tp_mult=@tpMult, stop_pct=@stopPct, entry_slip_pct=@slip, cfg=@cfg WHERE id=@id`),
   gap: db.prepare(`UPDATE paper_trades SET gap=1 WHERE id=?`),
@@ -92,7 +96,8 @@ export const paperEvents = [];
 
 // Features worth keeping per trade (explains entries without storing the whole vector)
 const KEEP = ['ageSec', 'mcapSol', 'progressPct', 'netSol', 'netSolPerMin', 'flow60Sol', 'uniqueBuyers', 'buyersPerMin', 'buySellRatio', 'medianBuySol', 'tinyBuyShare',
-  'top10Pct', 'bundlePct', 'creatorHoldPct', 'creatorSoldPct', 'drawdownPct', 'smartBuyers', 'hasTwitter', 'initialBuySol'];
+  'top10Pct', 'bundlePct', 'creatorHoldPct', 'creatorSoldPct', 'drawdownPct', 'smartBuyers', 'hasTwitter', 'initialBuySol',
+  'extensionPct', 'flowPerExtension', 'vsEarlyVwap', 'earlyVwap', 'earlyBuys'];
 const pickFeatures = (f) => { if (!f) return null; const o = {}; for (const k of KEEP) if (f[k] != null) o[k] = typeof f[k] === 'number' ? round(f[k], 3) : f[k]; return o; };
 
 function valueOf(pos, token, tokens = pos.tokensLeft) {
@@ -375,7 +380,15 @@ export function killStatsFrom(rows, { control = null } = {}) {
 /** Trades that count: current settings fingerprint, not gap-flagged, not gated by an enforced market pause. */
 export const closedCurrent = () => q.closedPapersAsc.all().filter((r) => r.cfg === CFG && !r.gap);
 const bookRows = (rows, b) => rows.filter((r) => (r.book || 'main') === b && !r.gated);
-export const killRule = (book = 'main') => { const rows = closedCurrent(); return killStatsFrom(bookRows(rows, book), { control: book === 'random' || !BOOKS.includes('random') ? null : bookRows(rows, 'random') }); };
+// Unpriced is judged against its checkpoint control. Every other non-control book still uses `random`.
+// unpricedctl is a control, so it has no control of its own (same as `random`).
+export const killRule = (book = 'main') => {
+  const rows = closedCurrent();
+  let control = null;
+  if (book === 'unpriced') control = BOOKS.includes('unpricedctl') ? bookRows(rows, 'unpricedctl') : null;
+  else if (book !== 'random' && book !== 'unpricedctl' && BOOKS.includes('random')) control = bookRows(rows, 'random');
+  return killStatsFrom(bookRows(rows, book), { control });
+};
 const brief = (k) => ({ status: k.status, n: k.n, needed: k.needed, expectancyPct: k.expectancyPct, ciLowPct: k.ciLowPct, ciHighPct: k.ciHighPct, winRatePct: k.winRatePct, profitFactor: k.profitFactor, totalPnlSol: k.totalPnlSol });
 /** Side-by-side comparison for the Performance tab */
 // ---- 24-hour gate ----
@@ -383,7 +396,10 @@ const brief = (k) => ({ status: k.status, n: k.n, needed: k.needed, expectancyPc
 // least minN closed trades, a positive mean after costs, a 95% lower bound above minLo, the random control is not also
 // positive (a market-wide pump does not count), and the rule was fixed before the window opened.
 const sinceStmt = { get: db.prepare('SELECT v FROM kv WHERE k = ?'), set: db.prepare('INSERT OR IGNORE INTO kv (k, v) VALUES (?, ?)') };
-for (const b of BOOKS) sinceStmt.set.run(`book_since:${b}:${CFG}`, String(Date.now())); // first time this book ran under these rules
+/** First time each book ran under this fingerprint. Call from process startup. Import does not write. */
+export function recordBookSince(now = Date.now()) {
+  for (const b of BOOKS) sinceStmt.set.run(`book_since:${b}:${CFG}`, String(now));
+}
 export function gate24h() {
   const G = config.gate24h, now = Date.now(), start = now - G.hours * 3600000;
   const rows = closedCurrent().filter((r) => !r.gated && r.exit_ts >= start && r.pnl_pct != null);

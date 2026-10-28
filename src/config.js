@@ -23,6 +23,11 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 export const config = {
   port: num('PORT', 8080),
+  // Loopback unless BIND_HOST is set. Docker sets 0.0.0.0 because the published port is already host-loopback.
+  // Production systemd leaves this unset, so the process is not reachable off the box except through Caddy.
+  bindHost: str('BIND_HOST', '127.0.0.1'),
+  // Explicit local-dev opt-out. Ignored when DASHBOARD_PASSWORD is set. Never set this on the VPS.
+  allowUnauthenticated: bool('CURVEWATCH_ALLOW_UNAUTHENTICATED', false),
   dataDir,
   dbPath: path.join(dataDir, 'curvewatch.db'),
   logLevel: str('LOG_LEVEL', 'info'),
@@ -98,8 +103,10 @@ export const config = {
     entryDelaySec: num('PAPER_ENTRY_DELAY_SEC', 15), // human reaction time: see alert, open app, sign
     extraSlippagePct: num('PAPER_EXTRA_SLIPPAGE_PCT', 3), // competing buyers in the same seconds
     feePct: num('PAPER_FEE_PCT', 1.25), // Pump.fun bonding-curve fee, each side
-    // v2 exit (replay of 60 alerts: win rate 8% -> 37%, expectancy -30% -> -7%): sell everything at +25% net,
-    // stop at -20% net. Both are NET multiples (fees and slippage included). v1 was TP 2x half / 35% trail / -40% stop.
+    // Live exit: sell at tp1Multiple (default +25% net) and stop at stopPct (default 38.5, capped at 47 by capitalPolicy).
+    // The October 2026 v2 replay (win rate 8% -> 37%, expectancy -30% -> -7%) used a -20% net stop. That stop is not
+    // the live setting. Breakeven win rate = stop / (target + stop): 38.5 / (25 + 38.5) is about 60.6%, not 44%.
+    // v1 was TP 2x half / 35% trail / -40% stop.
     rules: str('PAPER_RULES', 'v2'),
     tp1Multiple: num('PAPER_TP1_MULT', 1.25),
     tp1Fraction: num('PAPER_TP1_FRACTION', 1),
@@ -112,7 +119,8 @@ export const config = {
     exitDelaySec: num('PAPER_EXIT_DELAY_SEC', 2),
   },
   // Parallel paper book: enters when a token's score first lands in [BAND_LO, BAND_HI) instead of >= alertScore.
-  // Labeled snapshots: 65-72 hit +25% net before -20% net 39% of the time (31 tokens, CI 24-56%) vs 19% for 72+.
+  // Historical label (October 2026, -20% net stop, not the live 38.5% stop): 65-72 hit +25% net before -20% net
+  // 39% of the time (31 tokens, CI 24-56%) vs 19% for 72+.
   band: {
     enabled: bool('BAND_ENABLED', true),
     lo: num('BAND_LO', 65),
@@ -123,7 +131,8 @@ export const config = {
   strategies: {
     follow: { enabled: bool('FOLLOW_ENABLED', true), minPost: num('FOLLOW_MIN_POST', 0.10), minBuySol: num('FOLLOW_MIN_BUY_SOL', 0.2), maxAgeSec: num('FOLLOW_MAX_AGE_SEC', 1800) },
     // Labeled snapshots (198 tokens at score >= 50): only 60s net inflow and median buy size separated winners in BOTH halves.
-    // score>=50 & flow60>=12.6 & medBuy>=0.387 hit +25% net before -20% net 40% in each half (30 tokens) - still under the 44% breakeven.
+    // score>=50 & flow60>=12.6 & medBuy>=0.387 hit +25% net before -20% net 40% in each half (30 tokens).
+    // 44% was the breakeven of that -20% stop, not the live 38.5% stop (live breakeven is about 60.6%).
     flow: { enabled: bool('FLOW_ENABLED', true), minScore: num('FLOW_MIN_SCORE', 50), minFlow60Sol: num('FLOW_MIN_FLOW60_SOL', 12.6), minMedianBuySol: num('FLOW_MIN_MEDIAN_BUY_SOL', 0.387) },
     // Replay of 143 v2 paper trades: wait 60s, enter only if price >= signal, TP +20% gross: 38% win, -8.1%/trade in both halves (live v2: -19.5%).
     // Control group: at each Main/Band/Flow signal, buy a random OTHER eligible token matched on age and mcap.
@@ -135,6 +144,18 @@ export const config = {
     timed: { enabled: bool('TIMED_ENABLED', true), holdMin: num('TIMED_HOLD_MIN', 60) },
     scale: { enabled: bool('SCALE_ENABLED', true) },
     confirm: { enabled: bool('CONFIRM_ENABLED', true), waitSec: num('CONFIRM_WAIT_SEC', 60), minRetPct: num('CONFIRM_MIN_RET_PCT', 0), tpGrossPct: num('CONFIRM_TP_GROSS_PCT', 20), stopNetPct: num('CONFIRM_STOP_NET_PCT', 38.5) },
+    // Unpriced checkpoint book (pre-registered 2026-10-28). Same switch covers the matched control.
+    // Score formula and the PASS bar are in src/engine/unpriced.js and docs/decisions/2026-10-28-unpriced-checkpoint.md.
+    unpriced: {
+      enabled: bool('UNPRICED_ENABLED', true),
+      checkpointSec: num('UNPRICED_CHECKPOINT_SEC', 120),
+      minScore: num('UNPRICED_MIN_SCORE', 60),
+      matchWindowSec: num('UNPRICED_MATCH_WINDOW_SEC', 30),
+      earlySec: num('UNPRICED_EARLY_SEC', 60),
+      maxExtensionPct: num('UNPRICED_MAX_EXTENSION_PCT', 80),
+      minNetSol: num('UNPRICED_MIN_NET_SOL', 1),
+    },
+    unpricedctl: { enabled: bool('UNPRICED_ENABLED', true) },
   },
 
   // Market conditions: rolling win rate of the last N closed paper trades (both books).

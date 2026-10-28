@@ -7,7 +7,7 @@ const child = spawn(process.execPath, ['src/index.js'], { env: { ...process.env,
 let out = ''; child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
 const t0 = Date.now(); let ok = false, exited = null; child.on('exit', (c) => { exited = c; });
 while (Date.now() - t0 < 25000 && exited == null) {
-  try { const r = await fetch(`http://localhost:${port}/health`); if (r.status === 200) { ok = true; break; } } catch { /* not up yet */ }
+  try { const r = await fetch(`http://127.0.0.1:${port}/health`); if (r.status === 200) { ok = true; break; } } catch { /* not up yet */ }
   await new Promise((r) => setTimeout(r, 500));
 }
 child.kill('SIGTERM'); await new Promise((r) => setTimeout(r, 300));

@@ -6,7 +6,7 @@ The new Capital protection book has zero completed prospective paired comparison
 
 ## Decision
 
-The user authorized earlier scale-outs and a maximum loss-trigger distance of 47% on 2026-10-21. This supersedes the earlier fingerprint freeze for this specific exit-policy change. Old closed records remain unchanged. New curve research uses fingerprint `4033fed1`; the original `96f45eab` cohort must not be pooled with it. Hypothesis 1 remains rejected and closed. There is no live trading.
+The user authorized earlier scale-outs and a maximum loss-trigger distance of 47% on 2026-10-21. This supersedes the earlier fingerprint freeze for this specific exit-policy change. Old closed records remain unchanged. The capital-policy cohort is fingerprint `4033fed1`; the original `96f45eab` cohort must not be pooled with it. The 2026-10-28 source tree moves the default fingerprint to `52746d10` without changing this exit policy. `4033fed1` evidence ends at the restart onto that tree and must not be pooled with it either. Hypothesis 1 remains rejected and closed. There is no live trading.
 
 The change is risk-control infrastructure plus a prospective challenger, not a validated positive trading edge. The entry-selection rule is unchanged. New Main signals are mirrored into the independent Capital protection paper book with the same signal, delay, size, and curve state. The experiment uses no additional market-data provider and no LLM or Perplexity runtime call.
 
