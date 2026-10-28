@@ -7,7 +7,9 @@ import { config } from './config.js';
 import { scoringDashboard } from './scoringDashboard.js';
 import { tapeMarks } from './drill.js';
 import { studioCall } from './studioWorker.js';
-import { runGradBacktest } from './engine/gradBacktest.js';
+import { runGradBacktestOffThread } from './gradBacktestCall.js';
+import { installDashboardAuth } from './auth.js';
+import { allowHeavy } from './heavyLimit.js';
 import { API_NOTICE, SHORT, SECTIONS, simulationParams, markdownBlock } from './compliance.js';
 import { q } from './db.js';
 import { datasetStats, calibration, alertStats } from './stats.js';
@@ -33,15 +35,11 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
     res.status(s.healthy ? 200 : 503).json({ ok: s.healthy, feeds: s.feeds.map((f) => ({ name: f.name, healthy: f.healthy })) });
   });
 
-  if (config.dashboardPassword) {
-    app.use((req, res, next) => {
-      const h = req.headers.authorization || '';
-      const [, b64] = h.split(' ');
-      const [, pass] = Buffer.from(b64 || '', 'base64').toString().split(':');
-      if (pass === config.dashboardPassword) return next();
-      res.set('WWW-Authenticate', 'Basic realm="curvewatch"').status(401).send('auth required');
-    });
-  }
+  installDashboardAuth(app, {
+    password: config.dashboardPassword,
+    allowUnauthenticated: config.allowUnauthenticated,
+    log,
+  });
 
   const cached = (fn, ms) => { let v, t = 0; return (...a) => { if (Date.now() - t > ms) { v = fn(...a); t = Date.now(); } return v; }; };
   const cDataset = cached(datasetStats, 15000);
@@ -122,7 +120,10 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/grads/alerts', (req, res) => res.json({ rows: grads.alerts(Math.min(200, Number(req.query.limit) || 40)) }));
   app.get('/api/grads/paper', (req, res) => res.json({ ...grads.paper(), notice: API_NOTICE }));
   app.get('/api/grads/calibration', (req, res) => res.json(grads.calibration()));
-  app.get('/api/grads/backtest', (req, res) => { try { res.json(runGradBacktest({ solUsd: grads.solUsd || 100, force: req.query.force === '1' })); } catch (e) { log.warn('backtest', e.stack); res.status(500).json({ error: e.message }); } });
+  app.get('/api/grads/backtest', async (req, res) => {
+    try { res.json(await runGradBacktestOffThread({ solUsd: grads.solUsd || 100, force: req.query.force === '1' })); }
+    catch (e) { if ((e.status || 500) >= 500) log.warn('backtest', e.stack || e.message); res.status(e.status || 500).json({ error: e.message }); }
+  });
   app.get('/api/grads/token/:mint', (req, res) => { const d = grads.detail(req.params.mint); if (!d) return res.status(404).json({ error: 'not watched' }); res.json(d); });
 
   app.get('/api/market', (req, res) => res.json(gateView()));
@@ -154,11 +155,14 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   app.get('/api/strong', (req, res) => res.json(strong.view(Math.min(100, Number(req.query.limit) || 30))));
   app.post('/api/telegram/test', (req, res) => {
     if (!tgEnabled()) return res.status(400).json({ ok: false, error: 'Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (see scripts/telegram-setup.js).' });
+    if (!allowHeavy('telegram-test', 60_000)) return res.status(429).json({ ok: false, error: 'telegram test rate limit: one per minute' });
     notify('<b>Curvewatch test</b> · strong signals will arrive in this chat.', 'strong');
     res.json({ ok: true });
   });
 
   // Live stream
+  const timers = [];
+  const every = (fn, ms) => { const id = setInterval(fn, ms); timers.push(id); return id; };
   const clients = new Set();
   app.get('/api/stream', (req, res) => {
     res.set({ 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
@@ -170,10 +174,10 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const push = (event, data) => { const s = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; for (const c of clients) c.write(s); };
   engine.on('alert', (a) => push('alert', a));
   grads.on('alert', (a) => push('gradAlert', a));
-  setInterval(() => { if (clients.size) { push('status', status()); push('radar', engine.radar(60)); } }, 2500);
-  setInterval(() => { if (clients.size) { try { push('codex', codex.pulse()); } catch (e) { log.warn('codex pulse', e.message); } } }, 2500);
-  setInterval(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); while (grads.paperEvents.length) push('gradPaper', grads.paperEvents.shift()); }, 1000);
-  setInterval(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
+  every(() => { if (clients.size) { push('status', status()); push('radar', engine.radar(60)); } }, 2500);
+  every(() => { if (clients.size) { try { push('codex', codex.pulse()); } catch (e) { log.warn('codex pulse', e.message); } } }, 2500);
+  every(() => { while (paper.paperEvents.length) push('paper', paper.paperEvents.shift()); while (grads.paperEvents.length) push('gradPaper', grads.paperEvents.shift()); }, 1000);
+  every(() => { for (const c of clients) c.write(': ping\n\n'); }, 20000);
 
   // index.html is never cached and references versioned asset URLs, so phones pick up a new build on the next open
   // instead of running a stale app.js against a new API (the static files themselves stay cacheable).
@@ -182,6 +186,11 @@ export function startServer({ engine, status, grads, strong, gateView, healthDat
   const indexHtml = () => fs.readFileSync(path.join(pub, 'index.html'), 'utf8').replace('href="styles.css"', `href="styles.css?v=${assetV}"`).replace('src="app.js"', `src="app.js?v=${assetV}"`);
   app.get(['/', '/index.html'], (req, res) => { res.set('Cache-Control', 'no-cache'); res.type('html').send(indexHtml()); });
   app.use(express.static(pub, { maxAge: '1d' }));
-  app.listen(config.port, '0.0.0.0', () => log.info(`dashboard on http://0.0.0.0:${config.port}`));
-  return app;
+  const host = config.bindHost || '127.0.0.1';
+  const server = app.listen(config.port, host, () => {
+    const addr = server.address();
+    log.info(`dashboard on http://${host}:${addr && typeof addr === 'object' ? addr.port : config.port}`);
+  });
+  server.on('close', () => { for (const id of timers) clearInterval(id); });
+  return server;
 }

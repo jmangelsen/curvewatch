@@ -497,28 +497,39 @@ test('offline script fits a copy, leaves the file unchanged, and stays unvalidat
 });
 
 test('fingerprint files are untouched and the bundle module is outside the hash list', () => {
-  const files = ['src/engine/score.js', 'src/engine/token.js', 'src/engine/paper.js', 'src/engine/engine.js', 'src/engine/capitalPolicy.js'];
-  execFileSync('git', ['diff', '--exit-code', 'main', '--', ...files], { cwd: root });
-  const version = fs.readFileSync('src/version.js', 'utf8');
-  assert.match(version, /engine\/score\.js', 'engine\/token\.js', 'engine\/paper\.js', 'engine\/engine\.js', 'engine\/capitalPolicy\.js'/);
-  for (const name of fs.readdirSync('src/bundle')) {
-    const imports = fs.readFileSync(path.join('src/bundle', name), 'utf8').split('\n').filter((line) => line.startsWith('import '));
-    assert.ok(imports.every((line) => !/engine\/|version\.js|capitalPolicy/.test(line)), name);
-  }
-  const server = fs.readFileSync('src/server.js', 'utf8');
-  assert.ok(server.indexOf('config.dashboardPassword') < server.indexOf('registerRiskRoute(app'));
-  const doc = fs.readFileSync('docs/bundle-rug-zone-v1.md', 'utf8');
-  assert.match(doc, /bundle-rug-mcap-v1/);
-  assert.match(doc, /at least 50/);
-  assert.match(doc, /80 percent/);
-  assert.match(doc, /at or below half/);
   const fpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-fp-'));
   const env = { ...process.env, DATA_DIR: fpDir, LOG_LEVEL: 'error' };
   delete env.HELIUS_API_KEY;
   delete env.TELEGRAM_BOT_TOKEN;
   delete env.BUNDLE_RUG_MODEL;
-  const cfg = execFileSync(process.execPath, ['--input-type=module', '-e', "import { CFG } from './src/version.js'; console.log(CFG);"], { cwd: root, env, encoding: 'utf8' }).trim();
+  delete env.DASHBOARD_PASSWORD;
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import { CFG, FINGERPRINT_FILES } from './src/version.js';
+    console.log(CFG);
+    console.log(FINGERPRINT_FILES.join(','));
+  `], { cwd: root, env, encoding: 'utf8' }).trim().split('\n');
+  const cfg = out[0];
+  const files = out[1].split(',');
   assert.match(cfg, /^[0-9a-f]{8}$/);
+  for (const name of ['engine/score.js', 'engine/token.js', 'engine/paper.js', 'engine/engine.js', 'engine/capitalPolicy.js', 'util.js', 'engine/intel.js', 'engine/strong.js', 'engine/marketgate.js', 'engine/unpriced.js']) {
+    assert.ok(files.includes(name), name);
+  }
+  assert.equal(files.some((name) => name.includes('bundle')), false);
+  execFileSync('git', ['diff', '--exit-code', 'origin/main', '--', ...files.map((name) => `src/${name}`)], { cwd: root });
+  for (const name of fs.readdirSync('src/bundle')) {
+    const imports = fs.readFileSync(path.join('src/bundle', name), 'utf8').split('\n').filter((line) => line.startsWith('import '));
+    assert.ok(imports.every((line) => !/engine\/|version\.js|capitalPolicy/.test(line)), name);
+  }
+  const server = fs.readFileSync('src/server.js', 'utf8');
+  const gateAt = server.indexOf('installDashboardAuth(app');
+  const routeAt = server.indexOf('registerRiskRoute(app');
+  assert.ok(gateAt > 0 && routeAt > gateAt);
+  const doc = fs.readFileSync('docs/bundle-rug-zone-v1.md', 'utf8');
+  assert.match(doc, /bundle-rug-mcap-v1/);
+  assert.match(doc, /at least 50/);
+  assert.match(doc, /80 percent/);
+  assert.match(doc, /at or below half/);
+  assert.match(doc, /FINGERPRINT_FILES/);
   console.log('fingerprint', cfg);
 });
 
@@ -653,4 +664,57 @@ await testAsync('unknown mint, released mint, and a failed read use the contract
   }
 });
 
+await testAsync('fail-closed auth gate protects /api/risk and a password lets the route run', async () => {
+  const { config } = await import('../src/config.js');
+  const { startServer } = await import('../src/server.js');
+  const prev = { password: config.dashboardPassword, allow: config.allowUnauthenticated, port: config.port };
+  const mint = '5'.repeat(32);
+  const stubs = {
+    engine: { on() {}, radar() { return []; }, getToken() { return null; } },
+    grads: { on() {}, paperEvents: [] },
+    codex: { pulse() { return {}; } },
+    status: () => ({ healthy: true, feeds: [] }),
+  };
+  async function boot() {
+    config.port = 0;
+    const server = startServer(stubs);
+    await new Promise((resolve, reject) => {
+      if (server.listening) resolve();
+      else server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    return server;
+  }
+  config.dashboardPassword = '';
+  config.allowUnauthenticated = false;
+  const locked = await boot();
+  try {
+    const port = locked.address().port;
+    assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/risk/${mint}`)).status, 401);
+  } finally {
+    locked.closeAllConnections?.();
+    await new Promise((r) => locked.close(r));
+  }
+  config.dashboardPassword = 'unit-secret';
+  config.allowUnauthenticated = true;
+  const guarded = await boot();
+  try {
+    const port = guarded.address().port;
+    const headers = { authorization: `Basic ${Buffer.from('anyone:unit-secret', 'utf8').toString('base64')}` };
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/risk/${mint}`)).status, 401);
+    const opened = await fetch(`http://127.0.0.1:${port}/api/risk/${mint}`, { headers });
+    assert.equal(opened.status, 404);
+    assert.equal((await opened.json()).error, 'not_seen');
+  } finally {
+    guarded.closeAllConnections?.();
+    await new Promise((r) => guarded.close(r));
+    config.dashboardPassword = prev.password;
+    config.allowUnauthenticated = prev.allow;
+    config.port = prev.port;
+  }
+});
+
 console.log(`${n} bundle risk tests passed`);
+// drill.js starts a sampler when the server module loads. Exit explicitly, same as scripts/test-auth.js.
+process.exit(0);

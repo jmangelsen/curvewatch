@@ -398,8 +398,8 @@ function renderMarket() {
     <div class="mstate"><span class="big ${col}">${m.state}</span><span class="tag">${m.mode === 'enforce' ? 'enforcing' : 'shadow: measuring only'}</span>
       <span class="faint">${m.n < c.minTrades ? `${m.n} of ${c.minTrades} trades needed${wr != null ? ` (${pct(wr, 0)} win so far)` : ''}` : `${pct(wr, 0)} win over ${m.n} trades`} · since ${ago(m.since)} ago</span></div>
     <div class="gauge"><i style="width:${Math.max(0, Math.min(100, wr ?? 0))}%;background:${css(m.state === 'COLD' ? '--down' : '--accent')}"></i>
-      <b style="left:${c.pauseBelowPct}%"></b><b style="left:${c.resumeAtPct}%;opacity:.5"></b><b style="left:44%;background:${css('--up')}"></b></div>
-    <div class="small-note gauge-key">ticks: pause below ${c.pauseBelowPct}% · resume at ${c.resumeAtPct}% · <span class="up">breakeven 44%</span></div>
+      <b style="left:${c.pauseBelowPct}%"></b><b style="left:${c.resumeAtPct}%;opacity:.5"></b><b style="left:${STOPX() / (25 + STOPX()) * 100}%;background:${css('--up')}"></b></div>
+    <div class="small-note gauge-key">ticks: pause below ${c.pauseBelowPct}% · resume at ${c.resumeAtPct}% · <span class="up">breakeven ${n(STOPX() / (25 + STOPX()) * 100, 0)}% at +25%/−${STOPX()}%</span></div>
     <div class="mctx">
       <div><div class="label">Launches / min</div><div class="value">${n(ctx.launchesPerMin, 1)}</div></div>
       <div><div class="label">Graduations 1h</div><div class="value">${n(ctx.grads1h, 0)}</div></div>

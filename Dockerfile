@@ -8,6 +8,8 @@ COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 ENV DATA_DIR=/data PORT=8080
+# Inside the container the process must accept the published port. Compose publishes that port on host loopback only.
+ENV BIND_HOST=0.0.0.0
 VOLUME ["/data"]
 EXPOSE 8080
 HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 CMD curl -fsS http://localhost:8080/health || exit 1

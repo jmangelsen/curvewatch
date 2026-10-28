@@ -16,7 +16,8 @@ import { logger } from '../log.js';
 
 const log = logger('market');
 const G = config.marketGate;
-const recentQ = db.prepare(`SELECT pnl_pct, exit_ts FROM paper_trades WHERE status='closed' AND cfg=@cfg AND COALESCE(gap,0)=0 AND book != 'random' AND exit_ts > @since ORDER BY exit_ts DESC LIMIT @n`);
+// Unpriced and its checkpoint control stay out of this window so they cannot move the gate that labels Main.
+const recentQ = db.prepare(`SELECT pnl_pct, exit_ts FROM paper_trades WHERE status='closed' AND cfg=@cfg AND COALESCE(gap,0)=0 AND book NOT IN ('random', 'unpriced', 'unpricedctl') AND exit_ts > @since ORDER BY exit_ts DESC LIMIT @n`);
 
 const solHist = []; // [ts, px]
 export const gate = {

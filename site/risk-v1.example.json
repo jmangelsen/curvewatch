@@ -1,0 +1,120 @@
+{
+  "contract": "risk.v1",
+  "mode": "live",
+  "illustrative": false,
+  "mint": "ExampleMintForDocs111111111111111111111111",
+  "observedAt": "2026-10-28T18:00:00.000Z",
+  "token": {
+    "name": "Sample",
+    "symbol": "SAMP",
+    "creator": "CreatorExample1111111111111111111111111111",
+    "createdAt": "2026-10-28T17:55:00.000Z",
+    "ageSec": 300,
+    "quoteOk": true,
+    "mcapSol": 28.4,
+    "mcapUsd": null,
+    "solUsd": null,
+    "progressPct": 11.2,
+    "peakMcapSol": 30.1,
+    "graduated": false,
+    "lite": false
+  },
+  "coverage": {
+    "tradeCount": 40,
+    "truncated": false,
+    "slotData": true,
+    "method": "create-slot-plus-one",
+    "detail": "full",
+    "limits": [
+      "Holder balances are reconstructed from bonding-curve trades. Wallet-to-wallet SPL transfers are invisible, so supply credited to a buyer can be understated after a transfer.",
+      "Funding parents are not read.",
+      "Trade-level detail is released after the active window (default 900 seconds). A released mint returns detail \"released\" and null bundle totals."
+    ]
+  },
+  "rules": {
+    "bundleBuyVolumePct": 55,
+    "minBundleWallets": 3,
+    "partialBundleBuyVolumePct": 25
+  },
+  "bundle": {
+    "definition": "Non-creator buys in the create slot and the next slot.",
+    "walletCount": 2,
+    "solBought": 3.5,
+    "buyVolSol": 15.91,
+    "buyVolumeSharePct": 22.0,
+    "supplyHeldPct": 4.1,
+    "hardReject": false,
+    "partialFlag": false
+  },
+  "clusters": [
+    {
+      "id": "slot-0",
+      "kind": "same-slot",
+      "measured": true,
+      "label": "Create slot",
+      "slotOffset": 0,
+      "walletCount": 2,
+      "solBought": 3.5,
+      "supplyHeldPct": 4.1,
+      "note": null,
+      "wallets": [
+        {
+          "address": "WalletExample11111111111111111111111111111",
+          "solBought": 2.1,
+          "tokensBought": 24000000,
+          "stillHeldTokens": 24000000,
+          "supplyHeldPct": 2.4,
+          "firstBuyOffsetMs": 180,
+          "slotOffset": 0,
+          "funder": null
+        },
+        {
+          "address": "WalletExample21111111111111111111111111111",
+          "solBought": 1.4,
+          "tokensBought": 17000000,
+          "stillHeldTokens": 17000000,
+          "supplyHeldPct": 1.7,
+          "firstBuyOffsetMs": 260,
+          "slotOffset": 0,
+          "funder": null
+        }
+      ]
+    },
+    {
+      "id": "shared-funders",
+      "kind": "shared-funder",
+      "measured": false,
+      "label": "Shared funders",
+      "slotOffset": null,
+      "walletCount": 0,
+      "solBought": null,
+      "supplyHeldPct": null,
+      "note": "Not collected. The engine has no funding-parent read.",
+      "wallets": []
+    }
+  ],
+  "signals": {
+    "sameSlot": {
+      "status": "measured",
+      "summary": "Create slot and the next slot, non-creator buys."
+    },
+    "sharedFunders": {
+      "status": "not-collected",
+      "summary": "No funding-parent data."
+    },
+    "coordinatedTiming": {
+      "status": "measured-as-slot-window",
+      "summary": "Timing is the slot window itself. There is no second timing model."
+    }
+  },
+  "rugZone": {
+    "status": "unavailable",
+    "method": null,
+    "mcapSol": { "low": null, "high": null },
+    "mcapUsd": { "low": null, "high": null },
+    "confidence": null,
+    "confidenceNote": "No estimator is implemented. Empty means unknown, and unknown is not a clearance.",
+    "assumptions": []
+  },
+  "disclaimer": "Risk signal only. A bundle reading is not a guarantee that anyone will sell, and the absence of a reading is not a clearance. Not financial advice."
+}

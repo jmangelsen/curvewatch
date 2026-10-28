@@ -2,7 +2,7 @@
 
 Pre-registered 2026-10-28, before any fit on the production tape. This is a research label and a frozen equation. It is not a trading rule, it does not change the paper books, and it is not evidence of an edge.
 
-The paper-book fingerprint hashes `src/engine/score.js`, `token.js`, `paper.js`, `engine.js`, and `capitalPolicy.js` only. Nothing in this file, `src/bundle/`, or `scripts/bundle-rug-backtest.js` is part of that hash. Cohort `4033fed1` is unchanged by shipping this code.
+The paper-book fingerprint is `FINGERPRINT_FILES` in `src/version.js`: the scorer, tape, paper engine, capital policy, curve math, smart-wallet rule, strong book, market gate, and unpriced checkpoint, plus the env-overridable settings those use. Nothing in this file, `src/bundle/`, or `scripts/bundle-rug-backtest.js` is in that hash, so this reader does not move the cohort.
 
 `GET /api/risk/:mint` speaks contract `risk.v1` (landing-site `site/README.md` on `grok/landing-site`). `validated` is false until the prospective check below passes. A pass calibrates a market-cap band. It does not mean a sell will happen, and it does not mean a book has an edge.
 
