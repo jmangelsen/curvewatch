@@ -12,9 +12,35 @@
 #   5. systemd unit (deploy/curvewatch.service), enabled and started, with journald logging
 #   6. cron: nightly verified SQLite backup at 03:15 (14 kept), weekly `VACUUM` Sunday 04:30, watchdog every 5 min (restarts a hung feed)
 set -euo pipefail
+
+# Refuse a dirty git tree. A zip install has no .git; warn and continue instead of treating
+# `git diff` failure as a dirty tree.
+git_diff_guard() {
+  local app="$1"
+  if [[ -z "${app}" || ! -d "${app}" ]]; then
+    echo "git-diff guard: directory not found: ${app}" >&2
+    return 1
+  fi
+  if ! git -C "${app}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "warning: ${app} is not a git checkout; skipping the git-diff guard." >&2
+    return 0
+  fi
+  if ! git -C "${app}" diff --quiet HEAD -- || ! git -C "${app}" diff --cached --quiet --; then
+    echo "git diff is not empty in ${app}. Refusing to install a dirty tree." >&2
+    return 1
+  fi
+  return 0
+}
+
+if [[ "${1:-}" == "--guard-only" ]]; then
+  git_diff_guard "${2:-}"
+  exit $?
+fi
+
 cd "$(dirname "$0")/.."
 APP="$(pwd)"
 [ "$APP" = "/opt/curvewatch" ] || { echo "Expected the project at /opt/curvewatch (unit file and env paths assume it). Found: $APP"; exit 1; }
+git_diff_guard "$APP"
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 say() { printf '\n\033[1;33m==> %s\033[0m\n' "$*"; }
 

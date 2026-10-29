@@ -19,9 +19,10 @@
   Nothing outside the VPS should be running.
 
 ## Current experiment (prospective, unvalidated)
-- Default-settings fingerprint of this source tree: `ac00c1e9` (computed with `DATA_DIR=$(mktemp -d)`, not inside `/opt/curvewatch`). Winner tracks. Deploying starts that cohort.
-- `52746d10` is the previous source default (unpriced checkpoint). Do not pool it with `ac00c1e9`.
-- `4033fed1` is the capital-policy cohort. It ends at the restart that deploys a later tree. Do not pool it with `52746d10`, `ac00c1e9`, or `96f45eab`.
+- Default-settings fingerprint of this source tree: `1cf24794` (computed with `DATA_DIR=$(mktemp -d)`, not inside `/opt/curvewatch`). Winner-track tape and holder-decision fix. Deploying starts that cohort.
+- `ac00c1e9` is the previous winner-track source default (PR #4). Do not pool it with `1cf24794`. Closed rows from that cohort are not rewritten.
+- `52746d10` is the unpriced-checkpoint source default. Do not pool it with `ac00c1e9` or `1cf24794`.
+- `4033fed1` is the capital-policy cohort. Do not pool it with `52746d10`, `ac00c1e9`, `1cf24794`, or `96f45eab`.
 - Hypothesis 1 rejected/closed. No live trading.
 - Capital protection book mirrors every new Main signal (same signal, delay, size, curve state). Entry rule unchanged. This tree does not change that behavior.
 - Policy, as the code actually exits (a trigger, not a guaranteed fill):
@@ -42,7 +43,7 @@
 ## Open issues
 1. Studio heavy reports can still time out on 1 vCPU. Not solved.
 2. No dedicated paired-comparison chart; paired confidence sequence only in `/api/paper` (`books.paired.capital`).
-3. Production fingerprint stays `4033fed1` until the approved restart onto this tree. Confirm it on `/api/status` after that restart.
+3. This tree's source default is `1cf24794`. `ac00c1e9` is the previous winner-track cohort. Do not pool them. Confirm the live fingerprint on `/api/status` before any restart. A restart is not part of this change.
 4. An observed 47% trigger is not a max-loss guarantee (delay, gaps, failed tx, liquidity).
 
 ## Verification endpoints (auth: Basic, password only)
@@ -73,4 +74,4 @@ Do not call any book an edge until `killRule` for that book is PASS on its own f
 3. Both halves by exit time are positive, each with at least 10 trades.
 4. The book beats its control: the 95% lower bound of the mean difference is above zero, and the control has at least 30 closed trades.
 
-Main and capital use the `random` control. Unpriced uses `unpricedctl`. Runner A uses `runnerActl`. Holder B uses `holderBctl`. For capital, that PASS has to land on the fingerprint `/api/status` reports after the approved restart (source default of this tree is `ac00c1e9`; do not pool `52746d10`), not on `4033fed1`. `books.paired.capital` is a descriptive paired exit comparison with no minimum n. The anytime +2% sequence is the Hypothesis 2 instrument. The 24-hour gate is a separate screen. None of those three is PASS. Even a PASS is paper only; the user decides.
+Main and capital use the `random` control. Unpriced uses `unpricedctl`. Runner A uses `runnerActl`. Holder B uses `holderBctl`. For capital, that PASS has to land on the fingerprint `/api/status` reports after the approved restart (source default of this tree is `1cf24794`; do not pool `ac00c1e9` or `52746d10`), not on an earlier cohort. `books.paired.capital` is a descriptive paired exit comparison with no minimum n. The anytime +2% sequence is the Hypothesis 2 instrument. The 24-hour gate is a separate screen. None of those three is PASS. Even a PASS is paper only; the user decides.

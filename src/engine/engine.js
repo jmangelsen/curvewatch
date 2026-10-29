@@ -7,7 +7,7 @@ import { q, tx, db } from '../db.js';
 import { Token } from './token.js';
 import { score } from './score.js';
 import { considerUnpriced, pickUnpricedControl } from './unpriced.js';
-import { considerRunnerA, pickRunnerAControl, recordCurveSignal } from './winnerTracks.js';
+import { considerRunnerA, notePrint, pickRunnerAControl, recordCurveSignal } from './winnerTracks.js';
 import { enqueueMetadata } from './metadata.js';
 import { creatorRep, recordLaunch, recordCreatorOutcome, learnWallets, flushWallets, getSmartSet } from './intel.js';
 import * as paper from './paper.js';
@@ -88,6 +88,8 @@ export class Engine extends EventEmitter {
       return;
     }
     if (!t.applyTrade(ev)) return;
+    // The capped tape keeps the opening prints and then stops. runnerA's premium window needs the new ones.
+    if (!t.lite) notePrint(t, { at: ev.recvAt || Date.now(), slot: ev.slot, w: ev.wallet, b: !!ev.isBuy, sol: ev.sol, tok: ev.tok, mcap: t.mcap, sig: ev.sig });
     if (isTracked(ev.wallet)) { if (t.rejectedHard || t.lastScore?.reject) countBlocked('tracker'); else { onTrackedTrade(ev, t); this.maybeFollow(ev, t); } }
     this.counters.trades++;
     if (!t.initialBuySol && ev.wallet === t.creator && ev.isBuy && t.trades.length <= 2) {
@@ -250,7 +252,16 @@ export class Engine extends EventEmitter {
    */
   maybeRunnerA(t, s, f) {
     const decision = considerRunnerA(t, { score: s.score, raw: s.raw, reject: s.reject || t.rejectedHard?.reason || null, features: f, solUsd: market.solUsd, now: Date.now() });
-    if (!decision.enter) return;
+    if (!decision.enter) {
+      const g = decision.gates;
+      // One line per token once the score has actually held, so a book that never fills is visible in the journal.
+      if (g?.score && g?.sustain && !t._runnerHoldLogged) {
+        t._runnerHoldLogged = true;
+        const blocked = Object.entries(g).filter(([, ok]) => !ok).map(([name]) => name).join(', ');
+        log.info(`runnerA hold ${t.symbol || t.mint.slice(0, 4)}: ${blocked || 'waiting'}`);
+      }
+      return;
+    }
     this.startRecording(t);
     const sizeSol = decision.sizeFrac != null && decision.sizeFrac < 1 ? config.paper.sizeSol * decision.sizeFrac : null;
     paper.scheduleEntry(t, t.alertId || null, { book: 'runnerA', score: decision.effective, features: { ...f, ...decision.features }, sizeSol });

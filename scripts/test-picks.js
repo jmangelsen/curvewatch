@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict';
 import os from 'node:os'; import path from 'node:path'; import fs from 'node:fs';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cwpk-'));
-delete process.env.HELIUS_API_KEY;
+// A defined empty value blocks config's .env loader from refilling the key. `delete` makes it
+// undefined, so a HELIUS_API_KEY in the environment or in ./.env turns holdersTracked back on.
+process.env.HELIUS_API_KEY = '';
+process.env.TELEGRAM_BOT_TOKEN = '';
+process.env.LOG_LEVEL = 'error';
 await import('../src/engine/graduates.js');
 const { intentOf } = await import('../src/engine/tgBot.js');
 const { reigniteRank, soonRank, Picks } = await import('../src/engine/picks.js');

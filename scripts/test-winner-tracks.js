@@ -28,6 +28,7 @@ const { CFG } = await import('../src/version.js');
 const wt = await import('../src/engine/winnerTracks.js');
 const { Graduates } = await import('../src/engine/graduates.js');
 const { Engine } = await import('../src/engine/engine.js');
+const { Token } = await import('../src/engine/token.js');
 
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log('ok', name); };
@@ -386,8 +387,8 @@ test('holderB entry, its control, and the ramp exclusion', () => {
   assert.equal(noFloor.enter, false);
   assert.equal(noFloor.control, true);
   const noHolders = wt.considerHolderB(st(), { now, holderPoints: points.holderPoints, top10Points: [] });
-  assert.equal(noHolders.enter, false);
-  assert.equal(noHolders.control, true);
+  assert.equal(noHolders.ready, false);
+  assert.equal(noHolders.reason, 'unmeasured');
   const bundled = wt.considerHolderB(st({ curveBundlePct: 40 }), { now, ...points });
   assert.equal(bundled.enter, false);
   const sold = wt.considerHolderB(st({ curveCreatorHoldPct: 0 }), { now, ...points });
@@ -430,6 +431,8 @@ test('holderB opens on a qualifying graduate and the control opens on every non-
   assert.equal(g.open.has(`holderBctl:${mint}`), true);
   assert.equal([...g.open.keys()].some((k) => k.startsWith('fixed:') || k.startsWith('trail:')), false);
   const weak = 'HW'.padEnd(44, 'w');
+  ins.run(weak, NOW - 20 * 60_000, 10, 22);
+  ins.run(weak, NOW - 60_000, 12, 21);
   const st2 = { ...st, mint: weak, symbol: 'HW', curveBundlePct: 80, holderDecided: null };
   g.watch.set(weak, st2);
   g.maybeHolder(st2, NOW);
@@ -548,6 +551,103 @@ test('engine: dev-sold coin enters runnerA and a band peer enters the control, n
   assert.ok(saved.n >= 1);
   const flags = JSON.parse(db.prepare(`SELECT features FROM paper_trades WHERE mint=? AND book='runnerA'`).get(mint).features);
   assert.ok(flags.runnerFlags.includes('dev-sold'));
+});
+
+test('runnerA still sees new buyers and prints after the trade tape is capped', () => {
+  const cap = config.lifecycle.maxTradesPerToken;
+  const born = NOW - 30 * 60_000;
+  const token = new Token({ mint: 'CAP'.padEnd(44, 'c'), name: 'Cap', symbol: 'CAP', creator: 'CR'.padEnd(44, 'r'), recvAt: born, slot: 1, quoteIsSol: true, vsol: 40, vtok: 8e8 });
+  token.trades = Array.from({ length: cap }, (_, i) => ({ at: born + i, b: true, w: `old${i}`, sol: 0.01, tok: 1, mcap: 10, sig: `old${i}`, slot: 1 }));
+  const vsol = 40, vtok = 8e8;
+  for (let i = 0; i < 5; i++) {
+    const recvAt = NOW - 5_000;
+    const wallet = `N${i}`.padEnd(40, 'n');
+    token.applyTrade({ sig: `new${i}`, wallet, isBuy: true, sol: 0.2, tok: 100, vsol, vtok, recvAt, slot: 80 });
+    wt.notePrint(token, { at: recvAt, w: wallet, b: true, sol: 0.2, tok: 100, mcap: token.mcap, sig: `new${i}`, slot: 80 });
+  }
+  assert.equal(token.trades.length, cap);
+  assert.equal(token.trades.some((t) => String(t.sig || '').startsWith('new')), false);
+  assert.equal(token.recentTrades.length, 5);
+  const growth = wt.minuteGrowth(token, NOW);
+  assert.equal(growth.recentBuyers, 5);
+  assert.equal(growth.buyersRising, true);
+  const px = wt.pricePremium(token, NOW, 180);
+  assert.equal(px.prints, 5);
+  assert.ok(px.premiumPct != null);
+  const ctx = wt.curveContext(token, NOW);
+  assert.equal(typeof ctx.bundlePct, 'number');
+  assert.equal(typeof ctx.creatorHoldPct, 'number');
+});
+
+test('holderB waits for measurements and a watchlist drop uses the last price', () => {
+  db.prepare(`DELETE FROM grad_paper WHERE status='open'`).run();
+  const g = new Graduates();
+  g.open.clear();
+  g.solUsd = 100;
+  const mint = 'HU'.padEnd(44, 'u');
+  const st = {
+    mint, symbol: 'HU', pairCreatedAt: NOW - 31 * 60_000, addedAt: NOW - 31 * 60_000, series: floorSeries(NOW),
+    last: { t: NOW + 10_000, price: 1, mcap: 50_000, liq: 20_000 }, curveBundlePct: 10, curveCreatorHoldPct: 2, ramp: false,
+  };
+  g.watch.set(mint, st);
+  g.maybeHolder(st, NOW);
+  g.paperTick();
+  assert.equal(st.holderDecided || null, null);
+  assert.equal(g.open.has(`holderB:${mint}`), false);
+  assert.equal(g.open.has(`holderBctl:${mint}`), false);
+  const hist = db.prepare(`INSERT INTO holder_history (mint, ts, holders, top10_pct) VALUES (?,?,?,?)`);
+  hist.run(mint, NOW - 20 * 60_000, 10, 22);
+  hist.run(mint, NOW - 60_000, 14, 20);
+  g.maybeHolder(st, NOW);
+  g.paperTick();
+  assert.ok(st.holderDecided);
+  assert.equal(g.open.has(`holderB:${mint}`), true);
+
+  const closedMint = 'HC'.padEnd(44, 'c');
+  const closedId = Number(db.prepare(`INSERT INTO grad_paper (mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,realized_sol,peak_value,exit_ts,exit_reason,exit_price,pnl_sol,pnl_pct,events,book,cfg)
+    VALUES (?,?, 'closed', ?, ?, ?, ?, ?, 0, 0, ?, ?, 'already closed', 0.1, -0.2, -100, '[]', 'holderBctl', 'oldcfg')`).run(
+    closedMint, 'HC', NOW - 5000, 1, 40000, 0.2, 10, 0.2, NOW - 1000,
+  ).lastInsertRowid);
+
+  const dropMint = 'HD'.padEnd(44, 'd');
+  const dropSt = { mint: dropMint, symbol: 'HD', last: { t: NOW, price: 1.2, mcap: 48000, liq: 18000 } };
+  g.watch.set(dropMint, dropSt);
+  const dropId = Number(db.prepare(`INSERT INTO grad_paper (mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,realized_sol,peak_value,events,book,cfg)
+    VALUES (?,?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, '[]', 'holderBctl', ?)`).run(
+    dropMint, 'HD', NOW - 60_000, 1, 40000, 0.2, 100, 100, 0.2, CFG,
+  ).lastInsertRowid);
+  g.open.set(`holderBctl:${dropMint}`, { id: dropId, book: 'holderBctl', mint: dropMint, symbol: 'HD', entryTs: NOW - 60_000, entryPrice: 1, entryMcap: 40000, sizeSol: 0.2, units: 100, unitsLeft: 100, realized: 0, peak: 0.2, tp1Done: false, events: [] });
+  g.drop(dropMint, 'liquidity under $4000');
+  const dropped = db.prepare(`SELECT status, pnl_pct, exit_reason, exit_price FROM grad_paper WHERE id=?`).get(dropId);
+  assert.equal(dropped.status, 'closed');
+  assert.equal(dropped.exit_price, 1.2);
+  assert.match(dropped.exit_reason, /liquidity under/);
+  assert.ok(dropped.pnl_pct > -50, String(dropped.pnl_pct));
+  const untouched = db.prepare(`SELECT status, pnl_pct, exit_reason FROM grad_paper WHERE id=?`).get(closedId);
+  assert.equal(untouched.status, 'closed');
+  assert.equal(untouched.pnl_pct, -100);
+  assert.equal(untouched.exit_reason, 'already closed');
+
+  const snapMint = 'HS'.padEnd(44, 's');
+  db.prepare(`INSERT INTO grad_snapshots (mint, ts, price, mcap, liq, score) VALUES (?,?,?,?,?,?)`).run(snapMint, NOW, 0.8, 30000, 12000, 1);
+  db.prepare(`INSERT INTO grad_watch (mint, symbol, name, source, added_at, active, dropped_reason) VALUES (?,?,?,?,?,0,?)`).run(snapMint, 'HS', 'HS', 'migration', NOW, 'aged out');
+  const snapId = Number(db.prepare(`INSERT INTO grad_paper (mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,realized_sol,peak_value,events,book,cfg)
+    VALUES (?,?, 'open', ?, ?, ?, ?, ?, ?, 0, ?, '[]', 'holderBctl', ?)`).run(
+    snapMint, 'HS', NOW - 1000, 1, 40000, 0.2, 80, 80, 0.2, CFG,
+  ).lastInsertRowid);
+  g.open.set(`holderBctl:${snapMint}`, { id: snapId, book: 'holderBctl', mint: snapMint, symbol: 'HS', entryTs: NOW - 1000, entryPrice: 1, entryMcap: 40000, sizeSol: 0.2, units: 80, unitsLeft: 80, realized: 0, peak: 0.2, tp1Done: false, events: [] });
+  const bare = 'HZ'.padEnd(44, 'z');
+  g.open.set(`holderB:${bare}`, { id: 987654, book: 'holderB', mint: bare, symbol: 'HZ', entryTs: NOW, entryPrice: 1, entryMcap: 1, sizeSol: 0.2, units: 1, unitsLeft: 1, realized: 0, peak: 0.2, tp1Done: false, events: [] });
+  g.paperTick();
+  const snapped = db.prepare(`SELECT status, exit_price, exit_reason, pnl_pct FROM grad_paper WHERE id=?`).get(snapId);
+  assert.equal(snapped.status, 'closed');
+  assert.equal(snapped.exit_price, 0.8);
+  assert.match(snapped.exit_reason, /aged out/);
+  assert.ok(snapped.pnl_pct > -90, String(snapped.pnl_pct));
+  assert.equal(g.open.has(`holderB:${bare}`), true, 'no last price stays open instead of booking -100%');
+  const stillClosed = db.prepare(`SELECT pnl_pct, exit_reason FROM grad_paper WHERE id=?`).get(closedId);
+  assert.equal(stillClosed.pnl_pct, -100);
+  assert.equal(stillClosed.exit_reason, 'already closed');
 });
 
 test('join-labels reads a db copy and does not write it', () => {

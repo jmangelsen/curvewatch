@@ -79,8 +79,10 @@ export function minuteGrowth(token, now = Date.now()) {
   const trades = [...(token?.trades || [])].filter((t) => t && t.at <= now).sort((a, b) => a.at - b.at);
   const first = new Map();
   for (const t of trades) if (t.b && t.w && !first.has(t.w)) first.set(t.w, t.at);
+  // Live tokens keep first-buy times after `trades` hits its cap. A plain fixture has no map, so the tape above is the fallback.
+  const firstTimes = token?.firstBuyAt instanceof Map && token.firstBuyAt.size ? token.firstBuyAt : first;
   let recent = 0, prior = 0;
-  for (const at of first.values()) {
+  for (const at of firstTimes.values()) {
     if (at > now - MIN && at <= now) recent++;
     else if (at > now - 2 * MIN && at <= now - MIN) prior++;
   }
@@ -113,12 +115,32 @@ export function minuteGrowth(token, now = Date.now()) {
 }
 
 /** How far the live mcap sits above the average trade mcap in the window. */
+/**
+ * Remember a print the capped `trades` array dropped. Called from the engine after applyTrade.
+ * token.js is not modified: the opening tape the scorer uses stays exactly as it was.
+ */
+export function notePrint(token, trade) {
+  if (!token || token.lite || !trade || !(trade.at > 0)) return;
+  if (!Array.isArray(token.recentTrades)) token.recentTrades = [];
+  token.recentTrades.push(trade);
+  const keepMs = Math.max(180, config.strategies?.runnerA?.priceWindowSec || 180) * 1000;
+  const cut = trade.at - keepMs;
+  while (token.recentTrades.length && token.recentTrades[0].at < cut) token.recentTrades.shift();
+  if (token.recentTrades.length > 4000) token.recentTrades.splice(0, token.recentTrades.length - 4000);
+}
+
 export function pricePremium(token, now = Date.now(), windowSec = config.strategies.runnerA.priceWindowSec) {
   const from = now - windowSec * 1000;
   const caps = [];
-  for (const t of token?.trades || []) {
-    if (t.at >= from && t.at <= now && t.mcap > 0) caps.push(t.mcap);
-  }
+  const seen = new Set();
+  const take = (t) => {
+    if (!t || !(t.at >= from) || t.at > now || !(t.mcap > 0)) return;
+    const id = t.sig ? `${t.sig}:${t.w || ''}:${t.b ? 1 : 0}` : null;
+    if (id) { if (seen.has(id)) return; seen.add(id); }
+    caps.push(t.mcap);
+  };
+  for (const t of token?.trades || []) take(t);
+  for (const t of token?.recentTrades || []) take(t);
   const mcap = Number(token?.mcap);
   if (!caps.length || !(mcap > 0)) return { avg: null, premiumPct: null, prints: caps.length };
   const avg = caps.reduce((a, b) => a + b, 0) / caps.length;
@@ -299,7 +321,13 @@ export function runnerAExit({ progressPct = null, mcapUsd = null, bundleRecentNe
 
 export function curveContext(token, now = Date.now()) {
   if (!token) return {};
-  const f = token.lastFeatures || {};
+  // Migration often fires before the next evaluate(), so lastFeatures is still empty. Read the tape
+  // once here; otherwise holderB never learns bundle or creator holdings and waits forever.
+  let f = token.lastFeatures || null;
+  if ((!f || f.bundlePct == null || f.creatorHoldPct == null) && typeof token.features === 'function' && ((token.trades && token.trades.length) || (token.holders && token.holders.size))) {
+    try { f = { ...token.features(), ...(f || {}) }; } catch { /* tape not readable */ }
+  }
+  f = f || {};
   const early = earlyHolderTape(token, now);
   const out = { createdAt: token.createdAt ?? null, spreadOut: early.spreadOut };
   if (f.bundlePct != null) out.bundlePct = f.bundlePct;
@@ -334,10 +362,11 @@ export function postBondTrend({ holderPoints = [], top10Points = [], flatPp = 0 
 }
 
 /**
- * holderB entry, decided once the graduate is at least minAgeMin old.
- * control is every non-ramp graduate at that same observation. Ramp-pattern pools are not traded
- * (the existing honeypot guard: a buyer cannot exit). Missing holder, top-10, bundle, or dev data
- * fails the book and still opens the control.
+ * holderB entry, decided once the graduate is at least minAgeMin old AND the measurements exist.
+ * A missing holder series, top-10 series, bundle share, creator holding, or a price window that
+ * does not yet span the floor is not a decision: the caller retries. Opening the control on that
+ * gap bought nearly every graduate. A measured refusal still opens the control. Ramp-pattern pools
+ * are not traded (the existing honeypot guard: a buyer cannot exit).
  */
 export function considerHolderB(st, input = {}) {
   const H = config.strategies.holderB;
@@ -368,6 +397,10 @@ export function considerHolderB(st, input = {}) {
   const snipeReject = snipeHot(snipeSupplyPct) && fastBond;
   const bundleOk = bundlePct != null && bundlePct <= H.maxBundlePct;
   const devOk = creatorHoldPct != null && creatorHoldPct >= H.minCreatorHoldPct;
+  const unmeasured = floor.reason === 'thin' || floor.reason === 'span'
+    || trend.holdersRising == null || trend.top10FlatOrFalling == null
+    || bundlePct == null || creatorHoldPct == null;
+  if (unmeasured) return { ready: false, reason: 'unmeasured', ageMin, floor, trend };
   const paidBoosts = Number(input.boosts) || 0;
   const uniqueTraders = input.uniqueBuyers != null ? input.uniqueBuyers : curve.uniqueBuyers ?? null;
   const loggedFlags = [];

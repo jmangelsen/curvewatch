@@ -38,7 +38,7 @@ The database is opened readonly. Pass a copy, never the live file.
 /opt/curvewatch is refused. This script does not import scoring and does not write.`);
 }
 
-function assertCopy(p) {
+export function assertCopy(p) {
   const resolved = path.resolve(p);
   if (resolved === '/opt/curvewatch' || resolved.startsWith('/opt/curvewatch/')) {
     console.error(`refusing production path ${resolved}`);
@@ -47,7 +47,7 @@ function assertCopy(p) {
   return resolved;
 }
 
-function parseCsv(text) {
+export function parseCsv(text) {
   const rows = [];
   let row = [], cur = '', q = false;
   const s = text.replace(/^\uFEFF/, '');
@@ -84,7 +84,18 @@ function survival(database, mint) {
 
 const hasAll = (header, cols) => cols.every((c) => header.includes(c));
 
-function rowsOf(file) {
+function extrasFor(header, idx, r) {
+  const used = new Set(['mint', 'chain', 'label', 'label_time', 'peak_mc', 'peak_time', 'bond_time', 'mc_24h', 'mc_7d', 'bonded', 'source_url', 'notes', 'symbol', 'ticker', 'track', 'launch_utc', 'first_seen_utc', 'minutes_to_peak', 'early_signals', 'reason', 'rug_time']);
+  const extra = {};
+  for (const h of header) {
+    if (used.has(h)) continue;
+    const v = idx[h] == null ? '' : (r[idx[h]] ?? '');
+    if (v !== '') extra[h] = v;
+  }
+  return extra;
+}
+
+export function rowsOf(file) {
   if (!fs.existsSync(file)) { console.error(`no such csv ${file}`); process.exit(2); }
   const grid = parseCsv(fs.readFileSync(file, 'utf8'));
   if (!grid.length) { console.error(`csv is empty ${file}`); process.exit(2); }
@@ -104,29 +115,30 @@ function rowsOf(file) {
       return {
         mint: get(r, 'mint').trim(), chain: 'solana', label: get(r, 'track') || 'winner', symbol: get(r, 'symbol'),
         label_time: launch, peak_mc: get(r, 'peak_mc'), peak_time, bond_time: '', mc_24h: get(r, 'mc_24h'),
-        mc_7d: get(r, 'mc_7d'), bonded: get(r, 'bonded'), source_url: get(r, 'source_url'), notes: get(r, 'early_signals'), _file: path.basename(file),
+        mc_7d: get(r, 'mc_7d'), bonded: get(r, 'bonded'), source_url: get(r, 'source_url'), notes: get(r, 'early_signals'), extras: extrasFor(header, idx, r), _file: path.basename(file),
       };
     }
-    if (canonical) return { ...Object.fromEntries(CANONICAL.map((c) => [c, get(r, c)])), mint: get(r, 'mint').trim(), _file: path.basename(file) };
+    if (canonical) return { ...Object.fromEntries(CANONICAL.map((c) => [c, get(r, c)])), mint: get(r, 'mint').trim(), extras: extrasFor(header, idx, r), _file: path.basename(file) };
     return {
       mint: get(r, 'mint').trim(), chain: get(r, 'chain') || 'solana',
       label: get(r, 'label') || get(r, 'track') || (rugFile ? 'rug' : ''),
-      symbol: get(r, 'symbol'), label_time: get(r, 'label_time') || get(r, 'launch_utc') || get(r, 'rug_time') || '',
+      symbol: get(r, 'symbol') || get(r, 'ticker'), label_time: get(r, 'label_time') || get(r, 'launch_utc') || get(r, 'first_seen_utc') || get(r, 'rug_time') || '',
       peak_mc: get(r, 'peak_mc'), peak_time: get(r, 'peak_time'), bond_time: get(r, 'bond_time'),
       mc_24h: get(r, 'mc_24h'), mc_7d: get(r, 'mc_7d'), bonded: get(r, 'bonded'),
       source_url: get(r, 'source_url'), notes: get(r, 'notes') || get(r, 'early_signals') || get(r, 'reason') || '',
-      _file: path.basename(file),
+      extras: extrasFor(header, idx, r), _file: path.basename(file),
     };
   }).filter((r) => r.mint);
 }
 
-function dedupe(rows) {
+export function dedupe(rows) {
   const by = new Map();
   for (const row of rows) {
-    const { _file, ...rest } = row;
+    const { _file, extras, ...rest } = row;
     const prev = by.get(rest.mint);
-    if (!prev) { by.set(rest.mint, { ...rest, sourceFiles: [_file] }); continue; }
+    if (!prev) { by.set(rest.mint, { ...rest, extras: { ...(extras || {}) }, sourceFiles: [_file] }); continue; }
     prev.sourceFiles.push(_file);
+    prev.extras = { ...(extras || {}), ...(prev.extras || {}) };
     const labels = [...new Set([prev.label, rest.label].filter(Boolean))];
     prev.label = labels.join('+');
     if (labels.length > 1) prev.conflict = true;
@@ -135,7 +147,7 @@ function dedupe(rows) {
   return [...by.values()];
 }
 
-function joinOne(database, label) {
+export function joinOne(database, label) {
   const mint = label.mint;
   const out = { ...label, matched: false, token: null, survival: survival(database, mint), signals: latestSignals(database, mint) };
   if (tableExists(database, 'tokens')) {
@@ -163,8 +175,8 @@ function joinOne(database, label) {
   return out;
 }
 
-function main() {
-  const o = args(process.argv);
+export function main(argv = process.argv) {
+  const o = args(argv);
   if (o.help || !o.db || !o.csv.length) { usage(); process.exit(o.help ? 0 : 2); }
   const dbPath = assertCopy(o.db);
   if (!fs.existsSync(dbPath)) { console.error(`no such database ${dbPath}`); process.exit(2); }
@@ -191,4 +203,5 @@ function main() {
   else process.stdout.write(text + '\n');
 }
 
-main();
+import { fileURLToPath } from 'node:url';
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

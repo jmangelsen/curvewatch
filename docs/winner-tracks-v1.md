@@ -4,7 +4,7 @@ Paper only. This does not change the Main book's entry, hard rejects, or exits, 
 
 Historical replays and the 28-winner / 18-rug notes below are not evidence. A book has no edge unless its own prospective kill rule says PASS on its own fingerprint cohort.
 
-Deploying this tree starts settings fingerprint `ac00c1e9` (default settings, `DATA_DIR=$(mktemp -d)`). Cohort `52746d10` ends at that restart. Do not pool it with `4033fed1` or with `96f45eab`.
+Deploying this tree starts settings fingerprint `1cf24794` (default settings, `DATA_DIR=$(mktemp -d)`). `ac00c1e9` is the previous winner-track cohort and stays separate. Do not pool either with `52746d10`, `4033fed1`, or `96f45eab`. The move is from edits to `winnerTracks.js` and `engine.js` (both hashed). `token.js` is unchanged. Closed rows are not rewritten.
 
 ## Why these books exist
 
@@ -21,6 +21,7 @@ Entry, all of them, provisional:
 - First-time buyers in the last 60 seconds exceed the 60 seconds before that.
 - Early bundle wallets are not net sellers on their cumulative SOL.
 - Raw score (the score before a hard reject zeros it) is at least 72 and has stayed there for 20 seconds. The first observation above the line is not an entry. A dip below the line resets the clock.
+- Buyer acceleration uses each wallet's first-buy time, which the tape still records after `trades` hits its cap. The price-premium window also reads a short recent-print ring (`notePrint` from the engine). The capped array itself is unchanged, so bundle detection and the scorer still see the opening tape.
 - Token age at least 180 seconds, at least 3 prints in that window, and price at most 12% above the average trade mcap in the window.
 - Bundled launches and dev-sold coins are allowed. The trade stores `runnerFlags` of `bundled` and/or `dev-sold`. Any other hard reject still scores as 0.
 
@@ -46,7 +47,9 @@ Decided once, on the first observation at or after 30 minutes from pool creation
 - Curve bundle share at most 25%, and the creator still held at least 0.01% at migration.
 - Not a fast-bonding snipe (below).
 
-Missing holder, top-10, bundle, or creator data does not enter. Ramp-pattern pools are not traded by either holder book (existing honeypot guard).
+Missing holder, top-10, bundle, or creator data, or a price series that does not yet span the floor, does not enter and does not open the control. That observation is retried. A measured refusal still opens the control. Ramp-pattern pools are not traded by either holder book (existing honeypot guard).
+
+Leaving the watchlist closes an open holder position at the last known price (the in-memory quote, otherwise the last `grad_snapshots` price) and stores the actual drop reason. It does not book a synthetic −100% and it does not rewrite a row that is already closed. A position with no stored price stays open.
 
 Exits: stop at −38.5% (still capped at the 47% loss ceiling), sell half at 2×, or 24 hours. No trail.
 
