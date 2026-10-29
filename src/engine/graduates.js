@@ -80,6 +80,7 @@ const Q = {
   censorSnap: db.prepare(`UPDATE grad_snapshots SET max_1h=NULL, min_1h=NULL, max_6h=NULL, min_6h=NULL, price_6h=NULL, mbm_6h=NULL, labeled=1, censored=1 WHERE mint=@mint AND ts=@ts`),
   dropReasonOf: db.prepare(`SELECT dropped_reason FROM grad_watch WHERE mint = ?`),
   lastSnapPrice: db.prepare(`SELECT price FROM grad_snapshots WHERE mint = ? AND ts > ? AND price > 0 ORDER BY ts DESC LIMIT 1`),
+  lastQuote: db.prepare(`SELECT price, mcap, liq, ts FROM grad_snapshots WHERE mint = ? AND price > 0 ORDER BY ts DESC LIMIT 1`),
   insertAlert: db.prepare(`INSERT INTO grad_alerts (mint,symbol,name,ts,score,price,mcap,liq,age_min,vs_mig,reasons,flags,features)
     VALUES (@mint,@symbol,@name,@ts,@score,@price,@mcap,@liq,@ageMin,@vsMig,@reasons,@flags,@features)`),
   updateAlert1h: db.prepare(`UPDATE grad_alerts SET max_1h=? WHERE id=?`),
@@ -172,6 +173,11 @@ export class Graduates extends EventEmitter {
     if (worst) this.drop(worst.mint, `evicted (watchlist full, ${worst.source || 'unknown'} source)`);
   }
   drop(mint, reason) {
+    const st = this.watch.get(mint);
+    // Settle while the last quote is still in memory. Deleting first made paperTick book a forced 0.
+    if (st?.last?.price > 0) {
+      for (const pos of [...this.open.values()]) if (pos.mint === mint) this.close(pos, st, reason);
+    }
     this.watch.delete(mint); Q.dropWatch.run(reason, mint); this.counters.dropped++;
   }
 
@@ -436,6 +442,7 @@ export class Graduates extends EventEmitter {
     pos.id = Number(Q.insertPaper.run({ alertId: null, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events), book, cfg: CFG, features: JSON.stringify(decision?.features || {}) }).lastInsertRowid);
     this.open.set(`${book}:${st.mint}`, pos);
     this.paperEvents.push({ type: 'entry', id: pos.id, book });
+    log.info(`GRAD ENTRY [${book}] ${st.symbol} @ $${round((st.last.mcap || 0) / 1000, 1)}k mcap`);
   }
   hasOpen(mint) { for (const k of this.open.keys()) if (k.endsWith(':' + mint)) return true; return false; }
   paperTick() {
@@ -466,7 +473,11 @@ export class Graduates extends EventEmitter {
     }
     for (const [, pos] of this.open) {
       const st = this.watch.get(pos.mint);
-      if (!st) { this.close(pos, null, 'token dropped from watchlist (liquidity gone)', 0); continue; }
+      if (!st) {
+        const quote = this.lastQuote(pos.mint);
+        if (quote) this.close(pos, { mint: pos.mint, symbol: pos.symbol, last: quote }, this.dropReason(pos.mint) || 'left watchlist');
+        continue;
+      }
       if (!st.last || st.last.t <= pos.entryTs) continue;
       const value = this.valueSol(pos, st);
       const total = pos.realized + value; if (total > pos.peak) pos.peak = total;
@@ -505,13 +516,31 @@ export class Graduates extends EventEmitter {
     if (heldMin >= GP.maxHoldMin) return 'max hold';
     return null;
   }
+  /** Last stored quote for a mint that has already left the watch map. Null when we never priced it. */
+  lastQuote(mint) {
+    const row = Q.lastQuote.get(mint);
+    return row?.price > 0 ? { price: row.price, mcap: row.mcap || 0, liq: row.liq || 0, t: row.ts } : null;
+  }
+  /**
+   * Exit value from the last quote. A known pool uses the same impact model as a live mark.
+   * A price with no liquidity is still that price, minus fees — not a synthetic total loss.
+   */
+  quoteValue(pos, st) {
+    if (!st?.last?.price || !(st.last.price > 0) || !(pos.unitsLeft > 0)) return null;
+    if (Number(st.last.liq) > 0) return this.valueSol(pos, st);
+    const gross = pos.unitsLeft * st.last.price;
+    const net = gross * (1 - GP.feePct / 100) * (1 - GP.extraSlippagePct / 100);
+    return net / (this.solUsd || 150);
+  }
   persist(pos, x = {}) {
     Q.updatePaper.run({ id: pos.id, status: x.status || 'open', unitsLeft: pos.unitsLeft, realized: pos.realized, peak: pos.peak, exitTs: x.exitTs ?? null,
       exitReason: x.exitReason ?? null, exitPrice: x.exitPrice ?? null, pnlSol: x.pnlSol ?? null, pnlPct: x.pnlPct ?? null, events: JSON.stringify(pos.events) });
   }
   close(pos, st, reason, forcedValue) {
     const now = Date.now();
-    const got = forcedValue ?? this.valueSol(pos, st);
+    const marked = forcedValue != null ? forcedValue : this.quoteValue(pos, st);
+    if (marked == null) return;
+    const got = marked;
     pos.realized += got; pos.unitsLeft = 0;
     const pnl = pos.realized - pos.sizeSol;
     pos.events.push({ t: now, type: 'exit', reason, sol: round(got, 4), mcap: st?.last ? round(st.last.mcap, 0) : null });
@@ -573,7 +602,12 @@ export class Graduates extends EventEmitter {
         if (peak < arm && m <= stop) { reason = 'stop'; mult = m; break; }
         if (peak >= arm && m <= peak * trail) { reason = 'trail'; mult = peak * trail; break; }
         if ((sn.ts - t.entry_ts) / MIN >= GP.trailMaxHoldMin) { reason = 'ceiling'; mult = m; break; } }
-      if (!reason) { const w = watch.get(t.mint); if (w && !w.active && /liquidity|evicted/.test(w.dropped_reason || '')) { reason = 'liquidity gone'; mult = 0; } else { reason = 'open at end of data'; mult = (S[S.length - 1].price / t.entry_price) * cost; } }
+      if (!reason) {
+        const w = watch.get(t.mint);
+        const gone = w && !w.active && /liquidity|evicted/.test(w.dropped_reason || '');
+        reason = gone ? (w.dropped_reason || 'left watchlist') : 'open at end of data';
+        mult = (S[S.length - 1].price / t.entry_price) * cost;
+      }
       const pct = (mult - 1) * 100; rows.push({ symbol: t.symbol, fixedPct: t.pnl_pct, trailPct: pct, reason });
       (mix[reason] ||= { reason, n: 0, sum: 0 }); mix[reason].n++; mix[reason].sum += pct;
     }
