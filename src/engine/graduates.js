@@ -15,6 +15,9 @@ import { EventEmitter } from 'node:events';
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { killStatsFrom } from './paper.js';
+import { CFG } from '../version.js';
+import { considerHolderB, holderBExit, recordSignal, recordDueSurvival } from './winnerTracks.js';
+import { holderHistory } from './holders.js';
 import { notify } from './telegram.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
@@ -57,6 +60,12 @@ try { db.exec(`UPDATE grad_snapshots SET max_1h=NULL, min_1h=NULL, max_6h=NULL, 
   WHERE labeled=1 AND price_6h=0 AND censored=0 AND mint IN (SELECT mint FROM grad_watch WHERE active=0 AND dropped_reason NOT LIKE 'liquidity under%' AND dropped_reason NOT LIKE 'no post-graduation pool%')`); } catch { /* ok */ }
 try { db.exec("ALTER TABLE grad_paper ADD COLUMN book TEXT DEFAULT 'fixed'"); } catch { /* already there */ }
 try { db.exec('ALTER TABLE grad_watch ADD COLUMN extended INTEGER DEFAULT 0'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_watch ADD COLUMN curve_bundle_pct REAL'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_watch ADD COLUMN curve_creator_hold_pct REAL'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_watch ADD COLUMN holder_b_at INTEGER'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_watch ADD COLUMN curve_flags TEXT'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_paper ADD COLUMN cfg TEXT'); } catch { /* already there */ }
+try { db.exec('ALTER TABLE grad_paper ADD COLUMN features TEXT'); } catch { /* already there */ }
 
 const Q = {
   upsertWatch: db.prepare(`INSERT INTO grad_watch (mint,symbol,name,source,added_at,active) VALUES (@mint,@symbol,@name,@source,@addedAt,1)
@@ -77,8 +86,10 @@ const Q = {
   finalizeAlert: db.prepare(`UPDATE grad_alerts SET max_1h=COALESCE(max_1h,@max1), max_6h=@max6, min_before_max_6h=@mbm, price_6h=@p6, finalized=1 WHERE id=@id`),
   openAlerts: db.prepare(`SELECT * FROM grad_alerts WHERE finalized=0`),
   recentAlerts: db.prepare(`SELECT * FROM grad_alerts ORDER BY ts DESC LIMIT ?`),
-  insertPaper: db.prepare(`INSERT INTO grad_paper (alert_id,mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,peak_value,events,book)
-    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryPrice,@entryMcap,@sizeSol,@units,@units,@sizeSol,@events,@book)`),
+  insertPaper: db.prepare(`INSERT INTO grad_paper (alert_id,mint,symbol,status,entry_ts,entry_price,entry_mcap,size_sol,units,units_left,peak_value,events,book,cfg,features)
+    VALUES (@alertId,@mint,@symbol,'open',@entryTs,@entryPrice,@entryMcap,@sizeSol,@units,@units,@sizeSol,@events,@book,@cfg,@features)`),
+  setCurve: db.prepare(`UPDATE grad_watch SET curve_bundle_pct=?, curve_creator_hold_pct=?, curve_flags=? WHERE mint=?`),
+  markHolder: db.prepare(`UPDATE grad_watch SET holder_b_at=? WHERE mint=?`),
   markExtended: db.prepare(`UPDATE grad_watch SET extended=1 WHERE mint=?`),
   updatePaper: db.prepare(`UPDATE grad_paper SET status=@status, units_left=@unitsLeft, realized_sol=@realized, peak_value=@peak, exit_ts=@exitTs,
     exit_reason=@exitReason, exit_price=@exitPrice, pnl_sol=@pnlSol, pnl_pct=@pnlPct, events=@events WHERE id=@id`),
@@ -103,6 +114,7 @@ export class Graduates extends EventEmitter {
     this.counters = { polls: 0, requests: 0, failures: 0, alerts: 0, added: 0, dropped: 0, seeded: 0, lastPollMs: 0, lastPollAt: 0 };
     this.open = new Map(); // mint -> paper position
     this.pending = [];
+    this.holderPending = [];
     this.paperEvents = [];
     this.polling = false;
   }
@@ -114,7 +126,7 @@ export class Graduates extends EventEmitter {
     const hist = db.prepare('SELECT ts, price, mcap, liq FROM grad_snapshots WHERE mint=? AND ts >= ? AND price > 0 ORDER BY ts');
     let pts = 0;
     for (const r of Q.activeWatch.all(Date.now() - G.extMaxAgeHours * HOUR)) {
-      const st = this.blank(r.mint, { symbol: r.symbol, name: r.name, source: r.source, addedAt: r.added_at, migPrice: r.mig_price, migMcap: r.mig_mcap, peakPrice: r.peak_price, pairCreatedAt: r.pair_created_at }); st.extended = !!r.extended; this.watch.set(r.mint, st);
+      const st = this.blank(r.mint, { symbol: r.symbol, name: r.name, source: r.source, addedAt: r.added_at, migPrice: r.mig_price, migMcap: r.mig_mcap, peakPrice: r.peak_price, pairCreatedAt: r.pair_created_at }); st.extended = !!r.extended; st.curveBundlePct = r.curve_bundle_pct ?? null; st.curveCreatorHoldPct = r.curve_creator_hold_pct ?? null; st.holderDecided = r.holder_b_at || null; try { st.curveFlags = JSON.parse(r.curve_flags || 'null'); } catch { st.curveFlags = null; } this.watch.set(r.mint, st);
       for (const h of hist.all(r.mint, Date.now() - 6 * HOUR)) { st.series.push({ t: h.ts, price: h.price, liq: h.liq || 0, mcap: h.mcap || 0, fdv: 0, v5: 0, v1h: 0, v6h: 0, v24: 0, b5: 0, s5: 0, b1h: 0, s1h: 0, c5: null, c1h: null, c6h: null, c24: null, restored: true }); pts++; }
     }
     if (pts) log.info(`rebuilt ${pts} series points from stored snapshots`);
@@ -128,12 +140,26 @@ export class Graduates extends EventEmitter {
       misses: 0, deadPolls: 0, last: null, score: null, reject: null, parts: {}, reasons: [], flags: [], features: null,
       lastSnapAt: 0, lastAlertAt: 0, alertId: null, info: null, creatorRugger: false };
   }
+  noteCurve(mint, meta = {}) {
+    const st = this.watch.get(mint); if (!st) return;
+    const keys = ['snipeSupplyPct', 'earlyMaxBagPct', 'earlyTop5Pct', 'spreadOut', 'uniqueBuyers', 'createdAt'];
+    const any = meta.bundlePct != null || meta.creatorHoldPct != null || keys.some((k) => meta[k] != null);
+    if (!any) return;
+    if (meta.bundlePct != null) st.curveBundlePct = meta.bundlePct;
+    if (meta.creatorHoldPct != null) st.curveCreatorHoldPct = meta.creatorHoldPct;
+    const flags = { ...(st.curveFlags || {}) };
+    for (const k of keys) if (meta[k] != null) flags[k] = meta[k];
+    st.curveFlags = flags;
+    Q.setCurve.run(st.curveBundlePct ?? null, st.curveCreatorHoldPct ?? null, JSON.stringify(flags), mint);
+  }
   add(mint, source = 'migration', meta = {}) {
-    if (!G.enabled || !mint || this.watch.has(mint) || QUOTE_MINTS.has(mint)) return; // a migration message can name the quote side (USDC) — never watch it as a graduate
+    if (!G.enabled || !mint || QUOTE_MINTS.has(mint)) return; // a migration message can name the quote side (USDC) — never watch it as a graduate
+    if (this.watch.has(mint)) { this.noteCurve(mint, meta); return; }
     if (this.watch.size >= G.maxWatch) this.evict();
     const st = this.blank(mint, { ...meta, source });
     this.watch.set(mint, st);
     Q.upsertWatch.run({ mint, symbol: meta.symbol || null, name: meta.name || null, source, addedAt: st.addedAt });
+    this.noteCurve(mint, meta);
     this.counters.added++;
   }
   evict() {
@@ -250,6 +276,7 @@ export class Graduates extends EventEmitter {
       Q.insertSnap.run({ mint: st.mint, ts: now, price, mcap: pt.mcap, liq: pt.liq, score: st.score, reject: st.reject, features: JSON.stringify(st.features) });
     }
     this.maybeAlert(st, now);
+    this.maybeHolder(st, now);
   }
 
   /** Alive past the base window: open paper position, or price holding vs migration (or half its peak), with liquidity and volume. */
@@ -313,7 +340,8 @@ export class Graduates extends EventEmitter {
     parts.structure = (higherLow === true ? 8 : 0) + (breakout === true ? 8 : 0) + (baseRangePct != null && baseRangePct < 25 && breakout ? 4 : 0);
     parts.liquidity = 10 * clamp(Math.log10(Math.max(L.liq, 1) / G.minLiqUsd) / Math.log10(10)) + (liqTrend != null ? 5 * clamp((liqTrend - 1) / 0.25) : 0);
     parts.survival = (ageMin >= 60 ? 4 : ageMin >= 30 ? 2 : 0) + (vsMig != null ? 6 * clamp((vsMig - 0.35) / 0.65) : 2);
-    parts.social = (hasProfile ? 4 : 0) + Math.min(3, socials) + (hasSite ? 1 : 0) + (boosts ? 2 : 0);
+    // Paid boosts are a logged flag only. A 28-winner / 18-rug anecdote found them on 9 of 14 rugs, so they add no points.
+    parts.social = (hasProfile ? 4 : 0) + Math.min(3, socials) + (hasSite ? 1 : 0);
     // Penalties: chasing an already-vertical move, distribution, and paid attention without organic demand.
     if (L.c1h != null && L.c1h > 150) parts.chasing = -15; else if (L.c1h != null && L.c1h > 80) parts.chasing = -7;
     if (tx5 >= 15 && buyRatio5 < 0.42) parts.distribution = -10;
@@ -380,6 +408,35 @@ export class Graduates extends EventEmitter {
     return net / (this.solUsd || 150);
   }
   books() { return GP.trailEnabled ? ['fixed', 'trail'] : ['fixed']; }
+  holderBooks() { return config.strategies.holderB?.enabled === false ? [] : ['holderB', 'holderBctl']; }
+  /** First observation at or after the holderB delay. Does not open the fixed or trail books. */
+  maybeHolder(st, now = Date.now()) {
+    if (config.strategies.holderB?.enabled === false || st.holderDecided) return;
+    const hist = holderHistory(st.mint);
+    const decision = considerHolderB(st, {
+      now,
+      holderPoints: hist.filter((r) => r.holders != null).map((r) => ({ ts: r.ts, value: r.holders })),
+      top10Points: hist.filter((r) => r.top10_pct != null).map((r) => ({ ts: r.ts, value: r.top10_pct })),
+      boosts: st.info?.boosts || 0,
+    });
+    if (!decision.ready) return;
+    st.holderDecided = now;
+    try { Q.markHolder.run(now, st.mint); } catch { /* unit state with no watch row */ }
+    if (!decision.control && !decision.enter) return;
+    try { recordSignal(st.mint, now, 'postbond', decision.features || {}); } catch { /* signal store is not the trade */ }
+    if (decision.enter) this.holderPending.push({ mint: st.mint, book: 'holderB', at: now + 1, decision });
+    if (decision.control) this.holderPending.push({ mint: st.mint, book: 'holderBctl', at: now + 1, decision });
+  }
+  openHolder(st, book, decision, now) {
+    if (!st?.last || this.open.has(`${book}:${st.mint}`)) return;
+    const fill = st.last.price * (1 + this.impactPct(st.last.liq) / 100) * (1 + GP.extraSlippagePct / 100) / (1 - GP.feePct / 100);
+    const units = (GP.sizeSol * (this.solUsd || 150)) / fill;
+    const pos = { book, alertId: null, mint: st.mint, symbol: st.symbol, entryTs: now, entryPrice: fill, entryMcap: st.last.mcap, sizeSol: GP.sizeSol, units, unitsLeft: units, realized: 0, peak: GP.sizeSol, tp1Done: false,
+      events: [{ t: now, type: 'entry', price: fill, mcap: round(st.last.mcap, 0) }] };
+    pos.id = Number(Q.insertPaper.run({ alertId: null, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events), book, cfg: CFG, features: JSON.stringify(decision?.features || {}) }).lastInsertRowid);
+    this.open.set(`${book}:${st.mint}`, pos);
+    this.paperEvents.push({ type: 'entry', id: pos.id, book });
+  }
   hasOpen(mint) { for (const k of this.open.keys()) if (k.endsWith(':' + mint)) return true; return false; }
   paperTick() {
     const now = Date.now();
@@ -395,10 +452,17 @@ export class Graduates extends EventEmitter {
         if (this.open.has(`${book}:${e.mint}`)) continue;
         const pos = { book, alertId: e.alertId, mint: e.mint, symbol: st.symbol, entryTs: now, entryPrice: fill, entryMcap: st.last.mcap, sizeSol: GP.sizeSol, units, unitsLeft: units, realized: 0, peak: GP.sizeSol, tp1Done: false,
           events: [{ t: now, type: 'entry', price: fill, mcap: round(st.last.mcap, 0) }] };
-        pos.id = Number(Q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events), book }).lastInsertRowid);
+        pos.id = Number(Q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: now, entryPrice: fill, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, units, events: JSON.stringify(pos.events), book, cfg: CFG, features: null }).lastInsertRowid);
         this.open.set(`${book}:${e.mint}`, pos); this.paperEvents.push({ type: 'entry', id: pos.id, book });
       }
       log.info(`GRAD ENTRY ${st.symbol} @ $${round(st.last.mcap / 1000, 1)}k mcap (${this.books().join(' + ')})`);
+    }
+    for (let i = this.holderPending.length - 1; i >= 0; i--) {
+      const e = this.holderPending[i];
+      const st = this.watch.get(e.mint);
+      this.holderPending.splice(i, 1);
+      if (!st?.last || st.last.t < e.at) { if (st) this.holderPending.push(e); continue; }
+      this.openHolder(st, e.book, e.decision, now);
     }
     for (const [, pos] of this.open) {
       const st = this.watch.get(pos.mint);
@@ -409,7 +473,8 @@ export class Graduates extends EventEmitter {
       const mult = total / pos.sizeSol, heldMin = (now - pos.entryTs) / MIN;
       const r = this.exitRule(pos, mult, total, heldMin);
       if (r === 'tp1') {
-        const u = pos.unitsLeft * GP.tp1Fraction; const got = this.valueSol(pos, st, u);
+        const frac = pos.book === 'holderB' || pos.book === 'holderBctl' ? config.strategies.holderB.tp1Fraction : GP.tp1Fraction;
+        const u = pos.unitsLeft * frac; const got = this.valueSol(pos, st, u);
         pos.unitsLeft -= u; pos.realized += got; pos.tp1Done = true;
         pos.events.push({ t: now, type: 'tp1', sol: round(got, 4), mcap: round(st.last.mcap, 0) });
         this.persist(pos); continue;
@@ -420,6 +485,11 @@ export class Graduates extends EventEmitter {
   /** Exit decision for one position. Returns 'tp1', a close reason, or null. Pure, so the tests can drive it directly. */
   exitRule(pos, mult, total, heldMin) {
     if (mult <= 1 - CAPITAL_POLICY.maxStopPct / 100) return `loss ceiling -${CAPITAL_POLICY.maxStopPct}% (observed quote; fill may be worse)`;
+    if (pos.book === 'holderB' || pos.book === 'holderBctl') {
+      const d = holderBExit({ multiple: mult, heldMin, tp1Done: !!pos.tp1Done });
+      if (!d) return null;
+      return d.kind === 'tp' ? 'tp1' : d.reason;
+    }
     if (pos.book === 'trail') {
       // Trailing book: hard stop until the position is up trailArmMultiple, then a trailing stop from the running peak. No clock
       // besides a long ceiling. The question it answers: do the fixed book's 6 h hold and partial take-profit cut the winners short?
@@ -449,16 +519,26 @@ export class Graduates extends EventEmitter {
     this.open.delete(`${pos.book || 'fixed'}:${pos.mint}`); this.paperEvents.push({ type: 'exit', id: pos.id, book: pos.book });
     log.info(`GRAD EXIT [${pos.book || 'fixed'}] ${pos.symbol} ${reason} pnl ${round((pnl / pos.sizeSol) * 100, 1)}%`);
   }
-  kill(book = 'fixed') { return killStatsFrom(Q.closedPapersAsc.all(book)); }
+  kill(book = 'fixed') {
+    let rows = Q.closedPapersAsc.all(book);
+    if (book === 'holderB' || book === 'holderBctl') {
+      rows = rows.filter((r) => r.cfg === CFG);
+      if (book === 'holderB') return killStatsFrom(rows, { control: Q.closedPapersAsc.all('holderBctl').filter((r) => r.cfg === CFG) });
+    }
+    return killStatsFrom(rows);
+  }
   /** Both exit books side by side: the fixed book is the reference, the trailing book is the challenger. */
   bookView() {
     const counts = Object.fromEntries(Q.bookCounts.all().map((r) => [r.book, r]));
+    const HB = config.strategies.holderB;
     const rules = {
       fixed: `sell ${GP.tp1Fraction * 100}% at ${GP.tp1Multiple}×, then ${GP.trailPct}% trailing stop · hard stop −${GP.stopPct}% · ${GP.maxHoldMin / 60} h max hold`,
       trail: `no partial exit · hard stop −${GP.stopPct}% until +${Math.round((GP.trailArmMultiple - 1) * 100)}%, then ${GP.trailBookPct}% trailing stop from the peak · ${GP.trailMaxHoldMin / 60} h ceiling`,
+      holderB: `provisional: ≥${HB.minAgeMin} min after graduation, ${HB.floorMin} min price floor, holders rising, top-10 flat or down, bundle ≤ ${HB.maxBundlePct}%, dev still holding; stop −${HB.stopPct}%, half at ${HB.tp1Multiple}×, ${HB.maxHoldMin / 60} h`,
+      holderBctl: `control: every non-ramp graduate at the same ${HB.minAgeMin} min delay, same exits`,
     };
     const out = {};
-    for (const b of this.books()) {
+    for (const b of [...this.books(), ...this.holderBooks()]) {
       const k = this.kill(b), c = counts[b] || { n: 0, open: 0, closed: 0, pnl: 0 };
       out[b] = { book: b, rule: rules[b], kill: k, n: c.n, open: c.open, closed: c.closed, pnlSol: c.pnl || 0, exits: Q.exitMix.all(b) };
     }
@@ -556,6 +636,7 @@ export class Graduates extends EventEmitter {
         Q.finalizeAlert.run({ id: a.id, max1: null, max6: mx / a.price, mbm: mbm / a.price, p6: p6[p6.length - 1] / a.price });
       }
     }
+    try { recordDueSurvival(now); } catch (e) { log.warn('survival label', e.message); }
   }
 
   // ---- views ----

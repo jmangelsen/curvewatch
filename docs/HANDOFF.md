@@ -19,8 +19,9 @@
   Nothing outside the VPS should be running.
 
 ## Current experiment (prospective, unvalidated)
-- Default-settings fingerprint of this source tree: `52746d10` (computed with `DATA_DIR=$(mktemp -d)`, not inside `/opt/curvewatch`).
-- `4033fed1` is the capital-policy cohort. It ends at the restart that deploys this tree. Do not pool it with `52746d10` or with `96f45eab`.
+- Default-settings fingerprint of this source tree: `ac00c1e9` (computed with `DATA_DIR=$(mktemp -d)`, not inside `/opt/curvewatch`). Winner tracks. Deploying starts that cohort.
+- `52746d10` is the previous source default (unpriced checkpoint). Do not pool it with `ac00c1e9`.
+- `4033fed1` is the capital-policy cohort. It ends at the restart that deploys a later tree. Do not pool it with `52746d10`, `ac00c1e9`, or `96f45eab`.
 - Hypothesis 1 rejected/closed. No live trading.
 - Capital protection book mirrors every new Main signal (same signal, delay, size, curve state). Entry rule unchanged. This tree does not change that behavior.
 - Policy, as the code actually exits (a trigger, not a guaranteed fill):
@@ -72,4 +73,4 @@ Do not call any book an edge until `killRule` for that book is PASS on its own f
 3. Both halves by exit time are positive, each with at least 10 trades.
 4. The book beats its control: the 95% lower bound of the mean difference is above zero, and the control has at least 30 closed trades.
 
-Main and capital use the `random` control. Unpriced uses `unpricedctl`. For capital, that PASS has to land on the `52746d10` cohort (or whatever fingerprint `/api/status` reports after the approved restart), not on `4033fed1`. `books.paired.capital` is a descriptive paired exit comparison with no minimum n. The anytime +2% sequence is the Hypothesis 2 instrument. The 24-hour gate is a separate screen. None of those three is PASS. Even a PASS is paper only; the user decides.
+Main and capital use the `random` control. Unpriced uses `unpricedctl`. Runner A uses `runnerActl`. Holder B uses `holderBctl`. For capital, that PASS has to land on the fingerprint `/api/status` reports after the approved restart (source default of this tree is `ac00c1e9`; do not pool `52746d10`), not on `4033fed1`. `books.paired.capital` is a descriptive paired exit comparison with no minimum n. The anytime +2% sequence is the Hypothesis 2 instrument. The 24-hour gate is a separate screen. None of those three is PASS. Even a PASS is paper only; the user decides.

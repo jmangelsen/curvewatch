@@ -1,4 +1,4 @@
-Task: weekly evidence review of the Capital protection challenger vs Main. Use only the fingerprint /api/status reports. 4033fed1 ended at the restart onto 52746d10; do not pool those cohorts. 96f45eab stays closed.
+Task: weekly evidence review of the Capital protection challenger vs Main. Use only the fingerprint /api/status reports. 4033fed1, 52746d10, and ac00c1e9 are separate cohorts; do not pool them. 96f45eab stays closed.
 
 Input: JSON from /api/paper and /api/terminal/strategies?days=7 (pasted below).
 Report:

@@ -58,8 +58,8 @@ t('hasOpen matches by mint across books only', () => {
 });
 t('bookView lists both books with their rules', () => {
   const v = g.bookView();
-  assert.deepEqual(Object.keys(v.books), ['fixed', 'trail']);
-  assert.match(v.books.trail.rule, /trailing stop from the peak/); assert.equal(v.books.fixed.kill.status, 'COLLECTING'); assert.equal(v.paired, null);
+  assert.deepEqual(Object.keys(v.books), ['fixed', 'trail', 'holderB', 'holderBctl']);
+  assert.match(v.books.trail.rule, /trailing stop from the peak/); assert.equal(v.books.fixed.kill.status, 'COLLECTING'); assert.equal(v.books.holderB.kill.status, 'COLLECTING'); assert.equal(v.paired, null);
 });
 t('restart: series rebuilt from stored snapshots so the 6 h labeler does not censor live tokens', () => {
   const { db } = dbmod; const now = Date.now(), mint = 'RESTOREMINT111';

@@ -19,6 +19,7 @@ import { fmtUsd } from './market.js';
 import { dexMcaps } from './engine/dex.js';
 import { startServer } from './server.js';
 import { Graduates } from './engine/graduates.js';
+import { curveContext } from './engine/winnerTracks.js';
 import { market, refreshSolUsd, solToUsd } from './market.js';
 import { Strong } from './engine/strong.js';
 import { updateGate, gateView, gate } from './engine/marketgate.js';
@@ -58,11 +59,11 @@ const refreshPx = () => refreshSolUsd(grads.solUsd).then((px) => { if (px && !gr
 
 pp.on('create', (e) => engine.onCreate(e));
 pp.on('trade', (e) => engine.onTrade(e));
-pp.on('migrate', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name }); });
+pp.on('migrate', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name, ...curveContext(t) }); });
 for (const rpc of rpcs) {
   rpc.on('create', (e) => engine.onCreate(e)); // redundancy: launches still flow if PumpPortal is down
   rpc.on('trade', (e) => engine.onTrade(e));
-  rpc.on('complete', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name }); });
+  rpc.on('complete', (e) => { engine.onGraduate(e); const t = engine.getToken(e.mint); grads.add(e.mint, 'migration', { symbol: t?.symbol, name: t?.name, ...curveContext(t) }); });
 }
 
 const feeds = [pp, ...rpcs];

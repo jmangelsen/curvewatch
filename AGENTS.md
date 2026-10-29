@@ -15,10 +15,10 @@ It holds NO wallet private key and places NO trades. Keep it that way.
 3. Never overwrite, restore over, VACUUM-into, or "reset" the production DB `/opt/curvewatch/data/curvewatch.db`.
    Source rollback is allowed; data rollback is not.
 4. Never rewrite closed paper rows. Closed outcomes are immutable evidence.
-5. Never pool fingerprint cohorts. `96f45eab` (pre-2026-10-21) and `4033fed1` (capital-policy, through the deploy of fingerprint `52746d10`) are separate tests.
-   `4033fed1` evidence ends at the restart onto `52746d10`. Do not pool it with the new cohort.
+5. Never pool fingerprint cohorts. `96f45eab` (pre-2026-10-21), `4033fed1` (capital-policy), `52746d10` (unpriced source tree), and `ac00c1e9` (winner tracks) are separate tests.
+   `4033fed1` evidence ends at the restart off that cohort. Do not pool it with `52746d10` or with `ac00c1e9`.
    Any change to files hashed by `src/version.js` (engine/score.js, token.js, paper.js, engine.js, capitalPolicy.js,
-   util.js, intel.js, strong.js, marketgate.js, unpriced.js) or to fingerprinted settings (paper, strategies, band,
+   util.js, intel.js, strong.js, marketgate.js, unpriced.js, winnerTracks.js) or to fingerprinted settings (paper, strategies, band,
    scoring, lifecycle, killRule, smartWallets, marketGate, strong) creates a NEW cohort. Say so explicitly in every proposal.
 6. No production restart without explicit user approval in the current session. A restart gap-flags
    open paper evidence; never call it zero-downtime.
@@ -40,7 +40,7 @@ It holds NO wallet private key and places NO trades. Keep it that way.
   variable loaded from .env on the server, never typed into chat.
 - Host is 1 vCPU. Studio full-history reports can time out; use shorter `?days=` windows. Studio worker heap 384 MB,
   Edge Lab worker 512 MB.
-- Default-settings fingerprint of this tree is `52746d10` (throwaway `DATA_DIR`). Production stays on `4033fed1` until an approved restart.
+- Default-settings fingerprint of this tree is `ac00c1e9` (throwaway `DATA_DIR`). Deploying it starts a new cohort. Do not pool it with `52746d10`, `4033fed1`, or `96f45eab`. Production stays on `4033fed1` until an approved restart.
 
 ## Workflow
 - Default mode is READ-ONLY: inspect, verify, report. Writes require a plan the user approved.

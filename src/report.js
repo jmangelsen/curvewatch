@@ -25,7 +25,7 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_paper_exit ON paper_trades(exit_ts
 const SQL = {
   curve: (`SELECT id, book, rules, gated, score, market, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM paper_trades
     WHERE status='closed' AND exit_ts >= ? AND cfg = ? AND COALESCE(gap,0) = 0 ORDER BY exit_ts`),
-  grad: (`SELECT id, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM grad_paper WHERE status='closed' AND exit_ts >= ? ORDER BY exit_ts`),
+  grad: (`SELECT id, entry_ts, exit_ts, pnl_pct, pnl_sol, exit_reason FROM grad_paper WHERE status='closed' AND exit_ts >= ? AND COALESCE(book,'fixed') IN ('fixed','trail') ORDER BY exit_ts`),
   hours: (`SELECT DISTINCT CAST(created_at / ${HOUR} AS INTEGER) h FROM tokens WHERE created_at >= ?`),
   launches: (`SELECT created_at t FROM tokens WHERE created_at >= ?`),
   alerts: (`SELECT ts t FROM alerts WHERE ts >= ?`),
@@ -88,7 +88,7 @@ export function buildReport({ days = 14, tzOffsetMin = 0 } = {}) {
       ...summarize(rows),
       week1: summarize(rows.filter((r) => r.exit_ts < half)),
       week2: summarize(rows.filter((r) => r.exit_ts >= half)),
-      kill: (({ status, n, needed, checks }) => ({ status, n, needed, checks }))(killStatsFrom(rows, { control: k === 'random' || k === 'grad' || !books.random ? null : books.random })),
+      kill: (({ status, n, needed, checks }) => ({ status, n, needed, checks }))(killStatsFrom(rows, { control: k === 'random' || k === 'grad' || k === 'runnerActl' || k === 'unpricedctl' || !books.random ? null : k === 'runnerA' ? (books.runnerActl || null) : k === 'unpriced' ? (books.unpricedctl || null) : books.random })),
       exits: Object.entries(rows.reduce((m, r) => { const e = (r.exit_reason || '?').replace(/[-+]?\d+(\.\d+)?%?/g, '').replace(/\s+/g, ' ').trim(); m[e] = (m[e] || 0) + 1; return m; }, {})).sort((a, b) => b[1] - a[1]),
     };
   }
