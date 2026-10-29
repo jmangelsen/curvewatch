@@ -17,6 +17,8 @@ const SEQ_PASS_MARGIN = 0.02, SEQ_MIN_TRADES = 20; // pre-registered: PASS needs
 import { CFG } from '../version.js';
 import { countBlocked } from './rejects.js';
 import { CAPITAL_POLICY, cappedStop, capitalAction } from './capitalPolicy.js';
+import { bundleFlow, runnerAExit, earlyHolderTape } from './winnerTracks.js';
+import { market } from '../market.js';
 const log = logger('paper');
 const P = config.paper;
 const SC = config.strategies;
@@ -71,6 +73,15 @@ export const STRATEGIES = {
   unpricedctl: { id: 'unpricedctl', label: 'Unpriced control', entry: `control: at each Unpriced entry, a random other non-rejected token in the same ${SC.unpriced.checkpointSec}s window (age within ${SC.unpriced.matchWindowSec}s)`,
     delaySec: P.entryDelaySec, tpMult: P.tp1Multiple, tpFraction: P.tp1Fraction, stopPct: P.stopPct, trailPct: P.trailPct, maxHoldMin: P.maxHoldMin, control: true, candidate: true,
     thesis: 'Not a strategy. Same checkpoint, same exits, random token. Unpriced has no edge unless killRule beats this book.' },
+  // ---- pre-registered 2026-10-29: winner tracks. Provisional thresholds. Does not change Main. ----
+  runnerA: { id: 'runnerA', label: 'Runner A', entry: `curve ${SC.runnerA.minCurvePct}–${SC.runnerA.maxCurvePct}%, mcap ≤ $${SC.runnerA.maxMcapUsd}, buyers/min rising, bundle wallets not net sellers, raw score ≥ ${SC.runnerA.minScore} sustained ${SC.runnerA.sustainSec}s, price ≤ ${SC.runnerA.maxPremiumPct}% above its ${SC.runnerA.priceWindowSec / 60} min average`,
+    delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: P.stopPct, trailPct: SC.runnerA.trailPct, maxHoldMin: SC.runnerA.maxHoldMin,
+    winnerExits: 'runnerA', allowHardReject: true, candidate: true,
+    thesis: 'Main buys the first crossing of 72, after the move. This book waits until that score has held, and it does not use the creator-sold or bundle hard rejects. Bundled and dev-sold coins are flagged, not dropped. Provisional priors; not an edge until killRule PASSes runnerActl.' },
+  runnerActl: { id: 'runnerActl', label: 'Runner A control', entry: `control: at each Runner A entry, a random other token in the same ${SC.runnerA.minCurvePct}–${SC.runnerA.maxCurvePct}% curve band, same exits`,
+    delaySec: P.entryDelaySec, tpMult: Infinity, tpFraction: 1, stopPct: P.stopPct, trailPct: SC.runnerA.trailPct, maxHoldMin: SC.runnerA.maxHoldMin,
+    winnerExits: 'runnerA', allowHardReject: true, control: true, candidate: true,
+    thesis: 'Not a strategy. Same curve band, same exits, random token. Runner A has no edge unless killRule beats this book.' },
 };
 // User-authorized safety ceiling. Keep tighter stops; never widen an existing one.
 for (const S of Object.values(STRATEGIES)) S.stopPct = cappedStop(S.stopPct);
@@ -97,7 +108,9 @@ export const paperEvents = [];
 // Features worth keeping per trade (explains entries without storing the whole vector)
 const KEEP = ['ageSec', 'mcapSol', 'progressPct', 'netSol', 'netSolPerMin', 'flow60Sol', 'uniqueBuyers', 'buyersPerMin', 'buySellRatio', 'medianBuySol', 'tinyBuyShare',
   'top10Pct', 'bundlePct', 'creatorHoldPct', 'creatorSoldPct', 'drawdownPct', 'smartBuyers', 'hasTwitter', 'initialBuySol',
-  'extensionPct', 'flowPerExtension', 'vsEarlyVwap', 'earlyVwap', 'earlyBuys'];
+  'extensionPct', 'flowPerExtension', 'vsEarlyVwap', 'earlyVwap', 'earlyBuys',
+  'mcapUsd', 'effectiveScore', 'sustainSec', 'buyersPerMinRecent', 'buyersPerMinPrior', 'bundleNetSol', 'bundleRecentNetSol', 'pricePremiumPct', 'runnerFlags', 'provisional',
+  'snipeSupplyPct', 'earlyMaxBagPct', 'earlyTop5Pct', 'sizeFrac', 'uniqueTraders', 'loggedFlags'];
 const pickFeatures = (f) => { if (!f) return null; const o = {}; for (const k of KEEP) if (f[k] != null) o[k] = typeof f[k] === 'number' ? round(f[k], 3) : f[k]; return o; };
 
 function valueOf(pos, token, tokens = pos.tokensLeft) {
@@ -106,10 +119,10 @@ function valueOf(pos, token, tokens = pos.tokensLeft) {
 }
 
 /** Queue a paper entry for one book. opts: { book, score, features } */
-export function scheduleEntry(token, alertId, { book = 'main', score = null, features = null, delaySec = null } = {}) {
+export function scheduleEntry(token, alertId, { book = 'main', score = null, features = null, delaySec = null, sizeSol = null } = {}) {
   const S = STRATEGIES[book];
   if (!P.enabled || !S || !BOOKS.includes(book) || open.has(key(book, token.mint)) || pendingEntries.some((e) => e.book === book && e.mint === token.mint)) return;
-  pendingEntries.push({ mint: token.mint, alertId, book, score, features: pickFeatures(features || token.lastFeatures), signalMcap: token.mcap, signalTs: Date.now(), at: Date.now() + (delaySec ?? S.delaySec) * 1000, token });
+  pendingEntries.push({ mint: token.mint, alertId, book, score, features: pickFeatures(features || token.lastFeatures), signalMcap: token.mcap, signalTs: Date.now(), at: Date.now() + (delaySec ?? S.delaySec) * 1000, token, sizeSol: sizeSol ?? P.sizeSol });
   // Mirror the exact Main signal, reserve state and delay; no separate selection rule.
   if (book === 'main') scheduleEntry(token, alertId, { book: 'capital', score, features, delaySec });
 }
@@ -192,12 +205,14 @@ export function tick(getToken) {
       paperEvents.push({ type: 'skip', pos: { book: e.book, mint: e.mint, symbol: token.symbol, reason, slipPct: slip } });
     };
     if (token.graduated) { skip('curve closed before entry'); continue; }
-    { const rj = token.rejectedHard?.reason || token.lastScore?.reject; if (rj) { skip(`rejected before entry: ${rj}`); countBlocked('fill'); continue; } }
+    // Main and every older book still refuse a hard reject. runnerA allows bundled and dev-sold coins; the flag is on the features.
+    if (!S.allowHardReject) { const rj = token.rejectedHard?.reason || token.lastScore?.reject; if (rj) { skip(`rejected before entry: ${rj}`); countBlocked('fill'); continue; } }
     if (S.requireMinRet != null && token.mcap < e.signalMcap * (1 + S.requireMinRet)) { skip(`price ${round(slip, 1)}% vs signal after ${S.delaySec}s (needs ≥ ${round(S.requireMinRet * 100, 0)}%)`); continue; }
-    const tokens = curveBuy(token.vsol, token.vtok, P.sizeSol, P.feePct) * (1 - P.extraSlippagePct / 100);
+    const sizeSol = e.sizeSol ?? P.sizeSol;
+    const tokens = curveBuy(token.vsol, token.vtok, sizeSol, P.feePct) * (1 - P.extraSlippagePct / 100);
     const gated = gate.enforcing ? 1 : 0;
-    const pos = { book: e.book, S, alertId: e.alertId, mint: e.mint, symbol: token.symbol, entryTs: t, entryMcap: token.mcap, sizeSol: P.sizeSol, tokens, tokensLeft: tokens, realized: 0,
-      peakValue: P.sizeSol, troughValue: P.sizeSol, peakTs: t, maxDrop: 0, lastMark: null, tp1Done: false, capitalStage: 0, gated, signalMcap: e.signalMcap, tpMult: S.tpMult, stopPct: S.stopPct,
+    const pos = { book: e.book, S, alertId: e.alertId, mint: e.mint, symbol: token.symbol, entryTs: t, entryMcap: token.mcap, sizeSol, tokens, tokensLeft: tokens, realized: 0,
+      peakValue: sizeSol, troughValue: sizeSol, peakTs: t, maxDrop: 0, lastMark: null, tp1Done: false, capitalStage: 0, gated, signalMcap: e.signalMcap, tpMult: S.tpMult, stopPct: S.stopPct,
       events: [{ t, type: 'entry', mcap: round(token.mcap, 1) }] };
     pos.id = Number(q.insertPaper.run({ alertId: pos.alertId, mint: pos.mint, symbol: pos.symbol, entryTs: t, entryMcap: pos.entryMcap, sizeSol: pos.sizeSol, tokens, events: JSON.stringify(pos.events),
       book: e.book, rules: P.rules, gated, score: e.score, market: JSON.stringify(marketTag()) }).lastInsertRowid);
@@ -264,6 +279,16 @@ function checkExit(pos, t) {
     pos.pendingExit = { at: t + P.exitDelaySec * 1000, kind, reason, mult, fraction };
   };
   if (token.graduated) { closePos(pos, token, 'graduated (sold at curve close)'); return; }
+  if (S.winnerExits === 'runnerA') {
+    // Own exits only. Main's target, stop, and idle clock do not apply. Graduation above already refuses to hold through bonding.
+    const flow = bundleFlow(token, t);
+    const early = earlyHolderTape(token, t);
+    const mcapUsd = market.solUsd && token.mcap > 0 ? token.mcap * market.solUsd : null;
+    const progressPct = token.progress != null ? token.progress * 100 : null;
+    const decision = runnerAExit({ progressPct, mcapUsd, bundleRecentNetSol: flow.recentNetSol, snipeSupplyPct: early.snipeSupplyPct, multiple: mult, peakMultiple: pos.peakValue / pos.sizeSol, heldMin });
+    if (decision) return trigger('exit', decision.reason);
+    return;
+  }
   if (S.capitalProtection) {
     const action = capitalAction({ multiple: mult, peakMultiple: pos.peakValue / pos.sizeSol, stage: pos.capitalStage || 0, remainingFraction: pos.tokensLeft / pos.tokens, stopPct: pos.stopPct });
     if (action) return trigger(action.kind, action.reason, action.fraction);
@@ -380,13 +405,14 @@ export function killStatsFrom(rows, { control = null } = {}) {
 /** Trades that count: current settings fingerprint, not gap-flagged, not gated by an enforced market pause. */
 export const closedCurrent = () => q.closedPapersAsc.all().filter((r) => r.cfg === CFG && !r.gap);
 const bookRows = (rows, b) => rows.filter((r) => (r.book || 'main') === b && !r.gated);
-// Unpriced is judged against its checkpoint control. Every other non-control book still uses `random`.
-// unpricedctl is a control, so it has no control of its own (same as `random`).
+// Unpriced is judged against unpricedctl. Runner A is judged against runnerActl.
+// Those controls, and `random`, have no control of their own. Every other book still uses `random`.
 export const killRule = (book = 'main') => {
   const rows = closedCurrent();
   let control = null;
   if (book === 'unpriced') control = BOOKS.includes('unpricedctl') ? bookRows(rows, 'unpricedctl') : null;
-  else if (book !== 'random' && book !== 'unpricedctl' && BOOKS.includes('random')) control = bookRows(rows, 'random');
+  else if (book === 'runnerA') control = BOOKS.includes('runnerActl') ? bookRows(rows, 'runnerActl') : null;
+  else if (book !== 'random' && book !== 'unpricedctl' && book !== 'runnerActl' && BOOKS.includes('random')) control = bookRows(rows, 'random');
   return killStatsFrom(bookRows(rows, book), { control });
 };
 const brief = (k) => ({ status: k.status, n: k.n, needed: k.needed, expectancyPct: k.expectancyPct, ciLowPct: k.ciLowPct, ciHighPct: k.ciHighPct, winRatePct: k.winRatePct, profitFactor: k.profitFactor, totalPnlSol: k.totalPnlSol });

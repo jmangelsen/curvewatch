@@ -8,7 +8,8 @@ import { config } from './config.js';
 
 // Code that changes which trades are taken or what they earn. util.js is the curve cost math;
 // intel.js is the smart-wallet set rule; strong.js feeds the clean book; marketgate.js can block entries;
-// unpriced.js is the checkpoint book. The learned wallet membership still moves inside a cohort; hashing
+// unpriced.js is the checkpoint book. winnerTracks.js is the runnerA / holderB rules.
+// The learned wallet membership still moves inside a cohort; hashing
 // the rule freezes the definition, not a snapshot of wallets (a snapshot would reset the test on every refresh).
 export const FINGERPRINT_FILES = [
   'engine/score.js',
@@ -21,6 +22,7 @@ export const FINGERPRINT_FILES = [
   'engine/strong.js',
   'engine/marketgate.js',
   'engine/unpriced.js',
+  'engine/winnerTracks.js',
 ];
 
 const code = FINGERPRINT_FILES.map((f) => readFileSync(new URL(`./${f}`, import.meta.url), 'utf8')).join('\n');

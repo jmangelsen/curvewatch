@@ -9,6 +9,7 @@
 import { config } from '../config.js';
 import { db } from '../db.js';
 import { logger } from '../log.js';
+import { top10PctFromAmounts } from './winnerTracks.js';
 
 const log = logger('holders');
 const H = config.holders;
@@ -17,15 +18,15 @@ try { db.exec('ALTER TABLE grad_snapshots ADD COLUMN holders INTEGER'); } catch 
 db.exec(`CREATE TABLE IF NOT EXISTS holder_counts (mint TEXT PRIMARY KEY, holders INTEGER, capped INTEGER DEFAULT 0, ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS holder_history (mint TEXT NOT NULL, ts INTEGER NOT NULL, holders INTEGER, PRIMARY KEY (mint, ts))`);
 for (const table of ['holder_counts','holder_history']) {
-  for (const col of ["method TEXT DEFAULT 'legacy-accounts'", 'capped INTEGER']) {
+  for (const col of ["method TEXT DEFAULT 'legacy-accounts'", 'capped INTEGER', 'top10_pct REAL']) {
     if (!db.prepare(`PRAGMA table_info(${table})`).all().some(x=>x.name===col.split(' ')[0])) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
   }
 }
 const Q = {
   get: db.prepare('SELECT holders, capped, ts, method FROM holder_counts WHERE mint = ?'),
-  put: db.prepare("INSERT INTO holder_counts (mint, holders, capped, ts, method) VALUES (?, ?, ?, ?, 'owners-v1') ON CONFLICT(mint) DO UPDATE SET holders = excluded.holders, capped = excluded.capped, ts = excluded.ts, method = excluded.method"),
-  hist: db.prepare('SELECT ts, holders FROM holder_history WHERE mint = ? ORDER BY ts'),
-  histIns: db.prepare("INSERT OR IGNORE INTO holder_history (mint, ts, holders, capped, method) VALUES (?, ?, ?, ?, 'owners-v1')"),
+  put: db.prepare("INSERT INTO holder_counts (mint, holders, capped, ts, method, top10_pct) VALUES (?, ?, ?, ?, 'owners-v1', ?) ON CONFLICT(mint) DO UPDATE SET holders = excluded.holders, capped = excluded.capped, ts = excluded.ts, method = excluded.method, top10_pct = excluded.top10_pct"),
+  hist: db.prepare('SELECT ts, holders, top10_pct FROM holder_history WHERE mint = ? ORDER BY ts'),
+  histIns: db.prepare("INSERT OR IGNORE INTO holder_history (mint, ts, holders, capped, method, top10_pct) VALUES (?, ?, ?, ?, 'owners-v1', ?)"),
 };
 
 export const holdersEnabled = () => Boolean(H.apiKey);
@@ -33,7 +34,7 @@ export const holdersEnabled = () => Boolean(H.apiKey);
 /** Count token accounts with a non-zero balance for a mint. Returns { holders, capped } or null on failure. */
 export async function countHolders(mint, { maxPages = H.maxPages, onCall = null } = {}) {
   if (!holdersEnabled()) return null;
-  const owners = new Set(); let page = 1, capped = 0;
+  const owners = new Set(); const amounts = []; let page = 1, capped = 0;
   for (; page <= maxPages; page++) {
     onCall?.();
     const r = await fetch(`https://mainnet.helius-rpc.com/?api-key=${H.apiKey}`, {
@@ -46,12 +47,14 @@ export async function countHolders(mint, { maxPages = H.maxPages, onCall = null 
     const n = accounts.length;
     for (const account of accounts) {
       if (!account.owner) throw new Error('holder response missing owner');
-      if (BigInt(String(account.amount || '0')) > 0n) owners.add(account.owner);
+      const amt = BigInt(String(account.amount || '0'));
+      if (amt > 0n) { owners.add(account.owner); amounts.push(amt); }
     }
     if (n < 1000) break;
     if (page === maxPages) capped = 1;
   }
-  return { holders: owners.size, capped };
+  const top10Pct = capped ? null : top10PctFromAmounts(amounts);
+  return { holders: owners.size, capped, top10Pct };
 }
 
 /** Cached read: the last count for a mint, with its age, or null if never counted (or the module is off). */
@@ -99,7 +102,7 @@ export class HolderPoller {
           } });
           if (!r) continue;
           const ts=Date.now();
-          db.transaction(()=>{ Q.put.run(mint, r.holders, r.capped, ts); Q.histIns.run(mint, ts, r.holders, r.capped); })();
+          db.transaction(()=>{ Q.put.run(mint, r.holders, r.capped, ts, r.top10Pct ?? null); Q.histIns.run(mint, ts, r.holders, r.capped, r.top10Pct ?? null); })();
           const st = this.grads?.watch?.get(mint); if (st) { st.holders = r.holders; st.holdersCapped = Boolean(r.capped); st.holdersAt = Date.now(); }
           db.prepare('UPDATE grad_snapshots SET holders = ? WHERE mint=? AND ts = (SELECT MAX(ts) FROM grad_snapshots WHERE mint = ?)').run(r.holders, mint, mint);
         } catch (e) { this.errors++; this.lastErr = e.message; if (this.errors % 10 === 1) log.warn(`${mint.slice(0, 8)}: ${e.message}`); if (/401|403|api key/i.test(e.message)) break; }

@@ -7,10 +7,11 @@ import { q, tx, db } from '../db.js';
 import { Token } from './token.js';
 import { score } from './score.js';
 import { considerUnpriced, pickUnpricedControl } from './unpriced.js';
+import { considerRunnerA, pickRunnerAControl, recordCurveSignal } from './winnerTracks.js';
 import { enqueueMetadata } from './metadata.js';
 import { creatorRep, recordLaunch, recordCreatorOutcome, learnWallets, flushWallets, getSmartSet } from './intel.js';
 import * as paper from './paper.js';
-import { solToUsd } from '../market.js';
+import { market, solToUsd } from '../market.js';
 import { notify, sendTelegram, esc } from './telegram.js';
 import { round } from '../util.js';
 import { logger } from '../log.js';
@@ -136,6 +137,7 @@ export class Engine extends EventEmitter {
               t.addSnapshot(cp);
               // rejected tokens (~70% of snapshots) keep score + reason only: their feature vectors were 60%+ of the database
               snapRows.push({ mint, checkpoint: cp, ts: nowMs, mcap: t.mcap, score: s.score, reject: s.reject, features: s.reject ? null : JSON.stringify(compact(f)) });
+              try { recordCurveSignal(t, nowMs); } catch (e) { if (!this._sigErr) { this._sigErr = true; log.warn('winner signal', e.message); } }
             }
           }
           const S = config.scoring;
@@ -144,6 +146,7 @@ export class Engine extends EventEmitter {
           this.maybeBandEntry(t, s, age, f);
           this.maybeFlowEntry(t, s, age, f);
           this.maybeUnpriced(t, s, age, f);
+          this.maybeRunnerA(t, s, f);
         } else {
           t.toLite();
           if (!t.alertId && !paper.isOpen(mint)) this.pp?.unwatchTrades(mint);
@@ -239,6 +242,29 @@ export class Engine extends EventEmitter {
     paper.scheduleEntry(t, t.alertId || null, { book: 'unpriced', score: decision.scored.score, features: { ...f, ...decision.scored.features } });
     this._unpricedSignals.push(t);
     this.counters.unpricedEntries = (this.counters.unpricedEntries || 0) + 1;
+  }
+
+  /**
+   * Runner A: sustained raw score inside the curve band. Runs even when the hard reject is bundle or creator-sold.
+   * Does not call the Main random book. The matched control is runnerActl.
+   */
+  maybeRunnerA(t, s, f) {
+    const decision = considerRunnerA(t, { score: s.score, raw: s.raw, reject: s.reject || t.rejectedHard?.reason || null, features: f, solUsd: market.solUsd, now: Date.now() });
+    if (!decision.enter) return;
+    this.startRecording(t);
+    const sizeSol = decision.sizeFrac != null && decision.sizeFrac < 1 ? config.paper.sizeSol * decision.sizeFrac : null;
+    paper.scheduleEntry(t, t.alertId || null, { book: 'runnerA', score: decision.effective, features: { ...f, ...decision.features }, sizeSol });
+    this.counters.runnerAEntries = (this.counters.runnerAEntries || 0) + 1;
+    this.maybeRunnerAControl(t);
+  }
+
+  maybeRunnerAControl(sig) {
+    if (config.strategies.runnerActl?.enabled === false) return;
+    const pick = pickRunnerAControl(this.tokens.values(), sig);
+    if (!pick) { this.counters.runnerANoMatch = (this.counters.runnerANoMatch || 0) + 1; return; }
+    pick.runnerACtlAt = Date.now();
+    this.startRecording(pick);
+    paper.scheduleEntry(pick, null, { book: 'runnerActl', score: pick.lastScore?.raw ?? pick.lastScore?.score ?? null, features: pick.lastFeatures });
   }
 
   maybeUnpricedControl(sig) {

@@ -515,7 +515,9 @@ test('fingerprint files are untouched and the bundle module is outside the hash 
     assert.ok(files.includes(name), name);
   }
   assert.equal(files.some((name) => name.includes('bundle')), false);
-  execFileSync('git', ['diff', '--exit-code', 'origin/main', '--', ...files.map((name) => `src/${name}`)], { cwd: root });
+  assert.ok(files.includes('engine/winnerTracks.js'));
+  const untouched = ['engine/score.js', 'engine/token.js', 'engine/capitalPolicy.js', 'util.js', 'engine/intel.js', 'engine/strong.js', 'engine/marketgate.js', 'engine/unpriced.js'];
+  execFileSync('git', ['diff', '--exit-code', 'origin/main', '--', ...untouched.map((name) => `src/${name}`)], { cwd: root });
   for (const name of fs.readdirSync('src/bundle')) {
     const imports = fs.readFileSync(path.join('src/bundle', name), 'utf8').split('\n').filter((line) => line.startsWith('import '));
     assert.ok(imports.every((line) => !/engine\/|version\.js|capitalPolicy/.test(line)), name);

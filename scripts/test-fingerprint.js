@@ -27,7 +27,7 @@ const { CFG, FINGERPRINT_FILES, fingerprintSettings, recordCohortStart, cfgHisto
 const paper = await import('../src/engine/paper.js');
 
 assert.equal(db.prepare(`SELECT COUNT(*) c FROM kv WHERE k LIKE 'cfg_since:%' OR k LIKE 'book_since:%'`).get().c, 0);
-for (const f of ['util.js', 'engine/intel.js', 'engine/strong.js', 'engine/marketgate.js', 'engine/unpriced.js']) {
+for (const f of ['util.js', 'engine/intel.js', 'engine/strong.js', 'engine/marketgate.js', 'engine/unpriced.js', 'engine/winnerTracks.js']) {
   assert.ok(FINGERPRINT_FILES.includes(f), f);
 }
 const settings = fingerprintSettings();

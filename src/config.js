@@ -156,6 +156,57 @@ export const config = {
       minNetSol: num('UNPRICED_MIN_NET_SOL', 1),
     },
     unpricedctl: { enabled: bool('UNPRICED_ENABLED', true) },
+    // Winner tracks v1 (2026-10-29). Every number below is a PROVISIONAL prior, not a fit.
+    // See docs/winner-tracks-v1.md. Paper only. Does not change Main's entry or exits.
+    // runnerA: fast curve runners. Sustained score, not the first crossing of the alert line.
+    runnerA: {
+      provisional: true,
+      enabled: bool('RUNNER_A_ENABLED', true),
+      minCurvePct: num('RUNNER_A_MIN_CURVE_PCT', 25),
+      maxCurvePct: num('RUNNER_A_MAX_CURVE_PCT', 60),
+      maxMcapUsd: num('RUNNER_A_MAX_MCAP_USD', 40000),
+      minScore: num('RUNNER_A_MIN_SCORE', 72),
+      sustainSec: num('RUNNER_A_SUSTAIN_SEC', 20),
+      maxPremiumPct: num('RUNNER_A_MAX_PREMIUM_PCT', 12),
+      priceWindowSec: num('RUNNER_A_PRICE_WINDOW_SEC', 180),
+      minPrints: num('RUNNER_A_MIN_PRINTS', 3),
+      buyerRise: num('RUNNER_A_BUYER_RISE', 0),
+      minHistorySec: num('RUNNER_A_MIN_HISTORY_SEC', 120),
+      exitMcapUsd: num('RUNNER_A_EXIT_MCAP_USD', 100000),
+      exitCurvePct: num('RUNNER_A_EXIT_CURVE_PCT', 95),
+      trailPct: num('RUNNER_A_TRAIL_PCT', 20),
+      maxHoldMin: num('RUNNER_A_MAX_HOLD_MIN', 20),
+      bundleWindowSec: num('RUNNER_A_BUNDLE_WINDOW_SEC', 60),
+      bundleSellMaxNetSol: num('RUNNER_A_BUNDLE_SELL_MAX_NET_SOL', 0),
+      // Anecdotal (28 winners, 18 rugs). Not fitted. First N wallets' share of supply in the opening seconds.
+      snipeWallets: num('RUNNER_A_SNIPE_WALLETS', 19),
+      snipeWindowSec: num('RUNNER_A_SNIPE_WINDOW_SEC', 10),
+      snipeSupplyPct: num('RUNNER_A_SNIPE_SUPPLY_PCT', 79),
+      snipeSizeFrac: num('RUNNER_A_SNIPE_SIZE_FRAC', 0.25),
+      snipeFastBondSec: num('RUNNER_A_SNIPE_FAST_BOND_SEC', 15),
+    },
+    runnerActl: { provisional: true, enabled: bool('RUNNER_A_ENABLED', true) },
+    // holderB: post-bond holders. Decided once, on the first observation at or after minAgeMin.
+    holderB: {
+      provisional: true,
+      enabled: bool('HOLDER_B_ENABLED', true),
+      minAgeMin: num('HOLDER_B_MIN_AGE_MIN', 30),
+      floorMin: num('HOLDER_B_FLOOR_MIN', 15),
+      floorFrac: num('HOLDER_B_FLOOR_FRAC', 0.90),
+      maxBundlePct: num('HOLDER_B_MAX_BUNDLE_PCT', 25),
+      minCreatorHoldPct: num('HOLDER_B_MIN_CREATOR_HOLD_PCT', 0.01),
+      top10FlatPp: num('HOLDER_B_TOP10_FLAT_PP', 0.5),
+      stopPct: num('HOLDER_B_STOP_PCT', 38.5),
+      tp1Multiple: num('HOLDER_B_TP1_MULT', 2),
+      tp1Fraction: num('HOLDER_B_TP1_FRACTION', 0.5),
+      maxHoldMin: num('HOLDER_B_MAX_HOLD_MIN', 1440),
+      survivalHorizonsH: [24, 72],
+      survivalFloorFrac: num('HOLDER_B_SURVIVAL_FLOOR', 0.5),
+      // Anecdotal spread of early bags. Logged on the book. Not an entry threshold.
+      earlyMaxBagPct: num('HOLDER_B_EARLY_MAX_BAG_PCT', 5),
+      earlyTop5Pct: num('HOLDER_B_EARLY_TOP5_PCT', 15),
+    },
+    holderBctl: { provisional: true, enabled: bool('HOLDER_B_ENABLED', true) },
   },
 
   // Market conditions: rolling win rate of the last N closed paper trades (both books).
